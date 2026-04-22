@@ -1,0 +1,57 @@
+:root {
+  --dock-text-size: 15px;
+  --dock-text-color: #e8edf5;
+  --dock-font-zh: "Microsoft YaHei";
+  --dock-font-en: "Segoe UI";
+  --entry-surface-opacity: 0.82;
+  --dock-bg-color: #2a3548;
+  --dock-bg-opacity: 85%;
+
+  font-family: var(--dock-font-en), var(--dock-font-zh), sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+  color: var(--dock-text-color);
+  font-size: var(--dock-text-size);
+  background: transparent;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 260px;
+  height: 100vh;
+  overflow: hidden;
+  background: transparent;
+}
+
+#app {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: color-mix(in srgb, var(--dock-bg-color) var(--dock-bg-opacity), transparent);
+  backdrop-filter: blur(24px);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
+  border-radius: 0.5rem;
+}
+
+
+::-webkit-scrollbar {
+  width: 3px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.15);
+  border-radius: 2px;
+}

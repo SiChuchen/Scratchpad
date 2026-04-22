@@ -1,0 +1,7 @@
+node_modules
+dist
+src-tauri/target
+src-tauri/gen
+pnpm-lock.yaml
+src/main.js
+src/main.js.map

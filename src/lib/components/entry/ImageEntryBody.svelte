@@ -1,0 +1,171 @@
+<script lang="ts">
+  import type { DockEntry } from '$lib/types/dock'
+  import { dockApi } from '$lib/api/dock'
+
+  interface Props {
+    entry: DockEntry
+    onCopy: (content: string) => void
+    onCopyPath: (path: string) => void
+  }
+
+  let { entry, onCopy, onCopyPath }: Props = $props()
+
+  let imageUrl = $derived.by(() => {
+    if (entry.filePath) return dockApi.previewUrl(entry.filePath)
+    return null
+  })
+
+  let sizeLabel = $derived.by(() => {
+    const bytes = entry.sizeBytes
+    if (bytes == null) return ''
+    if (bytes < 1024) return `${bytes} B`
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+  })
+
+  let dimLabel = $derived.by(() => {
+    if (entry.width && entry.height) return `${entry.width}x${entry.height}`
+    return ''
+  })
+</script>
+
+{#if imageUrl}
+  <div class="image-preview">
+    <img src={imageUrl} alt={entry.fileName || '图片'} />
+  </div>
+{:else}
+  <div class="image-placeholder">
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" opacity="0.3">
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      <circle cx="8.5" cy="8.5" r="1.5" />
+      <polyline points="21 15 16 10 5 21" />
+    </svg>
+    {#if entry.fileName}
+      <span class="image-filename">{entry.fileName}</span>
+    {/if}
+  </div>
+{/if}
+
+<div class="image-meta">
+  {#if entry.fileName}
+    <span class="meta-tag filename-tag">{entry.fileName}</span>
+  {/if}
+  {#if dimLabel}
+    <span class="meta-tag">{dimLabel}</span>
+  {/if}
+  {#if sizeLabel}
+    <span class="meta-tag">{sizeLabel}</span>
+  {/if}
+</div>
+
+<div class="entry-actions">
+  {#if entry.filePath}
+    <button class="action-btn copy-action" onclick={() => onCopyPath(entry.filePath!)} title="复制路径">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <rect x="9" y="9" width="13" height="13" rx="2" />
+        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+      </svg>
+      <span>复制路径</span>
+    </button>
+  {/if}
+  {#if entry.content}
+    <button class="action-btn" onclick={() => onCopy(entry.content || '')} title="复制内容">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <rect x="9" y="9" width="13" height="13" rx="2" />
+        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+      </svg>
+      <span>复制</span>
+    </button>
+  {/if}
+</div>
+
+<style>
+  .image-preview {
+    border-radius: 0.375rem;
+    overflow: hidden;
+    background: rgba(15, 23, 42, 0.4);
+  }
+
+  .image-preview img {
+    display: block;
+    max-width: 100%;
+    max-height: 10rem;
+    object-fit: contain;
+    border-radius: 0.375rem;
+  }
+
+  .image-placeholder {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.4rem;
+    background: rgba(15, 23, 42, 0.4);
+    border-radius: 0.375rem;
+    color: rgba(148, 163, 184, 0.5);
+  }
+
+  .image-filename {
+    font-size: 0.65rem;
+    color: rgba(225, 238, 247, 0.75);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .image-meta {
+    display: flex;
+    gap: 0.2rem;
+    flex-wrap: wrap;
+  }
+
+  .meta-tag {
+    background: rgba(255, 255, 255, 0.05);
+    padding: 0.0625rem 0.3rem;
+    border-radius: 0.1875rem;
+    font-size: 0.5rem;
+    color: rgba(148, 163, 184, 0.5);
+  }
+
+  .filename-tag {
+    color: rgba(225, 238, 247, 0.65);
+  }
+
+  .entry-actions {
+    display: flex;
+    gap: 0.2rem;
+    align-items: center;
+  }
+
+  .action-btn {
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+    background: color-mix(in srgb, var(--dock-text-color) 8%, transparent);
+    border: 1px solid color-mix(in srgb, var(--dock-text-color) 15%, transparent);
+    border-radius: 0.35rem;
+    color: color-mix(in srgb, var(--dock-text-color) 60%, transparent);
+    padding: 0.3rem 0.65rem;
+    font-size: 0.65rem;
+    cursor: pointer;
+    transition: background 0.12s, color 0.12s;
+    font-family: inherit;
+  }
+
+  .action-btn:hover {
+    background: color-mix(in srgb, var(--dock-text-color) 18%, transparent);
+    color: var(--dock-text-color);
+  }
+
+  .copy-action {
+    background: rgba(125, 211, 252, 0.12);
+    border-color: rgba(125, 211, 252, 0.25);
+    color: rgba(125, 211, 252, 0.85);
+    font-weight: 500;
+  }
+
+  .copy-action:hover {
+    background: rgba(125, 211, 252, 0.22);
+    border-color: rgba(125, 211, 252, 0.4);
+    color: rgba(125, 211, 252, 1);
+  }
+</style>
