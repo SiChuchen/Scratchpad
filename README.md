@@ -53,10 +53,14 @@ pnpm tauri build
 
 ## 数据存储
 
+数据保存在应用程序 exe 同级的 `data/` 目录中，不写入系统盘。
+
 | 路径 | 内容 |
 |------|------|
-| `%LOCALAPPDATA%\Soma\scratchpad\scratchpad.sqlite3` | 条目元数据（文本内容、折叠状态、视图归属等） |
-| `%LOCALAPPDATA%\Soma\scratch\images\YYYY-MM-DD\` | 图片和文件附件（按日期分目录） |
+| `<exe所在目录>/data/scratchpad.sqlite3` | 条目元数据（文本内容、折叠状态、视图归属等） |
+| `<exe所在目录>/data/assets/YYYY-MM-DD/` | 图片和文件附件（按日期分目录） |
+
+如需清理，直接删除 `data/` 目录即可。
 
 ## 项目结构
 

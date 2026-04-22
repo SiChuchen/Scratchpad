@@ -6,17 +6,13 @@ use mime_guess::from_path as guess_mime;
 use rusqlite::Connection;
 
 use crate::models::entry::{DockEntry, EntryKind, EntryView};
+use crate::storage::connection::data_dir;
 use crate::storage::error::StorageResult;
 use crate::scratchpad::storage::create_dock_entry_internal;
 
 pub fn assets_dir() -> StorageResult<PathBuf> {
-    let base = dirs::data_local_dir().expect("LocalAppData must exist");
     let dated = Utc::now().format("%Y-%m-%d").to_string();
-    let dir = base
-        .join("Soma")
-        .join("scratchpad")
-        .join("assets")
-        .join(dated);
+    let dir = data_dir()?.join("assets").join(dated);
     fs::create_dir_all(&dir)?;
     Ok(dir)
 }

@@ -2,14 +2,32 @@ use std::{fs, io, path::PathBuf};
 use rusqlite::Connection;
 use super::error::{StorageError, StorageResult};
 
-pub fn db_path() -> StorageResult<PathBuf> {
-    let base = dirs::data_local_dir().ok_or_else(|| {
+/// Returns the data directory next to the application executable.
+///
+/// Layout:
+///   <exe_dir>/data/
+///     scratchpad.sqlite3
+///     assets/YYYY-MM-DD/...
+pub fn data_dir() -> StorageResult<PathBuf> {
+    let exe = std::env::current_exe().map_err(|e| {
         StorageError::Io(io::Error::new(
             io::ErrorKind::NotFound,
-            "failed to resolve LocalAppData directory",
+            format!("failed to resolve exe path: {e}"),
         ))
     })?;
-    Ok(base.join("Soma").join("scratchpad").join("scratchpad.sqlite3"))
+    let exe_dir = exe.parent().ok_or_else(|| {
+        StorageError::Io(io::Error::new(
+            io::ErrorKind::NotFound,
+            "exe has no parent directory",
+        ))
+    })?;
+    let dir = exe_dir.join("data");
+    fs::create_dir_all(&dir)?;
+    Ok(dir)
+}
+
+pub fn db_path() -> StorageResult<PathBuf> {
+    Ok(data_dir()?.join("scratchpad.sqlite3"))
 }
 
 pub fn open_db() -> StorageResult<Connection> {
