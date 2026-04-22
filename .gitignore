@@ -7,6 +7,8 @@ src-tauri/gen/
 .worktrees/
 .claude/
 .playwright-mcp/
+AGENTS.md
+CLAUDE.md
 
 # Compiled JS from TypeScript (except src/main.js which is intentionally committed)
 src/lib/**/*.js
