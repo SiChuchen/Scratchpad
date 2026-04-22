@@ -274,25 +274,27 @@
     if (!monitor) return
 
     dockMode = 'minimized'
-    const tabSize = { width: 48, height: 160 }
-    const anchor = anchorToNearestEdge(
-      { x: preferences.dockPositionX, y: preferences.dockPositionY, width: preferences.dockWidth, height: preferences.dockHeight },
-      { width: monitor.size.width, height: monitor.size.height },
-    )
-
-    // Use saved tab position if available, otherwise compute from edge
-    const savedTab = localStorage.getItem('dock-minimized-tab')
-    let rect: { x: number; y: number; width: number; height: number }
-    if (savedTab) {
-      try {
-        const parsed = JSON.parse(savedTab)
-        rect = { x: parsed.x, y: parsed.y, width: tabSize.width, height: tabSize.height }
-      } catch {
-        rect = hiddenTabRect(anchor, tabSize, { width: monitor.size.width, height: monitor.size.height })
-      }
-    } else {
-      rect = hiddenTabRect(anchor, tabSize, { width: monitor.size.width, height: monitor.size.height })
+    // Force all backgrounds transparent for circular minimized look
+    document.documentElement.style.background = 'transparent'
+    document.body.style.background = 'transparent'
+    document.body.style.minWidth = '0'
+    const appEl = document.getElementById('app')!
+    appEl.style.background = 'transparent'
+    appEl.style.backdropFilter = 'none'
+    appEl.style.border = 'none'
+    appEl.style.boxShadow = 'none'
+    appEl.style.borderRadius = '0'
+    appEl.style.overflow = 'hidden'
+    const tabSize = { width: 48, height: 48 }
+    const winRect = { x: preferences.dockPositionX, y: preferences.dockPositionY, width: preferences.dockWidth, height: preferences.dockHeight }
+    const screen = { width: monitor.size.width, height: monitor.size.height }
+    const anchor = anchorToNearestEdge(winRect, screen)
+    const winCenter = {
+      x: winRect.x + Math.round(winRect.width / 2),
+      y: winRect.y + Math.round(winRect.height / 2),
     }
+
+    const rect = hiddenTabRect(anchor, tabSize, screen, winCenter)
 
     await win.setSize(new LogicalSize(rect.width, rect.height))
     await win.setPosition(new LogicalPosition(rect.x, rect.y))
@@ -306,6 +308,17 @@
     const win = getCurrentWindow()
 
     dockMode = 'expanded'
+    // Restore normal styles
+    document.documentElement.style.background = ''
+    document.body.style.background = ''
+    document.body.style.minWidth = ''
+    const appEl = document.getElementById('app')!
+    appEl.style.background = ''
+    appEl.style.backdropFilter = ''
+    appEl.style.border = ''
+    appEl.style.boxShadow = ''
+    appEl.style.borderRadius = ''
+    appEl.style.overflow = ''
     await win.setSize(new LogicalSize(preferences.dockWidth, preferences.dockHeight))
     await win.setPosition(new LogicalPosition(preferences.dockPositionX, preferences.dockPositionY))
     try { await (win as any).setOpacity(1) } catch {}

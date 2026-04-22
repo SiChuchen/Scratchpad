@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { onMount } from 'svelte'
+
   interface Props {
     onRestore: () => void
     onPeek: () => void
@@ -63,38 +65,33 @@
   role="button"
   tabindex="0"
 >
-  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-    <rect x="3" y="3" width="18" height="18" rx="3" />
-    <line x1="9" y1="3" x2="9" y2="21" />
-  </svg>
+  <img src="/app-icon-circle.png" alt="" class="tab-icon" draggable="false" />
 </div>
 
 <style>
   .minimized-tab {
     width: 100%;
     height: 100%;
+    background: transparent;
+    border: none;
+    margin: 0;
+    padding: 0;
+    cursor: default;
     display: flex;
     align-items: center;
     justify-content: center;
-    background: color-mix(in srgb, var(--dock-bg-color, #0f172a) 88%, transparent);
-    backdrop-filter: blur(12px);
-    border: 1px solid color-mix(in srgb, var(--dock-text-color, #e5eef7) 20%, transparent);
-    border-radius: 0.5rem;
-    color: color-mix(in srgb, var(--dock-text-color, #e5eef7) 70%, transparent);
-    cursor: default;
-    font-family: inherit;
-    transition: background 0.15s, border-color 0.15s, color 0.15s;
-    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.25);
   }
 
-  .minimized-tab:hover {
-    background: color-mix(in srgb, var(--dock-bg-color, #0f172a) 95%, transparent);
-    border-color: color-mix(in srgb, var(--dock-text-color, #e5eef7) 40%, transparent);
-    color: var(--dock-text-color, #e5eef7);
-    box-shadow: 0 2px 16px rgba(0, 0, 0, 0.35);
+  .tab-icon {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    pointer-events: none;
+    transition: transform 0.15s ease, filter 0.15s ease;
   }
 
-  .minimized-tab:active {
-    cursor: default;
+  .minimized-tab:hover .tab-icon {
+    transform: scale(1.1);
+    filter: brightness(1.1);
   }
 </style>

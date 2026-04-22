@@ -42,6 +42,20 @@ body {
   border-radius: 0.5rem;
 }
 
+#app.minimized-mode {
+  background: transparent !important;
+  backdrop-filter: none !important;
+  border: none !important;
+  box-shadow: none !important;
+  border-radius: 0 !important;
+  overflow: hidden;
+  min-width: 0;
+}
+
+body.minimized-mode {
+  min-width: 0;
+}
+
 
 ::-webkit-scrollbar {
   width: 3px;

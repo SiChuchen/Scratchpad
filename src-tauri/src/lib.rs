@@ -271,6 +271,26 @@ pub fn run() {
             // Ensure window is focused on startup so keyboard/paste events work
             if let Some(w) = app.get_webview_window("main") {
                 let _ = w.set_focus();
+                // Set window icon for taskbar
+                if let Ok(icon) = tauri::image::Image::from_path("icons/icon.ico") {
+                    let _ = w.set_icon(icon);
+                } else {
+                    // Dev mode fallback: resolve relative to source dir
+                    if let Ok(exe) = std::env::current_exe() {
+                        if let Some(exe_dir) = exe.parent() {
+                            let candidates = [
+                                exe_dir.join("icons").join("icon.ico"),
+                                exe_dir.join("..").join("..").join("icons").join("icon.ico"),
+                            ];
+                            for path in &candidates {
+                                if let Ok(icon) = tauri::image::Image::from_path(path) {
+                                    let _ = w.set_icon(icon);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
             }
 
             Ok(())

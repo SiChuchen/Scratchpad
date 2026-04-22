@@ -366,10 +366,6 @@ fn migrate_legacy_scratchpad_items(conn: &mut Connection) -> StorageResult<usize
 pub fn dock_migrations() -> Vec<Migration> {
     vec![
         Migration::new(1, "create dock schema", DOCK_SCHEMA_SQL),
-        Migration::new(2, "add sort_order to membership tables", r#"
-            ALTER TABLE home_entries ADD COLUMN sort_order REAL NOT NULL DEFAULT 0;
-            ALTER TABLE note_entries ADD COLUMN sort_order REAL NOT NULL DEFAULT 0;
-        "#),
     ]
 }
 

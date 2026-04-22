@@ -15,9 +15,15 @@ describe('window helpers', () => {
   })
 
   it('returns a mostly hidden sliver rect for the right edge', () => {
-    const rect = hiddenTabRect('right', { width: 48, height: 160 }, { width: 1920, height: 1080 })
+    const rect = hiddenTabRect('right', { width: 48, height: 48 }, { width: 1920, height: 1080 })
     expect(rect.x).toBeGreaterThan(1860)
     expect(rect.width).toBe(48)
-    expect(rect.height).toBe(160)
+    expect(rect.height).toBe(48)
+  })
+
+  it('positions tab aligned with window center', () => {
+    const rect = hiddenTabRect('right', { width: 48, height: 48 }, { width: 1920, height: 1080 }, { x: 960, y: 540 })
+    expect(rect.x).toBe(1916)
+    expect(rect.y).toBe(540 - 24)
   })
 })
