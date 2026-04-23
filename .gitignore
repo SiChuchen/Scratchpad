@@ -13,3 +13,6 @@ CLAUDE.md
 # Compiled JS from TypeScript (except src/main.js which is intentionally committed)
 src/lib/**/*.js
 src/lib/**/*.js.map
+
+# Tauri updater signing key (private, never commit)
+tauri-key.pem

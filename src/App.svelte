@@ -17,7 +17,7 @@
   let homeEntries = $state<DockEntry[]>([])
   let noteEntries = $state<DockEntry[]>([])
   let preferences = $state<DockPreferences | null>(null)
-  let toast = $state<{ text: string; kind: 'success' | 'error'; undo?: () => void } | null>(null)
+  let toast = $state<{ text: string; kind: 'success' | 'error'; undo?: () => void; actionLabel?: string } | null>(null)
   let toastTimer: ReturnType<typeof setTimeout> | null = null
 
   onMount(async () => {
@@ -43,7 +43,38 @@
         win.setFocus()
       }
     })
+
+    // Check for updates on startup
+    checkForUpdate()
   })
+
+  // --- Update check ---
+
+  async function checkForUpdate() {
+    try {
+      const { check } = await import('@tauri-apps/plugin-updater')
+      const update = await check()
+      if (update?.available) {
+        showToast(`发现新版本 v${update.version}`, 'success', () => installUpdate(update), '更新')
+      }
+    } catch {
+      // update check is not critical
+    }
+  }
+
+  async function installUpdate(update: any) {
+    showToast('正在下载更新...', 'success')
+    try {
+      await update.downloadAndInstall()
+      showToast('更新完成，即将重启...', 'success')
+      setTimeout(async () => {
+        const { getCurrentWindow } = await import('@tauri-apps/api/window')
+        getCurrentWindow().close()
+      }, 1500)
+    } catch (e) {
+      showToast(`更新失败: ${formatError(e)}`, 'error')
+    }
+  }
 
   // Apply preferences as CSS variables
   $effect(() => {
@@ -499,9 +530,9 @@
 
   // --- Toast ---
 
-  function showToast(text: string, kind: 'success' | 'error' = 'success', undo?: () => void) {
+  function showToast(text: string, kind: 'success' | 'error' = 'success', undo?: () => void, actionLabel?: string) {
     if (toastTimer) clearTimeout(toastTimer)
-    toast = { text, kind, undo }
+    toast = { text, kind, undo, actionLabel }
     toastTimer = setTimeout(() => {
       toast = null
     }, 3000)
@@ -571,7 +602,7 @@
   <div class="toast" class:toast-error={toast.kind === 'error'}>
     <span>{toast.text}</span>
     {#if toast.undo}
-      <button class="toast-undo" onclick={toast.undo}>撤销</button>
+      <button class="toast-undo" onclick={toast.undo}>{toast.actionLabel || '撤销'}</button>
     {/if}
   </div>
 {/if}

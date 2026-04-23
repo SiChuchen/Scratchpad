@@ -17,6 +17,7 @@
     "core:window:allow-is-visible",
     "global-shortcut:allow-register",
     "global-shortcut:allow-unregister",
-    "autostart:default"
+    "autostart:default",
+    "updater:default"
   ]
 }
