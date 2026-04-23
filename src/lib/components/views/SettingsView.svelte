@@ -18,6 +18,12 @@
   let enFontOpen = $state(false)
   let zhFontDirty = $state(false)
   let enFontDirty = $state(false)
+  let proxyDraft = $state('')
+
+  let appVersion = $state('')
+  let updateStatus = $state<'idle' | 'checking' | 'up-to-date' | 'available' | 'downloading' | 'error'>('idle')
+  let updateErrorMsg = $state('')
+  let pendingUpdate: any = $state(null)
 
   onMount(async () => {
     try {
@@ -25,10 +31,25 @@
     } catch {
       installedFonts = []
     }
+    try {
+      const { getVersion } = await import('@tauri-apps/api/app')
+      appVersion = await getVersion()
+    } catch {}
+    proxyDraft = preferences.updateProxy
   })
 
   function update(partial: Partial<DockPreferences>) {
     onChange({ ...preferences, ...partial })
+  }
+
+  function getProxyUrl(): string | undefined {
+    const p = preferences.updateProxy.trim()
+    if (!p) return undefined
+    return p.startsWith('http') ? p : `http://${p}`
+  }
+
+  function saveProxy() {
+    update({ updateProxy: proxyDraft.trim() })
   }
 
   function filteredFonts(query: string): string[] {
@@ -61,7 +82,39 @@
       fontFamilyZh: defaultZh,
       fontFamilyEn: defaultEn,
       launchOnStartup: false,
+      updateProxy: '',
     })
+  }
+
+  async function handleCheckUpdate() {
+    updateStatus = 'checking'
+    updateErrorMsg = ''
+    try {
+      const { check } = await import('@tauri-apps/plugin-updater')
+      const result = await check({ proxy: getProxyUrl() })
+      if (result?.available) {
+        pendingUpdate = result
+        updateStatus = 'available'
+      } else {
+        updateStatus = 'up-to-date'
+      }
+    } catch (e) {
+      updateStatus = 'error'
+      updateErrorMsg = e instanceof Error ? e.message : '检查失败'
+    }
+  }
+
+  async function handleInstallUpdate() {
+    if (!pendingUpdate) return
+    updateStatus = 'downloading'
+    try {
+      await pendingUpdate.downloadAndInstall(undefined, { proxy: getProxyUrl() })
+      const { getCurrentWindow } = await import('@tauri-apps/api/window')
+      getCurrentWindow().close()
+    } catch (e) {
+      updateStatus = 'error'
+      updateErrorMsg = e instanceof Error ? e.message : '更新失败'
+    }
   }
 </script>
 
@@ -180,6 +233,50 @@
         onchange={() => update({ launchOnStartup: !preferences.launchOnStartup })}
       />
     </label>
+
+    <div class="settings-divider"></div>
+
+    <div class="setting-row">
+      <span class="setting-label">更新代理</span>
+      <div class="proxy-field">
+        <input
+          type="text"
+          class="proxy-input"
+          placeholder="例如 127.0.0.1:7890"
+          bind:value={proxyDraft}
+        />
+        <button class="proxy-save-btn" disabled={proxyDraft === preferences.updateProxy} onclick={saveProxy}>保存</button>
+      </div>
+    </div>
+
+    <div class="settings-divider"></div>
+
+    <div class="about-section">
+      <div class="about-header">
+        <span class="about-title">Soma Scratchpad</span>
+        {#if appVersion}
+          <span class="about-version">v{appVersion}</span>
+        {/if}
+      </div>
+      <div class="update-row">
+        {#if updateStatus === 'idle'}
+          <button class="update-btn" onclick={handleCheckUpdate}>检查更新</button>
+        {:else if updateStatus === 'checking'}
+          <span class="update-status">正在检查...</span>
+        {:else if updateStatus === 'up-to-date'}
+          <span class="update-status ok">已是最新版本</span>
+          <button class="update-btn" onclick={() => { updateStatus = 'idle' }}>重新检查</button>
+        {:else if updateStatus === 'available'}
+          <span class="update-status available">发现新版本</span>
+          <button class="update-btn install-btn" onclick={handleInstallUpdate}>立即更新</button>
+        {:else if updateStatus === 'downloading'}
+          <span class="update-status">正在下载并安装...</span>
+        {:else if updateStatus === 'error'}
+          <span class="update-status err">{updateErrorMsg}</span>
+          <button class="update-btn" onclick={handleCheckUpdate}>重试</button>
+        {/if}
+      </div>
+    </div>
 
     <div class="setting-row" style="margin-top: 0.5rem;">
       <span class="setting-label"></span>
@@ -355,5 +452,140 @@
   .reset-btn:hover {
     background: rgba(248, 113, 113, 0.1);
     border-color: rgba(248, 113, 113, 0.3);
+  }
+
+  .settings-divider {
+    height: 1px;
+    background: rgba(148, 163, 184, 0.08);
+    margin: 0.25rem 0;
+  }
+
+  .proxy-field {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+  }
+
+  .proxy-input {
+    flex: 1;
+    background: rgba(15, 23, 42, 0.5);
+    border: 1px solid rgba(148, 163, 184, 0.15);
+    border-radius: 0.25rem;
+    color: #e5eef7;
+    font-size: 0.6rem;
+    padding: 0.2rem 0.3rem;
+    font-family: inherit;
+    min-width: 0;
+  }
+
+  .proxy-input:focus {
+    outline: none;
+    border-color: rgba(125, 211, 252, 0.4);
+  }
+
+  .proxy-input::placeholder {
+    color: rgba(148, 163, 184, 0.35);
+  }
+
+  .proxy-save-btn {
+    background: rgba(15, 23, 42, 0.5);
+    border: 1px solid rgba(148, 163, 184, 0.2);
+    color: rgba(148, 163, 184, 0.7);
+    font-size: 0.6rem;
+    padding: 0.2rem 0.5rem;
+    border-radius: 0.25rem;
+    cursor: pointer;
+    font-family: inherit;
+    flex-shrink: 0;
+    transition: background 0.12s, color 0.12s;
+  }
+
+  .proxy-save-btn:hover:not(:disabled) {
+    background: rgba(148, 163, 184, 0.1);
+    color: rgba(225, 238, 247, 0.9);
+  }
+
+  .proxy-save-btn:disabled {
+    opacity: 0.35;
+    cursor: default;
+  }
+
+  .about-section {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    padding: 0.35rem 0;
+  }
+
+  .about-header {
+    display: flex;
+    align-items: baseline;
+    gap: 0.4rem;
+  }
+
+  .about-title {
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: rgba(225, 238, 247, 0.85);
+  }
+
+  .about-version {
+    font-size: 0.6rem;
+    color: rgba(148, 163, 184, 0.5);
+  }
+
+  .update-row {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+
+  .update-status {
+    font-size: 0.6rem;
+    color: rgba(148, 163, 184, 0.5);
+  }
+
+  .update-status.ok {
+    color: rgba(74, 222, 128, 0.8);
+  }
+
+  .update-status.available {
+    color: rgba(125, 211, 252, 0.9);
+    font-weight: 500;
+  }
+
+  .update-status.err {
+    color: rgba(248, 113, 113, 0.85);
+  }
+
+  .update-btn {
+    background: rgba(15, 23, 42, 0.5);
+    border: 1px solid rgba(148, 163, 184, 0.2);
+    color: rgba(148, 163, 184, 0.7);
+    font-size: 0.6rem;
+    padding: 0.2rem 0.6rem;
+    border-radius: 0.25rem;
+    cursor: pointer;
+    font-family: inherit;
+    transition: background 0.12s, color 0.12s, border-color 0.12s;
+  }
+
+  .update-btn:hover {
+    background: rgba(148, 163, 184, 0.1);
+    color: rgba(225, 238, 247, 0.9);
+    border-color: rgba(148, 163, 184, 0.3);
+  }
+
+  .install-btn {
+    background: rgba(125, 211, 252, 0.12);
+    border-color: rgba(125, 211, 252, 0.3);
+    color: rgba(125, 211, 252, 0.9);
+    font-weight: 500;
+  }
+
+  .install-btn:hover {
+    background: rgba(125, 211, 252, 0.22);
+    border-color: rgba(125, 211, 252, 0.5);
   }
 </style>

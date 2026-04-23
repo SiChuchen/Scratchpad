@@ -19,6 +19,7 @@ pub struct DockPreferences {
     pub font_family_zh: String,
     pub font_family_en: String,
     pub launch_on_startup: bool,
+    pub update_proxy: String,
 }
 
 impl Default for DockPreferences {
@@ -39,6 +40,7 @@ impl Default for DockPreferences {
             font_family_zh: sys_font.clone(),
             font_family_en: sys_font,
             launch_on_startup: false,
+            update_proxy: String::new(),
         }
     }
 }

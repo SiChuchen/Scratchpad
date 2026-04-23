@@ -53,7 +53,9 @@
   async function checkForUpdate() {
     try {
       const { check } = await import('@tauri-apps/plugin-updater')
-      const update = await check()
+      const proxy = preferences?.updateProxy?.trim()
+      const proxyUrl = proxy ? (proxy.startsWith('http') ? proxy : `http://${proxy}`) : undefined
+      const update = await check({ proxy: proxyUrl })
       if (update?.available) {
         showToast(`发现新版本 v${update.version}`, 'success', () => installUpdate(update), '更新')
       }

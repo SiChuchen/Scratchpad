@@ -35,4 +35,5 @@ export interface DockPreferences {
   fontFamilyZh: string
   fontFamilyEn: string
   launchOnStartup: boolean
+  updateProxy: string
 }

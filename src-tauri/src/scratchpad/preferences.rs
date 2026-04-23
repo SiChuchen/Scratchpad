@@ -21,6 +21,7 @@ pub fn save_preferences(conn: &mut Connection, prefs: &DockPreferences) -> Stora
         ("font_family_zh", prefs.font_family_zh.clone()),
         ("font_family_en", prefs.font_family_en.clone()),
         ("launch_on_startup", prefs.launch_on_startup.to_string()),
+        ("update_proxy", prefs.update_proxy.clone()),
     ] {
         tx.execute(
             "INSERT INTO preferences(key, value) VALUES (?1, ?2)",
@@ -80,6 +81,9 @@ pub fn load_preferences(conn: &Connection) -> StorageResult<DockPreferences> {
     }
     if let Some(v) = map.get("launch_on_startup") {
         prefs.launch_on_startup = v.parse().unwrap_or(false);
+    }
+    if let Some(v) = map.get("update_proxy") {
+        prefs.update_proxy = v.clone();
     }
 
     Ok(prefs)
