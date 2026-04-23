@@ -9,6 +9,7 @@ use tauri::Manager;
 
 pub struct AppState {
     pub db: Mutex<Connection>,
+    pub main_geometry: Mutex<Option<system::tab_controller::MainWindowGeometry>>,
 }
 
 // --- Dock entry IPC commands ---
@@ -188,6 +189,31 @@ async fn ipc_toggle_always_on_top(app: tauri::AppHandle) -> Result<serde_json::V
     Ok(serde_json::json!({"always_on_top": !current}))
 }
 
+// --- Native window region ---
+
+#[tauri::command]
+fn ipc_window_apply_circle_region(
+    app: tauri::AppHandle,
+    label: String,
+) -> Result<(), String> {
+    system::window::apply_circle_region(&app, &label)
+}
+
+#[tauri::command]
+fn ipc_window_clear_region(
+    app: tauri::AppHandle,
+    label: String,
+) -> Result<(), String> {
+    system::window::clear_region(&app, &label)
+}
+
+#[tauri::command]
+fn ipc_dock_restore_from_tab(
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    system::window::restore_from_tab(&app)
+}
+
 // --- DB initialization ---
 
 fn init_db() -> Connection {
@@ -206,6 +232,7 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(AppState {
             db: Mutex::new(init_db()),
+            main_geometry: Mutex::new(None),
         })
         .invoke_handler(tauri::generate_handler![
             ipc_entries_create_text,
@@ -223,6 +250,9 @@ pub fn run() {
             ipc_preferences_set,
             ipc_preferences_list_fonts,
             ipc_toggle_always_on_top,
+            ipc_window_apply_circle_region,
+            ipc_window_clear_region,
+            ipc_dock_restore_from_tab,
         ])
         .setup(|app| {
             // System tray menu
@@ -283,24 +313,32 @@ pub fn run() {
             // Ensure window is focused on startup so keyboard/paste events work
             if let Some(w) = app.get_webview_window("main") {
                 let _ = w.set_focus();
-                // Set window icon for taskbar
+            }
+
+            // Set window icon for all windows (taskbar, alt-tab, etc.)
+            let icon_result = (|| -> Option<tauri::image::Image> {
                 if let Ok(icon) = tauri::image::Image::from_path("icons/icon.ico") {
-                    let _ = w.set_icon(icon);
-                } else {
-                    // Dev mode fallback: resolve relative to source dir
-                    if let Ok(exe) = std::env::current_exe() {
-                        if let Some(exe_dir) = exe.parent() {
-                            let candidates = [
-                                exe_dir.join("icons").join("icon.ico"),
-                                exe_dir.join("..").join("..").join("icons").join("icon.ico"),
-                            ];
-                            for path in &candidates {
-                                if let Ok(icon) = tauri::image::Image::from_path(path) {
-                                    let _ = w.set_icon(icon);
-                                    break;
-                                }
-                            }
-                        }
+                    return Some(icon);
+                }
+                // Dev mode fallback: resolve relative to exe directory
+                let exe = std::env::current_exe().ok()?;
+                let exe_dir = exe.parent()?;
+                let candidates = [
+                    exe_dir.join("icons").join("icon.ico"),
+                    exe_dir.join("..").join("..").join("icons").join("icon.ico"),
+                ];
+                for path in &candidates {
+                    if let Ok(icon) = tauri::image::Image::from_path(path) {
+                        return Some(icon);
+                    }
+                }
+                None
+            })();
+
+            if let Some(icon) = icon_result {
+                for label in ["main", "minimized-tab"] {
+                    if let Some(w) = app.get_webview_window(label) {
+                        let _ = w.set_icon(icon.clone());
                     }
                 }
             }
