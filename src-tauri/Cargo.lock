@@ -3535,6 +3535,7 @@ dependencies = [
  "tauri-plugin-global-shortcut",
  "tauri-plugin-updater",
  "thiserror 1.0.69",
+ "windows-sys 0.59.0",
  "winreg 0.52.0",
 ]
 
