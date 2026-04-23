@@ -51,8 +51,11 @@ windows-sys = { version = "0.59", features = [
     "Win32_UI_WindowsAndMessaging",
     "Win32_UI_Shell",
     "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_HiDpi",
 ] }
 ```
+
+`Win32_UI_HiDpi` provides `GetDpiForWindow`, needed for the DockPreferences fallback coordinate conversion.
 
 - [ ] **Step 2: Verify compilation**
 
@@ -63,7 +66,7 @@ Expected: compiles with no errors (features only add bindings, no code changes y
 
 ```bash
 git add src-tauri/Cargo.toml src-tauri/Cargo.lock
-git commit -m "add windows-sys UI/Shell/Input features for native tab controller"
+git commit -m "add windows-sys UI/Shell/Input/HiDpi features for native tab controller"
 ```
 
 ---
@@ -337,19 +340,16 @@ pub fn install(app: &tauri::AppHandle, hwnd: HWND) {
         win_origin: (0, 0),
         app: app.clone(),
     });
+    // Save raw pointer BEFORE passing ownership. After into_raw, `controller` is moved.
+    let ptr = Box::into_raw(controller);
     let ok = unsafe {
-        SetWindowSubclass(
-            hwnd,
-            Some(subclass_proc),
-            0,
-            Box::into_raw(controller) as usize,
-        )
+        SetWindowSubclass(hwnd, Some(subclass_proc), 0, ptr as usize)
     };
     if ok != 0 {
         SUBCLASS_INSTALLED.store(true, Ordering::SeqCst);
     } else {
-        // Installation failed — free the box, don't set the flag, allow retry
-        unsafe { drop(Box::from_raw(Box::into_raw(controller))); }
+        // Installation failed — free via saved pointer, don't set flag, allow retry
+        unsafe { drop(Box::from_raw(ptr)); }
         eprintln!("tab_controller: SetWindowSubclass failed");
     }
 }
@@ -366,7 +366,7 @@ unsafe extern "system" fn subclass_proc(
 ) -> LRESULT {
     let controller = &mut *(data as *mut TabController);
 
-    match msg {
+    let handled = match msg {
         WM_LBUTTONDOWN => handle_lbuttondown(hwnd, controller, wparam, lparam),
         WM_TIMER => handle_timer(hwnd, controller, wparam),
         WM_MOUSEMOVE => handle_mousemove(hwnd, controller, lparam),
@@ -380,15 +380,21 @@ unsafe extern "system" fn subclass_proc(
             SUBCLASS_INSTALLED.store(false, Ordering::SeqCst);
             return DefSubclassProc(hwnd, msg, wparam, lparam);
         }
-        _ => return DefSubclassProc(hwnd, msg, wparam, lparam),
-    }
+        _ => false,
+    };
 
-    LRESULT(0)
+    if handled {
+        LRESULT(0)
+    } else {
+        DefSubclassProc(hwnd, msg, wparam, lparam)
+    }
 }
 
 // --- Message handlers ---
+// Each returns true if the message was fully handled (return 0 to DefWindowProc),
+// or false if it should fall through to DefSubclassProc.
 
-fn handle_lbuttondown(hwnd: HWND, ctrl: &mut TabController, _wparam: usize, _lparam: isize) {
+fn handle_lbuttondown(hwnd: HWND, ctrl: &mut TabController, _wparam: usize, _lparam: isize) -> bool {
     let mut pt = POINT { x: 0, y: 0 };
     unsafe { GetCursorPos(&mut pt) };
     let mut rect = RECT { left: 0, top: 0, right: 0, bottom: 0 };
@@ -402,10 +408,11 @@ fn handle_lbuttondown(hwnd: HWND, ctrl: &mut TabController, _wparam: usize, _lpa
         SetCapture(hwnd);
         SetTimer(hwnd, TAB_LONG_PRESS_TIMER_ID, LONG_PRESS_MS, None);
     }
+    true
 }
 
-fn handle_timer(hwnd: HWND, ctrl: &mut TabController, wparam: usize) {
-    if wparam != TAB_LONG_PRESS_TIMER_ID { return; }
+fn handle_timer(hwnd: HWND, ctrl: &mut TabController, wparam: usize) -> bool {
+    if wparam != TAB_LONG_PRESS_TIMER_ID { return false; }
     match ctrl.state {
         TabState::Pressed => {
             unsafe { KillTimer(hwnd, TAB_LONG_PRESS_TIMER_ID) };
@@ -413,9 +420,10 @@ fn handle_timer(hwnd: HWND, ctrl: &mut TabController, wparam: usize) {
         }
         _ => {}
     }
+    true
 }
 
-fn handle_mousemove(hwnd: HWND, ctrl: &mut TabController, _lparam: isize) {
+fn handle_mousemove(hwnd: HWND, ctrl: &mut TabController, _lparam: isize) -> bool {
     match ctrl.state {
         TabState::Dragging => {
             // Safety check: is left button still held?
@@ -425,7 +433,7 @@ fn handle_mousemove(hwnd: HWND, ctrl: &mut TabController, _lparam: isize) {
                 unsafe { ReleaseCapture() };
                 ctrl.state = TabState::Idle;
                 snap_to_edge(hwnd);
-                return;
+                return true;
             }
             let mut pt = POINT { x: 0, y: 0 };
             unsafe { GetCursorPos(&mut pt) };
@@ -436,12 +444,13 @@ fn handle_mousemove(hwnd: HWND, ctrl: &mut TabController, _lparam: isize) {
             unsafe {
                 SetWindowPos(hwnd, HWND(0), new_x, new_y, 0, 0, SWP_NOSIZE | SWP_NOZORDER);
             }
+            true
         }
-        _ => {} // let other messages fall through to DefSubclassProc
+        _ => false, // Not dragging — fall through to DefSubclassProc
     }
 }
 
-fn handle_lbuttonup(hwnd: HWND, ctrl: &mut TabController) {
+fn handle_lbuttonup(hwnd: HWND, ctrl: &mut TabController) -> bool {
     match ctrl.state {
         TabState::Pressed => {
             // Short click → restore main window
@@ -449,28 +458,32 @@ fn handle_lbuttonup(hwnd: HWND, ctrl: &mut TabController) {
             unsafe { ReleaseCapture() };
             ctrl.state = TabState::Idle;
             restore_main_window(&ctrl.app);
+            true
         }
         TabState::Dragging => {
             // Drag finished → snap to edge
             unsafe { ReleaseCapture() };
             ctrl.state = TabState::Idle;
             snap_to_edge(hwnd);
+            true
         }
-        TabState::Idle => {}
+        TabState::Idle => false,
     }
 }
 
-fn handle_capture_changed(hwnd: HWND, ctrl: &mut TabController) {
+fn handle_capture_changed(hwnd: HWND, ctrl: &mut TabController) -> bool {
     unsafe { KillTimer(hwnd, TAB_LONG_PRESS_TIMER_ID) };
     ctrl.state = TabState::Idle;
+    true
 }
 
-fn handle_cancel_mode(hwnd: HWND, ctrl: &mut TabController) {
+fn handle_cancel_mode(hwnd: HWND, ctrl: &mut TabController) -> bool {
     unsafe {
         KillTimer(hwnd, TAB_LONG_PRESS_TIMER_ID);
         ReleaseCapture();
     }
     ctrl.state = TabState::Idle;
+    true
 }
 
 fn cleanup(hwnd: HWND, ctrl: &mut TabController) {
@@ -567,7 +580,7 @@ fn restore_main_window(app: &tauri::AppHandle) {
                 Ok(prefs) => {
                     if let Ok(hwnd) = main.hwnd() {
                         let hwnd = hwnd.0 as HWND;
-                        let dpi = unsafe { windows_sys::Win32::UI::WindowsAndMessaging::GetDpiForWindow(hwnd) };
+                        let dpi = unsafe { windows_sys::Win32::UI::HiDpi::GetDpiForWindow(hwnd) };
                         let scale = dpi as f32 / 96.0;
                         let px = (prefs.dock_position_x * scale as f64) as i32;
                         let py = (prefs.dock_position_y * scale as f64) as i32;
@@ -780,19 +793,19 @@ fn ipc_dock_minimize_to_tab(
 
     // 2. Sync to DockPreferences (convert physical → logical)
     {
-        let dpi = unsafe { windows_sys::Win32::UI::WindowsAndMessaging::GetDpiForWindow(main_hwnd) };
+        let dpi = unsafe { windows_sys::Win32::UI::HiDpi::GetDpiForWindow(main_hwnd) };
         let scale = dpi as f64 / 96.0;
-        let db = state.db.lock().unwrap();
+        // Single mutable guard: read → modify → write, then drop before any other db access
+        let mut db = state.db.lock().unwrap();
         let mut prefs = scratchpad::preferences::load_preferences(&db)
             .map_err(|e| e.to_string())?;
         prefs.dock_position_x = geo.x as f64 / scale;
         prefs.dock_position_y = geo.y as f64 / scale;
         prefs.dock_width = geo.width as f64 / scale;
         prefs.dock_height = geo.height as f64 / scale;
-        drop(geo); // borrow ends before mutable db access
-        let mut db2 = state.db.lock().unwrap();
-        scratchpad::preferences::save_preferences(&mut db2, &prefs)
+        scratchpad::preferences::save_preferences(&mut db, &prefs)
             .map_err(|e| e.to_string())?;
+        drop(db); // release the mutex guard before continuing
     }
 
     // 3. Get monitor work rect
