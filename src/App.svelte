@@ -6,14 +6,12 @@
   import CategoriesView from '$lib/components/views/CategoriesView.svelte'
   import NoteView from '$lib/components/views/NoteView.svelte'
   import SettingsView from '$lib/components/views/SettingsView.svelte'
-  import MinimizedTab from '$lib/components/MinimizedTab.svelte'
   import { dockApi } from '$lib/api/dock'
   import { insertHomeEntry, removeEntryFromView } from '$lib/state/dock'
-  import { anchorToNearestEdge, hiddenTabRect } from '$lib/state/window'
+
   import type { DockEntry, DockPreferences, DockView } from '$lib/types/dock'
 
   let currentView = $state<DockView>('home')
-  let dockMode = $state<'expanded' | 'minimized'>('expanded')
   let homeEntries = $state<DockEntry[]>([])
   let noteEntries = $state<DockEntry[]>([])
   let preferences = $state<DockPreferences | null>(null)
@@ -311,78 +309,12 @@
     }
   }
 
-  let hideTimer: ReturnType<typeof setTimeout> | null = null
-
   async function minimize() {
-    if (!preferences) return
-    const { getCurrentWindow, currentMonitor, LogicalSize, LogicalPosition } = await import('@tauri-apps/api/window')
-    const win = getCurrentWindow()
-    const monitor = await currentMonitor()
-    if (!monitor) return
-
-    dockMode = 'minimized'
-    // Force all backgrounds transparent for circular minimized look
-    document.documentElement.style.background = 'transparent'
-    document.body.style.background = 'transparent'
-    document.body.style.minWidth = '0'
-    const appEl = document.getElementById('app')!
-    appEl.style.background = 'transparent'
-    appEl.style.backdropFilter = 'none'
-    appEl.style.border = 'none'
-    appEl.style.boxShadow = 'none'
-    appEl.style.borderRadius = '0'
-    appEl.style.overflow = 'hidden'
-    const tabSize = { width: 48, height: 48 }
-    const winRect = { x: preferences.dockPositionX, y: preferences.dockPositionY, width: preferences.dockWidth, height: preferences.dockHeight }
-    const screen = { width: monitor.size.width, height: monitor.size.height }
-    const anchor = anchorToNearestEdge(winRect, screen)
-    const winCenter = {
-      x: winRect.x + Math.round(winRect.width / 2),
-      y: winRect.y + Math.round(winRect.height / 2),
+    try {
+      await invoke('ipc_dock_minimize_to_tab')
+    } catch (e) {
+      showToast(`最小化失败: ${formatError(e)}`, 'error')
     }
-
-    const rect = hiddenTabRect(anchor, tabSize, screen, winCenter)
-
-    await win.setSize(new LogicalSize(rect.width, rect.height))
-    await win.setPosition(new LogicalPosition(rect.x, rect.y))
-    scheduleAutoHide()
-  }
-
-  async function restoreFromMinimized() {
-    if (!preferences) return
-    if (hideTimer) clearTimeout(hideTimer)
-    const { getCurrentWindow, LogicalSize, LogicalPosition } = await import('@tauri-apps/api/window')
-    const win = getCurrentWindow()
-
-    dockMode = 'expanded'
-    // Restore normal styles
-    document.documentElement.style.background = ''
-    document.body.style.background = ''
-    document.body.style.minWidth = ''
-    const appEl = document.getElementById('app')!
-    appEl.style.background = ''
-    appEl.style.backdropFilter = ''
-    appEl.style.border = ''
-    appEl.style.boxShadow = ''
-    appEl.style.borderRadius = ''
-    appEl.style.overflow = ''
-    await win.setSize(new LogicalSize(preferences.dockWidth, preferences.dockHeight))
-    await win.setPosition(new LogicalPosition(preferences.dockPositionX, preferences.dockPositionY))
-    try { await (win as any).setOpacity(1) } catch {}
-  }
-
-  async function peekTab() {
-    if (hideTimer) clearTimeout(hideTimer)
-    const { getCurrentWindow } = await import('@tauri-apps/api/window')
-    try { await (getCurrentWindow() as any).setOpacity(1) } catch {}
-  }
-
-  function scheduleAutoHide() {
-    if (hideTimer) clearTimeout(hideTimer)
-    hideTimer = setTimeout(async () => {
-      const { getCurrentWindow } = await import('@tauri-apps/api/window')
-      try { await (getCurrentWindow() as any).setOpacity(0.35) } catch {}
-    }, 2500)
   }
 
   // --- Ctrl+click drag ---
@@ -393,7 +325,7 @@
 
   function handleKeyDown(e: KeyboardEvent) {
     if (e.key === 'Control') ctrlHeld = true
-    if (e.ctrlKey && e.code === 'KeyV' && dockMode !== 'minimized') {
+    if (e.ctrlKey && e.code === 'KeyV') {
       const target = e.target as HTMLElement
       if (target.closest('textarea, input')) return
       pasteConsumed = false
@@ -410,7 +342,6 @@
   // --- Global paste ---
 
   async function handleGlobalPaste(event: ClipboardEvent) {
-    if (dockMode === 'minimized') return
     const target = event.target as HTMLElement
     const inEditor = !!target.closest('textarea, input')
 
@@ -512,7 +443,6 @@
   }
 
   async function handleNativeFileDrop(paths: string[]) {
-    if (dockMode === 'minimized') return
     try {
       const view: 'home' | 'note' = currentView === 'note' ? 'note' : 'home'
       for (const path of paths) {
@@ -566,9 +496,6 @@
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="app-shell" class:ctrl-drag={ctrlHeld} onmousedown={handleAppPointerDown}>
-{#if dockMode === 'minimized'}
-  <MinimizedTab onRestore={restoreFromMinimized} onPeek={peekTab} onHide={scheduleAutoHide} />
-{:else}
   <TopBar {currentView} onNavigate={navigate} onToggleSettings={toggleSettings} onMinimize={minimize} />
 
   {#if currentView === 'home'}
@@ -613,7 +540,6 @@
     onChange={updatePreferences}
     onBack={() => navigate('home')}
   />
-{/if}
 {/if}
 </div>
 
