@@ -47,6 +47,7 @@ pub struct DockEntry {
     pub height: Option<i64>,
     pub size_bytes: Option<i64>,
     pub collapsed: bool,
+    pub title: Option<String>,
     pub in_home: bool,
     pub in_note: bool,
     pub source: String,

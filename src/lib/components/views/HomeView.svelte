@@ -11,6 +11,7 @@
     onCreateText: (content: string) => void
     onImportEntry: (entry: DockEntry) => void
     onUpdateText: (id: string, content: string) => void
+    onRename: (id: string, title: string | null) => void
     onCopy: (content: string) => void
     onCopyPath: (path: string) => void
   }
@@ -23,6 +24,7 @@
     onCreateText,
     onImportEntry,
     onUpdateText,
+    onRename,
     onCopy,
     onCopyPath,
   }: Props = $props()
@@ -43,6 +45,7 @@
       ? entries.filter((e) => {
           const q = searchQuery.toLowerCase()
           return (
+            (e.title && e.title.toLowerCase().includes(q)) ||
             (e.content && e.content.toLowerCase().includes(q)) ||
             (e.fileName && e.fileName.toLowerCase().includes(q))
           )
@@ -197,6 +200,7 @@
               {onDeleteFromView}
               {onAddToNote}
               {onUpdateText}
+              {onRename}
               {onCopy}
               {onCopyPath}
             />

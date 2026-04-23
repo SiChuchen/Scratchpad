@@ -75,6 +75,16 @@ fn ipc_entries_toggle_collapse(
 }
 
 #[tauri::command]
+fn ipc_entries_rename(
+    state: tauri::State<AppState>,
+    id: String,
+    title: Option<String>,
+) -> Result<(), String> {
+    let mut conn = state.db.lock().map_err(|e| e.to_string())?;
+    scratchpad::storage::rename_entry(&mut conn, &id, title.as_deref()).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 fn ipc_entries_reorder(
     state: tauri::State<AppState>,
     view: models::entry::EntryView,
@@ -204,6 +214,7 @@ pub fn run() {
             ipc_entries_remove_from_view,
             ipc_entries_update_text,
             ipc_entries_toggle_collapse,
+            ipc_entries_rename,
             ipc_entries_reorder,
             ipc_entries_import_file,
             ipc_entries_import_image_bytes,

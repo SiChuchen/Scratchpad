@@ -10,6 +10,7 @@
     onDeleteFromView: (entryId: string) => void
     onAddToNote: (entryId: string) => void
     onUpdateText: (id: string, content: string) => void
+    onRename: (id: string, title: string | null) => void
     onCopy: (content: string) => void
     onCopyPath: (path: string) => void
   }
@@ -20,9 +21,55 @@
     onDeleteFromView,
     onAddToNote,
     onUpdateText,
+    onRename,
     onCopy,
     onCopyPath,
   }: Props = $props()
+
+  let editingTitle = $state(false)
+  let titleDraft = $state('')
+  let composing = $state(false)
+
+  function autofocus(el: HTMLInputElement) {
+    setTimeout(() => el.focus(), 0)
+  }
+
+  function startRename(e: MouseEvent) {
+    e.stopPropagation()
+    e.preventDefault()
+    titleDraft = entry.title || ''
+    editingTitle = true
+  }
+
+  function commitRename() {
+    if (!editingTitle || composing) return
+    editingTitle = false
+    const trimmed = titleDraft.trim()
+    const newTitle = trimmed || null
+    if (newTitle !== entry.title) {
+      onRename(entry.id, newTitle)
+    }
+  }
+
+  function cancelRename() {
+    editingTitle = false
+  }
+
+  function handleTitleKeydown(e: KeyboardEvent) {
+    e.stopPropagation()
+    if (e.isComposing) return
+    if (e.key === 'Enter') commitRename()
+    if (e.key === 'Escape') cancelRename()
+  }
+
+  function handleCompositionEnd() {
+    composing = false
+  }
+
+  function handleDblClick() {
+    if (editingTitle) return
+    onToggleCollapse(entry.id)
+  }
 
   function handleCollapsedCopy() {
     if (entry.kind === 'text') {
@@ -63,7 +110,11 @@
 
   let previewText = $derived.by(() => {
     if (entry.collapsed) {
-      if (entry.kind === 'text') return (entry.content || '').slice(0, 40)
+      if (entry.kind === 'text') {
+        const lines = (entry.content || '').split(/\r?\n/)
+        const firstLine = lines.find(l => l.trim()) || ''
+        return firstLine.length > 10 ? firstLine.slice(0, 10) + '…' : firstLine
+      }
       if (entry.fileName) return entry.fileName
       return ''
     }
@@ -71,7 +122,8 @@
   })
 </script>
 
-<article class="entry-card">
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<article class="entry-card" class:collapsed={entry.collapsed} ondblclick={handleDblClick}>
   <header class="entry-header">
     <span class="kind-badge" class:text={entry.kind === 'text'} class:image={entry.kind === 'image'} class:file={entry.kind === 'file'}>
       {kindLabel}
@@ -79,14 +131,31 @@
     {#if sourceLabel}
       <span class="source-badge">{sourceLabel}</span>
     {/if}
-    {#if entry.collapsed && previewText}
-      <span class="entry-preview">{previewText}</span>
-      <button class="icon-btn copy-collapsed" onclick={() => handleCollapsedCopy()} title="复制">
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-          <rect x="9" y="9" width="13" height="13" rx="2" />
-          <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-        </svg>
-      </button>
+    {#if entry.collapsed}
+      {#if editingTitle}
+        <input
+          class="title-edit-input"
+          type="text"
+          bind:value={titleDraft}
+          use:autofocus
+          onmousedown={(e) => e.stopPropagation()}
+          onclick={(e) => e.stopPropagation()}
+          onblur={commitRename}
+          onkeydown={handleTitleKeydown}
+          oncompositionstart={() => composing = true}
+          oncompositionend={handleCompositionEnd}
+        />
+      {:else if entry.title || previewText}
+        <span class="entry-preview" onclick={startRename}>{entry.title || previewText}</span>
+        <button class="icon-btn copy-collapsed" onclick={() => handleCollapsedCopy()} title="复制">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <rect x="9" y="9" width="13" height="13" rx="2" />
+            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+          </svg>
+        </button>
+      {/if}
+    {:else if entry.title}
+      <span class="entry-title" onclick={startRename}>{entry.title}</span>
     {/if}
     <span class="entry-time">{timeLabel}</span>
     <div class="entry-header-actions">
@@ -142,6 +211,15 @@
     border-color: rgba(148, 163, 184, 0.2);
   }
 
+  .entry-card.collapsed {
+    padding: 0.25rem 0.45rem;
+  }
+
+  .entry-card.collapsed .entry-header-actions .icon-btn {
+    width: 1.4rem;
+    height: 1.4rem;
+  }
+
   .entry-header {
     display: flex;
     align-items: center;
@@ -182,13 +260,18 @@
   }
 
   .entry-preview {
-    font-size: 0.55rem;
-    color: rgba(148, 163, 184, 0.5);
+    font-size: 0.65rem;
+    color: rgba(148, 163, 184, 0.55);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
     flex: 1;
     min-width: 0;
+    cursor: pointer;
+  }
+
+  .entry-preview:hover {
+    color: rgba(148, 163, 184, 0.85);
   }
 
   .entry-time {
@@ -258,5 +341,37 @@
     background: rgba(125, 211, 252, 0.2);
     border-color: rgba(125, 211, 252, 0.4);
     color: rgba(125, 211, 252, 1);
+  }
+
+  .title-edit-input {
+    flex: 1;
+    min-width: 0;
+    background: rgba(15, 23, 42, 0.6);
+    border: 1px solid rgba(125, 211, 252, 0.3);
+    border-radius: 0.2rem;
+    color: var(--dock-text-color);
+    font-size: 0.55rem;
+    font-family: inherit;
+    padding: 0.1rem 0.3rem;
+    outline: none;
+  }
+
+  .title-edit-input:focus {
+    border-color: rgba(125, 211, 252, 0.5);
+  }
+
+  .entry-title {
+    font-size: 0.55rem;
+    color: rgba(148, 163, 184, 0.6);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    flex: 1;
+    min-width: 0;
+    cursor: pointer;
+  }
+
+  .entry-title:hover {
+    color: rgba(148, 163, 184, 0.9);
   }
 </style>

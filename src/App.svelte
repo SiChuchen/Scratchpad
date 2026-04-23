@@ -201,6 +201,20 @@
     }
   }
 
+  async function renameEntry(id: string, title: string | null) {
+    try {
+      await dockApi.rename(id, title)
+      homeEntries = homeEntries.map((e) =>
+        e.id === id ? { ...e, title } : e,
+      )
+      noteEntries = noteEntries.map((e) =>
+        e.id === id ? { ...e, title } : e,
+      )
+    } catch (e) {
+      showToast(`重命名失败: ${formatError(e)}`, 'error')
+    }
+  }
+
   async function copyContent(content: string) {
     try {
       await navigator.clipboard.writeText(content)
@@ -566,6 +580,7 @@
     onCreateText={createHomeText}
     onImportEntry={importHomeEntry}
     onUpdateText={updateText}
+    onRename={renameEntry}
     onCopy={copyContent}
     onCopyPath={copyPath}
   />
@@ -576,6 +591,7 @@
     onDeleteFromView={deleteFromAnyView}
     onAddToNote={addToNote}
     onUpdateText={updateText}
+    onRename={renameEntry}
     onCopy={copyContent}
     onCopyPath={copyPath}
   />
@@ -587,6 +603,7 @@
     onCreateText={createNoteText}
     onImportEntry={importNoteEntry}
     onUpdateText={updateText}
+    onRename={renameEntry}
     onCopy={copyContent}
     onCopyPath={copyPath}
   />

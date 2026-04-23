@@ -13,6 +13,7 @@ export interface DockEntry {
   height: number | null
   sizeBytes: number | null
   collapsed: boolean
+  title: string | null
   inHome: boolean
   inNote: boolean
   source: string

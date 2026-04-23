@@ -30,6 +30,10 @@ export const dockApi = {
     return invoke<void>('ipc_entries_reorder', { view, orderedIds })
   },
 
+  rename(id: string, title: string | null) {
+    return invoke<void>('ipc_entries_rename', { id, title })
+  },
+
   getPreferences() {
     return invoke<DockPreferences>('ipc_preferences_get')
   },

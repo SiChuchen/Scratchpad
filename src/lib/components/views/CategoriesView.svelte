@@ -8,6 +8,7 @@
     onDeleteFromView: (entryId: string) => void
     onAddToNote: (entryId: string) => void
     onUpdateText: (id: string, content: string) => void
+    onRename: (id: string, title: string | null) => void
     onCopy: (content: string) => void
     onCopyPath: (path: string) => void
   }
@@ -18,6 +19,7 @@
     onDeleteFromView,
     onAddToNote,
     onUpdateText,
+    onRename,
     onCopy,
     onCopyPath,
   }: Props = $props()
@@ -63,6 +65,7 @@
             {onDeleteFromView}
             {onAddToNote}
             {onUpdateText}
+            {onRename}
             {onCopy}
             {onCopyPath}
           />

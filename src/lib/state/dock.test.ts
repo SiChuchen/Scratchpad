@@ -13,6 +13,7 @@ const textEntry = (id: string, kind: DockEntry['kind'] = 'text'): DockEntry => (
   height: null,
   sizeBytes: null,
   collapsed: true,
+  title: null,
   inHome: true,
   inNote: false,
   source: 'manual',

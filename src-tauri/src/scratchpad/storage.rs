@@ -82,6 +82,7 @@ fn row_to_dock_entry(row: &Row) -> rusqlite::Result<DockEntry> {
         height: row.get("height")?,
         size_bytes: row.get("size_bytes")?,
         collapsed: row.get::<_, i32>("collapsed")? != 0,
+        title: row.get("title")?,
         in_home: row.get::<_, i32>("in_home")? != 0,
         in_note: row.get::<_, i32>("in_note")? != 0,
         source: row.get("source")?,
@@ -216,6 +217,7 @@ fn list_entries_internal(
             e.height,
             e.size_bytes,
             e.collapsed,
+            e.title,
             e.source,
             e.created_at,
             e.updated_at,
@@ -271,6 +273,7 @@ pub(crate) fn create_dock_entry_internal(
         height,
         size_bytes,
         collapsed: false,
+        title: None,
         in_home: matches!(view, EntryView::Home),
         in_note: matches!(view, EntryView::Note),
         source: source.to_string(),
@@ -347,6 +350,7 @@ fn migrate_legacy_scratchpad_items(conn: &mut Connection) -> StorageResult<usize
             height: item.height,
             size_bytes: item.size_bytes,
             collapsed: item.pinned,
+            title: None,
             in_home: true,
             in_note: true,
             source: item.source.clone(),
@@ -366,6 +370,7 @@ fn migrate_legacy_scratchpad_items(conn: &mut Connection) -> StorageResult<usize
 pub fn dock_migrations() -> Vec<Migration> {
     vec![
         Migration::new(1, "create dock schema", DOCK_SCHEMA_SQL),
+        Migration::new(2, "add title column", "ALTER TABLE entries ADD COLUMN title TEXT"),
     ]
 }
 
@@ -487,13 +492,19 @@ pub fn update_entry_text(conn: &mut Connection, id: &str, content: &str) -> Stor
 
 pub fn toggle_collapse(conn: &mut Connection, id: &str, collapsed: bool) -> StorageResult<()> {
     let now = now_rfc3339();
-    let rows = conn.execute(
+    conn.execute(
         "UPDATE entries SET collapsed = ?2, updated_at = ?3 WHERE id = ?1",
         params![id, collapsed as i32, now],
     )?;
-    if rows == 0 {
-        return Err(rusqlite::Error::QueryReturnedNoRows.into());
-    }
+    Ok(())
+}
+
+pub fn rename_entry(conn: &mut Connection, id: &str, title: Option<&str>) -> StorageResult<()> {
+    let now = now_rfc3339();
+    conn.execute(
+        "UPDATE entries SET title = ?2, updated_at = ?3 WHERE id = ?1",
+        params![id, title, now],
+    )?;
     Ok(())
 }
 
@@ -665,7 +676,7 @@ mod repository_tests {
             );
 
             INSERT INTO schema_version(scope, version)
-            VALUES ('main', 1);
+            VALUES ('main', 0);
 
             CREATE TABLE scratchpad_items (
                 id TEXT PRIMARY KEY,
