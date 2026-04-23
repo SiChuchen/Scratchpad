@@ -25,7 +25,7 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install
 
-      - name: Build and release
+      - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -36,3 +36,83 @@ jobs:
           releaseBody: 'See the assets to download this version and install.'
           releaseDraft: true
           prerelease: false
+
+      - name: Rename artifacts and create portable zip
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $version = $tag.TrimStart('v')
+          $label = "Soma Scratchpad_${version}_Windows"
+
+          # Find the draft release
+          $release = gh release view $tag --json id,assets --jq '.id,.assets[].name'
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "Release not found for tag $tag"
+            exit 1
+          }
+
+          $releaseJson = gh release view $tag --json id,assets | ConvertFrom-Json
+          $releaseId = $releaseJson.id
+
+          # Download all assets
+          $downloadDir = "${{ runner.temp }}/release-assets"
+          New-Item -ItemType Directory -Force -Path $downloadDir | Out-Null
+          gh release download $tag --dir $downloadDir --clobber
+
+          # Rename MSI and NSIS
+          $renamedAssets = @()
+          foreach ($asset in $releaseJson.assets) {
+            $name = $asset.name
+            $newName = $null
+
+            if ($name -match '\.msi$') {
+              $newName = "${label}.msi"
+            } elseif ($name -match '-setup\.exe$' -or $name -match '\.exe$' -and $name -notmatch 'updater') {
+              $newName = "${label}.exe"
+            }
+
+            if ($newName) {
+              Copy-Item "$downloadDir/$name" "$downloadDir/$newName" -Force
+              $renamedAssets += @{ old = $name; new = $newName }
+              Write-Host "Rename: $name -> $newName"
+            }
+          }
+
+          # Create portable zip from release exe
+          $releaseExe = "src-tauri/target/release/soma-scratchpad.exe"
+          if (Test-Path $releaseExe) {
+            $portableDir = "${{ runner.temp }}/portable"
+            New-Item -ItemType Directory -Force -Path $portableDir | Out-Null
+            Copy-Item $releaseExe "$portableDir/soma-scratchpad.exe"
+
+            $iconsDir = "src-tauri/target/release/icons"
+            if (Test-Path $iconsDir) {
+              Copy-Item -Recurse $iconsDir "$portableDir/icons"
+            }
+
+            $portableZip = "${label}_Portable.zip"
+            Compress-Archive -Path "$portableDir/*" -DestinationPath "$downloadDir/$portableZip" -Force
+            $renamedAssets += @{ old = $null; new = $portableZip }
+            Write-Host "Created portable zip: $portableZip"
+          } else {
+            Write-Warning "Release exe not found at $releaseExe, skipping portable zip"
+          }
+
+          # Delete old assets and upload renamed ones
+          foreach ($asset in $releaseJson.assets) {
+            Write-Host "Deleting old asset: $($asset.name)"
+            gh release delete-asset $tag $asset.name --yes
+          }
+
+          # Upload all new assets
+          foreach ($item in $renamedAssets) {
+            $path = "$downloadDir/$($item.new)"
+            if (Test-Path $path) {
+              Write-Host "Uploading: $($item.new)"
+              gh release upload $tag $path --clobber
+            }
+          }
+
+          Write-Host "Done. Release assets updated."
