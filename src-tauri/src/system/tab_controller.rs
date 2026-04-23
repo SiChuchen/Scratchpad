@@ -2,10 +2,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::Manager;
 use windows_sys::Win32::Foundation::{HWND, LRESULT, RECT, POINT};
 use windows_sys::Win32::Graphics::Gdi::{MonitorFromWindow, GetMonitorInfoW, MONITORINFO, MONITOR_DEFAULTTONEAREST};
+use windows_sys::Win32::UI::HiDpi::GetDpiForWindow;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{SetCapture, ReleaseCapture, GetAsyncKeyState, VK_LBUTTON};
 use windows_sys::Win32::UI::Shell::{SetWindowSubclass, DefSubclassProc, RemoveWindowSubclass};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     GetWindowRect, SetTimer, KillTimer, GetCursorPos, SetWindowPos, ShowWindow,
+    SetForegroundWindow,
     SWP_NOSIZE, SWP_NOZORDER, SW_HIDE, SW_SHOWNORMAL, SW_SHOWNOACTIVATE,
     WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_TIMER,
     WM_CAPTURECHANGED, WM_CANCELMODE, WM_NCDESTROY,
@@ -41,6 +43,257 @@ struct TabController {
     press_origin_screen: (i32, i32),
     win_origin: (i32, i32),
     app: tauri::AppHandle,
+}
+
+// --- Subclass installation ---
+
+pub fn install(app: &tauri::AppHandle, hwnd: HWND) {
+    if SUBCLASS_INSTALLED.load(Ordering::SeqCst) {
+        return;
+    }
+    let controller = Box::new(TabController {
+        state: TabState::Idle,
+        press_origin_screen: (0, 0),
+        win_origin: (0, 0),
+        app: app.clone(),
+    });
+    let ptr = Box::into_raw(controller);
+    let ok = unsafe {
+        SetWindowSubclass(hwnd, Some(subclass_proc), 0, ptr as usize)
+    };
+    if ok != 0 {
+        SUBCLASS_INSTALLED.store(true, Ordering::SeqCst);
+    } else {
+        unsafe { drop(Box::from_raw(ptr)); }
+        eprintln!("tab_controller: SetWindowSubclass failed");
+    }
+}
+
+// --- Subclass callback ---
+
+unsafe extern "system" fn subclass_proc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: usize,
+    lparam: isize,
+    _uid: usize,
+    data: usize,
+) -> LRESULT {
+    let controller = &mut *(data as *mut TabController);
+
+    let handled = match msg {
+        WM_LBUTTONDOWN => handle_lbuttondown(hwnd, controller, wparam, lparam),
+        WM_TIMER => handle_timer(hwnd, controller, wparam),
+        WM_MOUSEMOVE => handle_mousemove(hwnd, controller, lparam),
+        WM_LBUTTONUP => handle_lbuttonup(hwnd, controller),
+        WM_CAPTURECHANGED => handle_capture_changed(hwnd, controller),
+        WM_CANCELMODE => handle_cancel_mode(hwnd, controller),
+        WM_NCDESTROY => {
+            cleanup(hwnd, controller);
+            RemoveWindowSubclass(hwnd, Some(subclass_proc), 0);
+            let _ = Box::from_raw(data as *mut TabController);
+            SUBCLASS_INSTALLED.store(false, Ordering::SeqCst);
+            return DefSubclassProc(hwnd, msg, wparam, lparam);
+        }
+        _ => false,
+    };
+
+    if handled {
+        0
+    } else {
+        DefSubclassProc(hwnd, msg, wparam, lparam)
+    }
+}
+
+// --- Message handlers ---
+
+fn handle_lbuttondown(hwnd: HWND, ctrl: &mut TabController, _wparam: usize, _lparam: isize) -> bool {
+    let mut pt = POINT { x: 0, y: 0 };
+    unsafe { GetCursorPos(&mut pt) };
+    let mut rect = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+    unsafe { GetWindowRect(hwnd, &mut rect) };
+
+    ctrl.press_origin_screen = (pt.x, pt.y);
+    ctrl.win_origin = (rect.left, rect.top);
+    ctrl.state = TabState::Pressed;
+
+    unsafe {
+        SetCapture(hwnd);
+        SetTimer(hwnd, TAB_LONG_PRESS_TIMER_ID, LONG_PRESS_MS, None);
+    }
+    true
+}
+
+fn handle_timer(hwnd: HWND, ctrl: &mut TabController, wparam: usize) -> bool {
+    if wparam != TAB_LONG_PRESS_TIMER_ID { return false; }
+    match ctrl.state {
+        TabState::Pressed => {
+            unsafe { KillTimer(hwnd, TAB_LONG_PRESS_TIMER_ID) };
+            ctrl.state = TabState::Dragging;
+        }
+        _ => {}
+    }
+    true
+}
+
+fn handle_mousemove(hwnd: HWND, ctrl: &mut TabController, _lparam: isize) -> bool {
+    match ctrl.state {
+        TabState::Dragging => {
+            let key_state = unsafe { GetAsyncKeyState(VK_LBUTTON as i32) };
+            if key_state & (0x8000u16 as i16) == 0 {
+                // Left button released but never got WM_LBUTTONUP — snap and cleanup
+                unsafe { ReleaseCapture() };
+                ctrl.state = TabState::Idle;
+                snap_to_edge(hwnd);
+                return true;
+            }
+            let mut pt = POINT { x: 0, y: 0 };
+            unsafe { GetCursorPos(&mut pt) };
+            let dx = pt.x - ctrl.press_origin_screen.0;
+            let dy = pt.y - ctrl.press_origin_screen.1;
+            let new_x = ctrl.win_origin.0 + dx;
+            let new_y = ctrl.win_origin.1 + dy;
+            unsafe {
+                SetWindowPos(hwnd, std::ptr::null_mut(), new_x, new_y, 0, 0, SWP_NOSIZE | SWP_NOZORDER);
+            }
+            true
+        }
+        _ => false,
+    }
+}
+
+fn handle_lbuttonup(hwnd: HWND, ctrl: &mut TabController) -> bool {
+    match ctrl.state {
+        TabState::Pressed => {
+            unsafe { KillTimer(hwnd, TAB_LONG_PRESS_TIMER_ID) };
+            unsafe { ReleaseCapture() };
+            ctrl.state = TabState::Idle;
+            restore_main_window(&ctrl.app);
+            true
+        }
+        TabState::Dragging => {
+            unsafe { ReleaseCapture() };
+            ctrl.state = TabState::Idle;
+            snap_to_edge(hwnd);
+            true
+        }
+        TabState::Idle => false,
+    }
+}
+
+fn handle_capture_changed(hwnd: HWND, ctrl: &mut TabController) -> bool {
+    unsafe { KillTimer(hwnd, TAB_LONG_PRESS_TIMER_ID) };
+    ctrl.state = TabState::Idle;
+    true
+}
+
+fn handle_cancel_mode(hwnd: HWND, ctrl: &mut TabController) -> bool {
+    unsafe {
+        KillTimer(hwnd, TAB_LONG_PRESS_TIMER_ID);
+        ReleaseCapture();
+    }
+    ctrl.state = TabState::Idle;
+    true
+}
+
+fn cleanup(hwnd: HWND, ctrl: &mut TabController) {
+    unsafe {
+        KillTimer(hwnd, TAB_LONG_PRESS_TIMER_ID);
+        ReleaseCapture();
+    }
+    ctrl.state = TabState::Idle;
+}
+
+// --- Helpers ---
+
+fn snap_to_edge(hwnd: HWND) {
+    let mut win_rect = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+    unsafe { GetWindowRect(hwnd, &mut win_rect) };
+
+    let monitor = unsafe { MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST) };
+    let mut mi = MONITORINFO {
+        cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+        ..unsafe { std::mem::zeroed() }
+    };
+    unsafe { GetMonitorInfoW(monitor, &mut mi) };
+
+    let tab_w = win_rect.right - win_rect.left;
+    let tab_h = win_rect.bottom - win_rect.top;
+    let hidden_ratio = calc_current_hidden_ratio(&win_rect, &mi.rcWork);
+    let (snap_x, snap_y) = calc_snap_position(&win_rect, &mi.rcWork, (tab_w, tab_h), hidden_ratio);
+    unsafe {
+        SetWindowPos(hwnd, std::ptr::null_mut(), snap_x, snap_y, 0, 0, SWP_NOSIZE | SWP_NOZORDER);
+    }
+}
+
+fn calc_current_hidden_ratio(win_rect: &RECT, work_rect: &RECT) -> f32 {
+    let tw = (win_rect.right - win_rect.left) as f32;
+    let th = (win_rect.bottom - win_rect.top) as f32;
+    let cx = win_rect.left as f32 + tw / 2.0;
+    let cy = win_rect.top as f32 + th / 2.0;
+
+    let dist_left = (cx - work_rect.left as f32).abs();
+    let dist_right = (work_rect.right as f32 - cx).abs();
+    let dist_top = (cy - work_rect.top as f32).abs();
+    let dist_bottom = (work_rect.bottom as f32 - cy).abs();
+
+    if dist_left <= dist_right && dist_left <= dist_top && dist_left <= dist_bottom {
+        let visible = (win_rect.right - work_rect.left).max(0) as f32;
+        (tw - visible) / tw
+    } else if dist_right <= dist_top && dist_right <= dist_bottom {
+        let visible = (work_rect.right - win_rect.left).max(0) as f32;
+        (tw - visible) / tw
+    } else if dist_top <= dist_bottom {
+        let visible = (win_rect.bottom - work_rect.top).max(0) as f32;
+        (th - visible) / th
+    } else {
+        let visible = (work_rect.bottom - win_rect.top).max(0) as f32;
+        (th - visible) / th
+    }
+}
+
+pub(crate) fn restore_main_window(app: &tauri::AppHandle) {
+    let state = app.state::<crate::AppState>();
+    let db = state.db.lock().unwrap();
+
+    let main_w = app.get_webview_window("main");
+    let tab_w = app.get_webview_window("minimized-tab");
+    let (Some(main), Some(tab)) = (main_w, tab_w) else {
+        eprintln!("restore_main_window: missing main or tab window");
+        return;
+    };
+
+    match crate::scratchpad::preferences::load_preferences(&db) {
+        Ok(prefs) => {
+            drop(db);
+            if let Ok(hwnd) = main.hwnd() {
+                let hwnd = hwnd.0 as HWND;
+                let dpi = unsafe { GetDpiForWindow(hwnd) };
+                let scale = dpi as f64 / 96.0;
+                let px = (prefs.dock_position_x * scale) as i32;
+                let py = (prefs.dock_position_y * scale) as i32;
+                let pw = (prefs.dock_width * scale) as i32;
+                let ph = (prefs.dock_height * scale) as i32;
+                unsafe {
+                    SetWindowPos(hwnd, std::ptr::null_mut(), px, py, pw, ph, SWP_NOZORDER);
+                }
+            }
+        }
+        Err(e) => {
+            eprintln!("restore_main_window: failed to load preferences: {e}");
+            return;
+        }
+    }
+
+    if let Ok(tab_hwnd) = tab.hwnd() {
+        unsafe { ShowWindow(tab_hwnd.0 as HWND, SW_HIDE) };
+    }
+    if let Ok(main_hwnd) = main.hwnd() {
+        unsafe {
+            ShowWindow(main_hwnd.0 as HWND, SW_SHOWNORMAL);
+            SetForegroundWindow(main_hwnd.0 as HWND);
+        }
+    }
 }
 
 // --- Snap calculation (pure function) ---
