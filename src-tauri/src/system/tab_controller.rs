@@ -24,6 +24,7 @@ static SUBCLASS_INSTALLED: AtomicBool = AtomicBool::new(false);
 
 // --- Types ---
 
+#[derive(Clone, Copy)]
 pub struct MainWindowGeometry {
     pub x: i32,
     pub y: i32,

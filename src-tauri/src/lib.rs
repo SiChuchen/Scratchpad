@@ -214,6 +214,93 @@ fn ipc_dock_restore_from_tab(
     system::window::restore_from_tab(&app)
 }
 
+#[tauri::command]
+fn ipc_dock_minimize_to_tab(
+    app: tauri::AppHandle,
+    state: tauri::State<AppState>,
+) -> Result<(), String> {
+    use windows_sys::Win32::Foundation::{HWND, RECT};
+    use windows_sys::Win32::Graphics::Gdi::{
+        GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+    };
+    use windows_sys::Win32::UI::HiDpi::GetDpiForWindow;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GetWindowRect, SetWindowPos, ShowWindow, SWP_NOSIZE, SWP_NOZORDER, SW_HIDE,
+        SW_SHOWNOACTIVATE,
+    };
+
+    let main_w = app.get_webview_window("main").ok_or("main window not found")?;
+    let tab_w = app.get_webview_window("minimized-tab").ok_or("minimized-tab window not found")?;
+
+    let main_hwnd = main_w.hwnd().map_err(|e| e.to_string())?.0 as HWND;
+    let tab_hwnd = tab_w.hwnd().map_err(|e| e.to_string())?.0 as HWND;
+
+    // 1. Save main window geometry (physical coordinates)
+    let mut main_rect = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+    unsafe { GetWindowRect(main_hwnd, &mut main_rect) };
+    let geo = system::tab_controller::MainWindowGeometry {
+        x: main_rect.left,
+        y: main_rect.top,
+        width: main_rect.right - main_rect.left,
+        height: main_rect.bottom - main_rect.top,
+    };
+    *state.main_geometry.lock().unwrap() = Some(geo);
+
+    // 2. Sync to DockPreferences (physical → logical, single db guard)
+    {
+        let dpi = unsafe { GetDpiForWindow(main_hwnd) };
+        let scale = dpi as f64 / 96.0;
+        let mut db = state.db.lock().unwrap();
+        let mut prefs = scratchpad::preferences::load_preferences(&db)
+            .map_err(|e| e.to_string())?;
+        prefs.dock_position_x = geo.x as f64 / scale;
+        prefs.dock_position_y = geo.y as f64 / scale;
+        prefs.dock_width = geo.width as f64 / scale;
+        prefs.dock_height = geo.height as f64 / scale;
+        scratchpad::preferences::save_preferences(&mut db, &prefs)
+            .map_err(|e| e.to_string())?;
+        drop(db);
+    }
+
+    // 3. Get monitor work rect
+    let monitor = unsafe { MonitorFromWindow(main_hwnd, MONITOR_DEFAULTTONEAREST) };
+    let mut mi = MONITORINFO {
+        cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+        ..unsafe { std::mem::zeroed() }
+    };
+    unsafe { GetMonitorInfoW(monitor, &mut mi) };
+
+    // 4. Get tab physical size
+    let mut tab_rect = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+    unsafe { GetWindowRect(tab_hwnd, &mut tab_rect) };
+    let tab_size = (tab_rect.right - tab_rect.left, tab_rect.bottom - tab_rect.top);
+
+    // 5. Calculate snap position with default hidden ratio
+    let (snap_x, snap_y) = system::tab_controller::calc_snap_position(
+        &main_rect,
+        &mi.rcWork,
+        tab_size,
+        system::tab_controller::DEFAULT_HIDDEN_RATIO,
+    );
+
+    // 6. Install subclass (idempotent)
+    system::tab_controller::install(&app, tab_hwnd);
+
+    // 7. Apply circle region (idempotent)
+    system::window::apply_circle_region(&app, "minimized-tab")?;
+
+    // 8. Position tab and show it
+    unsafe {
+        SetWindowPos(tab_hwnd, std::ptr::null_mut(), snap_x, snap_y, 0, 0, SWP_NOSIZE | SWP_NOZORDER);
+        ShowWindow(tab_hwnd, SW_SHOWNOACTIVATE);
+    }
+
+    // 9. Hide main
+    unsafe { ShowWindow(main_hwnd, SW_HIDE) };
+
+    Ok(())
+}
+
 // --- DB initialization ---
 
 fn init_db() -> Connection {
@@ -253,6 +340,7 @@ pub fn run() {
             ipc_window_apply_circle_region,
             ipc_window_clear_region,
             ipc_dock_restore_from_tab,
+            ipc_dock_minimize_to_tab,
         ])
         .setup(|app| {
             // System tray menu
