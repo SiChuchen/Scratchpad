@@ -71,6 +71,11 @@
     dragIdx = idx
     event.dataTransfer!.effectAllowed = 'move'
     event.dataTransfer!.setData('application/x-dock-reorder', String(idx))
+    // Hide default drag ghost
+    const ghost = document.createElement('canvas')
+    ghost.width = 1
+    ghost.height = 1
+    event.dataTransfer!.setDragImage(ghost, 0, 0)
   }
 
   function onCardDragOver(idx: number, event: DragEvent) {

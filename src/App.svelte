@@ -367,7 +367,6 @@
     const target = event.target as HTMLElement
     const inEditor = !!target.closest('textarea, input')
 
-    pasteConsumed = true
     const items = Array.from(event.clipboardData?.items ?? [])
     const files = Array.from(event.clipboardData?.files ?? [])
     const imageItem = items.find((item) => item.type.startsWith('image/'))
@@ -376,6 +375,7 @@
     // Always handle images and files regardless of focus target
     if (imageItem) {
       event.preventDefault()
+      pasteConsumed = true
       const blob = imageItem.getAsFile()
       if (!blob) return
       try {
@@ -395,6 +395,7 @@
     // Handle files copied from Explorer (Ctrl+C file → Ctrl+V here)
     if (files.length > 0) {
       event.preventDefault()
+      pasteConsumed = true
       try {
         const view = currentView === 'note' ? 'note' : 'home'
         for (const file of files) {
@@ -430,6 +431,7 @@
     // Only create text entries if not pasting into a textarea/input (normal input behavior)
     if (pastedText && !inEditor) {
       event.preventDefault()
+      pasteConsumed = true
       try {
         if (currentView === 'note') {
           const created = await dockApi.createText('note', pastedText, 'manual')
@@ -482,10 +484,17 @@
 
   async function handleAppPointerDown(event: MouseEvent) {
     if (!event.ctrlKey) return
+    event.preventDefault()
     try {
       const { getCurrentWindow } = await import('@tauri-apps/api/window')
       await getCurrentWindow().startDragging()
     } catch {}
+  }
+
+  function handleGlobalDragStart(event: DragEvent) {
+    if (ctrlHeld) {
+      event.preventDefault()
+    }
   }
 
   // --- Toast ---
@@ -506,7 +515,7 @@
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
-<svelte:window onkeydown={handleKeyDown} onkeyup={handleKeyUp} />
+<svelte:window onkeydown={handleKeyDown} onkeyup={handleKeyUp} ondragstart={handleGlobalDragStart} />
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="app-shell" class:ctrl-drag={ctrlHeld} onmousedown={handleAppPointerDown}>

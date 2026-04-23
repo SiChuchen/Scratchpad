@@ -21,6 +21,7 @@
   async function handleMouseDown(event: MouseEvent) {
     const target = event.target as HTMLElement
     if (target.closest('button')) return
+    event.preventDefault()
     try {
       const { getCurrentWindow } = await import('@tauri-apps/api/window')
       await getCurrentWindow().startDragging()
