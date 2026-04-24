@@ -21,8 +21,10 @@
   let zhFontDirty = $state(false)
   let enFontDirty = $state(false)
 
+  let proxyType = $state<string>('http')
   let proxyIp = $state('')
   let proxyPort = $state('')
+  let proxyErrors = $state<string[]>([])
   let appVersion = $state('')
   let updateStatus = $state<'idle' | 'checking' | 'up-to-date' | 'available' | 'downloading' | 'error'>('idle')
   let updateErrorMsg = $state('')
@@ -71,10 +73,25 @@
   })
 
   function parseProxy(proxy: string) {
-    if (!proxy) { proxyIp = ''; proxyPort = ''; return }
-    const parts = proxy.split(':')
-    proxyIp = parts[0] || ''
-    proxyPort = parts.slice(1).join(':') || ''
+    if (!proxy) { proxyType = 'http'; proxyIp = ''; proxyPort = ''; return }
+    let cleaned = proxy
+    if (cleaned.startsWith('socks5://')) {
+      proxyType = 'socks5'
+      cleaned = cleaned.slice(9)
+    } else if (cleaned.startsWith('http://')) {
+      proxyType = 'http'
+      cleaned = cleaned.slice(7)
+    } else {
+      proxyType = 'http'
+    }
+    const colonIdx = cleaned.lastIndexOf(':')
+    if (colonIdx > 0) {
+      proxyIp = cleaned.slice(0, colonIdx)
+      proxyPort = cleaned.slice(colonIdx + 1)
+    } else {
+      proxyIp = cleaned
+      proxyPort = ''
+    }
   }
 
   function update(partial: Partial<DockPreferences>) {
@@ -97,28 +114,50 @@
     })
   }
 
+  function validateProxy(): string[] {
+    const ip = proxyIp.trim()
+    const port = proxyPort.trim()
+    const errors: string[] = []
+    if (!ip && !port) return errors
+    if (!ip && port) errors.push('请填写代理主机')
+    if (ip && !port) errors.push('请填写代理端口')
+    if (port && !/^\d+$/.test(port)) errors.push('端口必须是数字')
+    if (port && /^\d+$/.test(port)) {
+      const num = parseInt(port, 10)
+      if (num < 1 || num > 65535) errors.push('端口范围应为 1-65535')
+    }
+    if (ip && /^https?:\/\//i.test(ip)) errors.push('代理主机中不需要填写协议')
+    if (ip && /^socks[45]:\/\//i.test(ip)) errors.push('代理主机中不需要填写协议')
+    if (ip && /[:：]/.test(ip)) errors.push('代理主机中不需要填写端口')
+    return errors
+  }
+
   function saveProxy() {
+    const errors = validateProxy()
+    proxyErrors = errors
+    if (errors.length > 0) return
     const ip = proxyIp.trim()
     const port = proxyPort.trim()
     if (ip && port) {
-      update({ updateProxy: `${ip}:${port}` })
-    } else if (ip) {
-      update({ updateProxy: ip })
+      update({ updateProxy: `${proxyType}://${ip}:${port}` })
     } else {
       update({ updateProxy: '' })
     }
   }
 
   function clearProxy() {
+    proxyType = 'http'
     proxyIp = ''
     proxyPort = ''
+    proxyErrors = []
     update({ updateProxy: '' })
   }
 
   function getProxyUrl(): string | undefined {
     const p = preferences.updateProxy.trim()
     if (!p) return undefined
-    return p.startsWith('http') ? p : `http://${p}`
+    if (p.startsWith('http://') || p.startsWith('socks5://')) return p
+    return `http://${p}`
   }
 
   function filteredFonts(query: string): string[] {
@@ -156,8 +195,10 @@
       launchOnStartup: false,
       updateProxy: '',
     })
+    proxyType = 'http'
     proxyIp = ''
     proxyPort = ''
+    proxyErrors = []
   }
 
   async function handleCheckUpdate() {
@@ -302,28 +343,43 @@
       </div>
       {#if updateOpen}
         <div class="section-body">
+          <p class="section-subtitle">代理仅用于检查和下载更新，不影响本地内容收纳。</p>
           <div class="row proxy-row">
-            <span class="label">代理地址</span>
-            <div class="proxy-fields">
-              <input
-                type="text"
-                class="proxy-input"
-                placeholder="IP 地址"
-                bind:value={proxyIp}
-              />
-              <span class="proxy-colon">:</span>
-              <input
-                type="text"
-                class="proxy-input proxy-port"
-                placeholder="端口"
-                bind:value={proxyPort}
-              />
-            </div>
+            <span class="label">代理类型</span>
+            <select class="proxy-select" bind:value={proxyType}>
+              <option value="http">HTTP</option>
+              <option value="socks5">SOCKS5</option>
+            </select>
           </div>
+          <div class="row proxy-row">
+            <span class="label">代理主机</span>
+            <input
+              type="text"
+              class="proxy-input"
+              placeholder="例如 127.0.0.1"
+              bind:value={proxyIp}
+            />
+          </div>
+          <div class="row proxy-row">
+            <span class="label">代理端口</span>
+            <input
+              type="text"
+              class="proxy-input proxy-port"
+              placeholder="例如 11809"
+              bind:value={proxyPort}
+            />
+          </div>
+          {#if proxyErrors.length > 0}
+            <div class="proxy-error-list">
+              {#each proxyErrors as err}
+                <span class="proxy-error">{err}</span>
+              {/each}
+            </div>
+          {/if}
           <div class="row proxy-actions">
             <span class="label"></span>
             <div class="proxy-btns">
-              <button class="proxy-save-btn" onclick={saveProxy}>保存</button>
+              <button class="proxy-save-btn" onclick={saveProxy}>保存代理</button>
               <button class="proxy-clear-btn" onclick={clearProxy}>清除</button>
             </div>
           </div>
@@ -661,13 +717,6 @@
     align-items: flex-start;
   }
 
-  .proxy-fields {
-    flex: 1;
-    display: flex;
-    align-items: center;
-    gap: 0.2rem;
-  }
-
   .proxy-input {
     flex: 1;
     background: var(--surface-2);
@@ -693,9 +742,39 @@
     color: var(--text-faint);
   }
 
-  .proxy-colon {
-    color: var(--text-muted);
+  .proxy-select {
+    flex: 1;
+    background: var(--surface-2);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm, 0.25rem);
+    color: var(--text-primary);
     font-size: var(--font-sm, 0.6rem);
+    padding: 0.2rem 0.3rem;
+    font-family: inherit;
+    outline: none;
+  }
+
+  .proxy-select:focus {
+    border-color: var(--color-primary-light);
+  }
+
+  .proxy-error-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.1rem;
+    padding: 0.15rem 0;
+  }
+
+  .proxy-error {
+    font-size: var(--font-xs, 0.55rem);
+    color: var(--color-danger);
+  }
+
+  .section-subtitle {
+    font-size: var(--font-xs, 0.5rem);
+    color: var(--text-faint);
+    margin: 0;
+    padding-bottom: 0.2rem;
   }
 
   .proxy-actions {
