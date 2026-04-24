@@ -521,12 +521,6 @@
     background: color-mix(in srgb, var(--text-primary) 10%, transparent);
   }
 
-  .settings-title {
-    font-size: var(--font-sm, 0.7rem);
-    font-weight: 700;
-    color: var(--text-muted);
-  }
-
   .settings-body {
     flex: 1;
     overflow-y: auto;
