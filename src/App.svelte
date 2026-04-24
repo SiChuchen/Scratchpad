@@ -38,11 +38,15 @@
     // Tauri native drag-drop for file imports
     const { getCurrentWindow } = await import('@tauri-apps/api/window')
     const win = getCurrentWindow()
-    const unlisten = await win.onDragDropEvent((event) => {
-      if (event.payload.type === 'drop') {
+    const unlisten = await win.onDragDropEvent((event: any) => {
+      if (event.payload.type === 'enter') {
+        dragOverlay = { active: true, count: event.payload.paths?.length ?? 1 }
+      } else if (event.payload.type === 'drop') {
+        dragOverlay = { active: false, count: 0 }
         handleNativeFileDrop(event.payload.paths)
-        // Reclaim focus after OS-level drag-drop steals it
         win.setFocus()
+      } else if (event.payload.type === 'leave') {
+        dragOverlay = { active: false, count: 0 }
       }
     })
 
@@ -380,6 +384,7 @@
   // --- Ctrl+click drag ---
 
   let ctrlHeld = $state(false)
+  let dragOverlay = $state<{ active: boolean; count: number }>({ active: false, count: 0 })
 
   let pasteConsumed = false
 
@@ -613,6 +618,19 @@
   </div>
 {/if}
 
+{#if dragOverlay.active}
+  <div class="drag-overlay">
+    <div class="drag-overlay-content">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+        <polyline points="7 10 12 15 17 10" />
+        <line x1="12" y1="15" x2="12" y2="3" />
+      </svg>
+      <span>{dragOverlay.count > 1 ? `释放以收纳 ${dragOverlay.count} 个文件` : '释放以收纳文件'}</span>
+    </div>
+  </div>
+{/if}
+
 <style>
   .app-shell {
     height: 100vh;
@@ -677,5 +695,27 @@
       opacity: 1;
       transform: translateX(-50%) translateY(0);
     }
+  }
+
+  .drag-overlay {
+    position: absolute;
+    inset: 0;
+    background: color-mix(in srgb, var(--surface-0) 85%, transparent);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 200;
+    border: 2px dashed color-mix(in srgb, var(--color-primary) 50%, transparent);
+    border-radius: var(--radius-lg, 0.5rem);
+  }
+
+  .drag-overlay-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.5rem;
+    color: var(--color-primary);
+    font-size: var(--font-sm, 0.75rem);
+    font-weight: 500;
   }
 </style>
