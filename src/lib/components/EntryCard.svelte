@@ -259,7 +259,7 @@
     border: 0;
     padding: 0;
     font-family: inherit;
-    font-size: 0.72rem;
+    font-size: 0.8rem;
     color: var(--text-primary);
     line-height: 1.3;
     text-align: left;
@@ -308,40 +308,50 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 1.5rem;
-    height: 1.5rem;
-    background: transparent;
-    border: 1px solid transparent;
-    border-radius: var(--radius-sm, 0.2rem);
-    color: var(--text-muted);
+    width: 1.6rem;
+    height: 1.6rem;
+    background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+    border: 1px solid color-mix(in srgb, var(--text-primary) 15%, transparent);
+    border-radius: var(--radius-sm, 0.25rem);
+    color: color-mix(in srgb, var(--text-primary) 65%, transparent);
     cursor: pointer;
     transition: color 0.12s, background 0.12s, border-color 0.12s;
   }
 
   .icon-btn:hover {
     color: var(--text-primary);
-    background: color-mix(in srgb, var(--text-primary) 10%, transparent);
-    border-color: color-mix(in srgb, var(--text-primary) 15%, transparent);
+    background: color-mix(in srgb, var(--text-primary) 15%, transparent);
+    border-color: color-mix(in srgb, var(--text-primary) 30%, transparent);
+  }
+
+  .icon-btn.note-btn {
+    color: var(--color-accent);
+    border-color: color-mix(in srgb, var(--color-accent) 20%, transparent);
+    background: color-mix(in srgb, var(--color-accent) 8%, transparent);
   }
 
   .icon-btn.note-btn.active {
     color: var(--color-accent);
+    background: color-mix(in srgb, var(--color-accent) 15%, transparent);
+    border-color: color-mix(in srgb, var(--color-accent) 30%, transparent);
   }
 
   .icon-btn.note-btn:hover {
     color: var(--color-accent);
-    background: color-mix(in srgb, var(--color-accent) 10%, transparent);
-    border-color: color-mix(in srgb, var(--color-accent) 20%, transparent);
+    background: color-mix(in srgb, var(--color-accent) 18%, transparent);
+    border-color: color-mix(in srgb, var(--color-accent) 35%, transparent);
   }
 
   .icon-btn.danger {
-    color: var(--text-faint);
+    color: color-mix(in srgb, var(--color-danger) 60%, transparent);
+    border-color: color-mix(in srgb, var(--color-danger) 15%, transparent);
+    background: color-mix(in srgb, var(--color-danger) 6%, transparent);
   }
 
   .icon-btn.danger:hover {
     color: var(--color-danger);
-    background: color-mix(in srgb, var(--color-danger) 10%, transparent);
-    border-color: color-mix(in srgb, var(--color-danger) 20%, transparent);
+    background: color-mix(in srgb, var(--color-danger) 12%, transparent);
+    border-color: color-mix(in srgb, var(--color-danger) 25%, transparent);
   }
 
   .title-edit-input {
