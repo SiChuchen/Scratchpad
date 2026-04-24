@@ -82,7 +82,7 @@
 
 <style>
   .entry-content {
-    color: rgba(225, 238, 247, 0.85);
+    color: var(--text-primary);
     line-height: 1.45;
     padding: 0.2rem 0;
     cursor: text;
@@ -94,16 +94,16 @@
     font-family: 'Cascadia Code', 'Consolas', 'Courier New', monospace;
     font-size: 0.85em;
     line-height: 1.55;
-    background: rgba(15, 23, 42, 0.35);
-    border-radius: 0.3rem;
+    background: var(--surface-2);
+    border-radius: var(--radius-md, 0.3rem);
     padding: 0.3rem 0.4rem;
   }
 
   .entry-edit {
-    background: rgba(15, 23, 42, 0.5);
-    border: 1px solid rgba(125, 211, 252, 0.2);
-    border-radius: 0.375rem;
-    color: #e5eef7;
+    background: var(--surface-2);
+    border: 1px solid color-mix(in srgb, var(--color-primary) 20%, transparent);
+    border-radius: var(--radius-md, 0.375rem);
+    color: var(--text-primary);
     line-height: 1.45;
     padding: 0.3rem 0.4rem;
     resize: none;
@@ -116,7 +116,7 @@
 
   .entry-edit:focus {
     outline: none;
-    border-color: rgba(125, 211, 252, 0.4);
+    border-color: color-mix(in srgb, var(--color-primary) 40%, transparent);
   }
 
   .entry-actions {
@@ -129,38 +129,37 @@
     display: flex;
     align-items: center;
     gap: 0.3rem;
-    background: color-mix(in srgb, var(--dock-text-color) 8%, transparent);
-    border: 1px solid color-mix(in srgb, var(--dock-text-color) 15%, transparent);
-    border-radius: 0.35rem;
-    color: color-mix(in srgb, var(--dock-text-color) 60%, transparent);
+    background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+    border: 1px solid color-mix(in srgb, var(--text-primary) 15%, transparent);
+    border-radius: var(--radius-md, 0.35rem);
+    color: color-mix(in srgb, var(--text-primary) 60%, transparent);
     padding: 0.3rem 0.65rem;
-    font-size: 0.65rem;
+    font-size: var(--font-sm, 0.65rem);
     cursor: pointer;
     transition: background 0.12s, color 0.12s;
     font-family: inherit;
   }
 
   .action-btn:hover {
-    background: color-mix(in srgb, var(--dock-text-color) 18%, transparent);
-    color: var(--dock-text-color);
+    background: color-mix(in srgb, var(--text-primary) 18%, transparent);
+    color: var(--text-primary);
   }
 
   .action-btn.active {
-    color: rgba(125, 211, 252, 0.9);
-    background: rgba(125, 211, 252, 0.12);
-    border-color: rgba(125, 211, 252, 0.25);
+    color: var(--color-primary);
+    background: color-mix(in srgb, var(--color-primary) 12%, transparent);
+    border-color: color-mix(in srgb, var(--color-primary) 25%, transparent);
   }
 
   .copy-action {
-    background: rgba(125, 211, 252, 0.12);
-    border-color: rgba(125, 211, 252, 0.25);
-    color: rgba(125, 211, 252, 0.85);
+    background: color-mix(in srgb, var(--color-primary) 12%, transparent);
+    border-color: color-mix(in srgb, var(--color-primary) 25%, transparent);
+    color: var(--color-primary);
     font-weight: 500;
   }
 
   .copy-action:hover {
-    background: rgba(125, 211, 252, 0.22);
-    border-color: rgba(125, 211, 252, 0.4);
-    color: rgba(125, 211, 252, 1);
+    background: color-mix(in srgb, var(--color-primary) 22%, transparent);
+    border-color: color-mix(in srgb, var(--color-primary) 40%, transparent);
   }
 </style>

@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 use crate::system::fonts::system_font_defaults;
@@ -5,19 +6,31 @@ use crate::system::fonts::system_font_defaults;
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct DockPreferences {
-    pub entry_surface_opacity: f64,
-    pub dock_bg_opacity: f64,
-    pub dock_bg_color: String,
-    pub dock_minimized: bool,
+    // Theme
+    pub theme_mode: String,                          // "system" | "preset" | "custom"
+    pub theme_preset_id: String,                     // "dark-glass" | "light-matte" | "light-frosted"
+    pub custom_base_preset_id: String,
+    pub theme_overrides: HashMap<String, String>,
+
+    // Layout
+    pub ui_text_size_px: f64,                        // default 12
+    pub content_text_size_px: f64,                   // default 14
+    pub spacing_preset: String,                      // "compact" | "normal" | "spacious"
+    pub radius_preset: String,                       // "sharp" | "normal" | "round"
+
+    // Window geometry
     pub dock_position_x: f64,
     pub dock_position_y: f64,
     pub dock_width: f64,
     pub dock_height: f64,
     pub dock_edge_anchor: String,
-    pub text_size_px: f64,
-    pub text_color: String,
+    pub dock_minimized: bool,
+
+    // Fonts
     pub font_family_zh: String,
     pub font_family_en: String,
+
+    // System
     pub launch_on_startup: bool,
     pub update_proxy: String,
 }
@@ -26,17 +39,20 @@ impl Default for DockPreferences {
     fn default() -> Self {
         let (sys_font, _sys_size) = system_font_defaults();
         Self {
-            entry_surface_opacity: 0.82,
-            dock_bg_opacity: 0.85,
-            dock_bg_color: "#2a3548".to_string(),
-            dock_minimized: false,
+            theme_mode: "system".to_string(),
+            theme_preset_id: "dark-glass".to_string(),
+            custom_base_preset_id: String::new(),
+            theme_overrides: HashMap::new(),
+            ui_text_size_px: 12.0,
+            content_text_size_px: 14.0,
+            spacing_preset: "normal".to_string(),
+            radius_preset: "normal".to_string(),
             dock_position_x: 40.0,
             dock_position_y: 40.0,
             dock_width: 360.0,
             dock_height: 640.0,
             dock_edge_anchor: "right".to_string(),
-            text_size_px: 15.0,
-            text_color: "#e8edf5".to_string(),
+            dock_minimized: false,
             font_family_zh: sys_font.clone(),
             font_family_en: sys_font,
             launch_on_startup: false,

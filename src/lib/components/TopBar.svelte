@@ -77,18 +77,18 @@
     padding: 0.25rem 0.4rem;
     flex-shrink: 0;
     user-select: none;
-    border-bottom: 1px solid rgba(148, 163, 184, 0.08);
+    border-bottom: 1px solid var(--border-subtle);
     cursor: move;
   }
 
   .nav-btn {
     background: none;
     border: 1px solid transparent;
-    color: color-mix(in srgb, var(--dock-text-color) 50%, transparent);
-    font-size: 0.65rem;
+    color: color-mix(in srgb, var(--text-primary) 50%, transparent);
+    font-size: var(--font-sm, 0.65rem);
     font-weight: 500;
     padding: 0.25rem 0.5rem;
-    border-radius: 0.3rem;
+    border-radius: var(--radius-md, 0.3rem);
     cursor: pointer;
     transition: color 0.12s, background 0.12s, border-color 0.12s;
     font-family: inherit;
@@ -96,15 +96,15 @@
   }
 
   .nav-btn:hover {
-    color: var(--dock-text-color);
-    background: color-mix(in srgb, var(--dock-text-color) 10%, transparent);
-    border-color: color-mix(in srgb, var(--dock-text-color) 15%, transparent);
+    color: var(--text-primary);
+    background: color-mix(in srgb, var(--text-primary) 10%, transparent);
+    border-color: color-mix(in srgb, var(--text-primary) 15%, transparent);
   }
 
   .nav-btn.active {
-    color: var(--dock-text-color);
-    background: color-mix(in srgb, var(--dock-text-color) 15%, transparent);
-    border-color: color-mix(in srgb, var(--dock-text-color) 25%, transparent);
+    color: var(--text-primary);
+    background: color-mix(in srgb, var(--text-primary) 15%, transparent);
+    border-color: color-mix(in srgb, var(--text-primary) 25%, transparent);
   }
 
   .top-bar-spacer {
@@ -132,6 +132,6 @@
   }
 
   .pin-btn.active {
-    color: rgba(125, 211, 252, 0.9);
+    color: var(--color-primary);
   }
 </style>

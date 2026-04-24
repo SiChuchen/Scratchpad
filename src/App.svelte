@@ -8,6 +8,7 @@
   import SettingsView from '$lib/components/views/SettingsView.svelte'
   import { dockApi } from '$lib/api/dock'
   import { insertHomeEntry, removeEntryFromView } from '$lib/state/dock'
+  import { computeThemeTokens } from '$lib/themes/engine'
 
   import type { DockEntry, DockPreferences, DockView } from '$lib/types/dock'
 
@@ -17,6 +18,9 @@
   let preferences = $state<DockPreferences | null>(null)
   let toast = $state<{ text: string; kind: 'success' | 'error'; undo?: () => void; actionLabel?: string } | null>(null)
   let toastTimer: ReturnType<typeof setTimeout> | null = null
+
+  // Reactive system dark mode — separate from main async onMount
+  let systemDark = $state(window.matchMedia('(prefers-color-scheme: dark)').matches)
 
   onMount(async () => {
     try {
@@ -44,6 +48,16 @@
 
     // Check for updates on startup
     checkForUpdate()
+  })
+
+  // Synchronous onMount for matchMedia listener — cleanup function works correctly
+  onMount(() => {
+    const mq = window.matchMedia('(prefers-color-scheme: dark)')
+    function onSystemThemeChange(e: MediaQueryListEvent) {
+      systemDark = e.matches
+    }
+    mq.addEventListener('change', onSystemThemeChange)
+    return () => mq.removeEventListener('change', onSystemThemeChange)
   })
 
   // --- Update check ---
@@ -76,17 +90,17 @@
     }
   }
 
-  // Apply preferences as CSS variables
+  // Apply theme tokens as CSS variables — reacts to both preferences and systemDark
   $effect(() => {
     if (!preferences) return
+    const tokens = computeThemeTokens(preferences, systemDark)
     const root = document.documentElement.style
-    root.setProperty('--dock-bg-opacity', `${preferences.dockBgOpacity * 100}%`)
-    root.setProperty('--dock-bg-color', preferences.dockBgColor)
-    root.setProperty('--dock-text-size', `${preferences.textSizePx}px`)
-    root.setProperty('--dock-text-color', preferences.textColor)
-    root.setProperty('--dock-font-zh', preferences.fontFamilyZh)
-    root.setProperty('--dock-font-en', preferences.fontFamilyEn)
-    root.setProperty('--entry-surface-opacity', String(preferences.entrySurfaceOpacity))
+    for (const [key, value] of Object.entries(tokens)) {
+      root.setProperty(key, value)
+    }
+    // Non-token preferences
+    root.setProperty('--font-family-zh', preferences.fontFamilyZh)
+    root.setProperty('--font-family-en', preferences.fontFamilyEn)
   })
 
   // --- Home handlers ---
@@ -248,24 +262,45 @@
 
   // --- Preferences ---
 
-  async function updatePreferences(next: DockPreferences) {
-    try {
-      await dockApi.setPreferences(next)
-      preferences = next
+  let saveTimer: ReturnType<typeof setTimeout> | null = null
 
-      // Sync autostart with OS
+  async function updatePreferences(next: DockPreferences) {
+    const prev = preferences
+    preferences = next  // immediate visual effect via $effect
+
+    // Detect if system settings changed (need immediate save + OS sync)
+    const autostartChanged = prev?.launchOnStartup !== next.launchOnStartup
+
+    if (saveTimer) { clearTimeout(saveTimer); saveTimer = null }
+
+    if (autostartChanged) {
+      // Immediate save for system settings
       try {
-        const { enable, disable, isEnabled } = await import('@tauri-apps/plugin-autostart')
-        if (next.launchOnStartup) {
-          if (!(await isEnabled())) await enable()
-        } else {
-          if (await isEnabled()) await disable()
+        await dockApi.setPreferences(next)
+        // Sync autostart with OS
+        try {
+          const { enable, disable, isEnabled } = await import('@tauri-apps/plugin-autostart')
+          if (next.launchOnStartup) {
+            if (!(await isEnabled())) await enable()
+          } else {
+            if (await isEnabled()) await disable()
+          }
+        } catch {
+          // autostart plugin may not be available in dev
         }
-      } catch {
-        // autostart plugin may not be available in dev
+      } catch (e) {
+        showToast(`保存失败: ${formatError(e)}`, 'error')
       }
-    } catch (e) {
-      showToast(`保存失败: ${formatError(e)}`, 'error')
+    } else {
+      // Debounce appearance/theme changes (300ms)
+      saveTimer = setTimeout(async () => {
+        try {
+          await dockApi.setPreferences(preferences!)
+        } catch (e) {
+          showToast(`保存失败: ${formatError(e)}`, 'error')
+        }
+        saveTimer = null
+      }, 300)
     }
   }
 
@@ -572,9 +607,9 @@
     bottom: 0.75rem;
     left: 50%;
     transform: translateX(-50%);
-    background: rgba(15, 23, 42, 0.92);
-    border: 1px solid rgba(125, 211, 252, 0.3);
-    color: rgba(125, 211, 252, 0.9);
+    background: var(--surface-2);
+    border: 1px solid color-mix(in srgb, var(--color-primary) 30%, transparent);
+    color: var(--color-primary);
     padding: 0.35rem 0.6rem;
     border-radius: 0.5rem;
     font-size: 0.7rem;
@@ -589,7 +624,7 @@
   .toast-undo {
     background: none;
     border: none;
-    color: rgba(125, 211, 252, 1);
+    color: var(--color-primary);
     font-weight: 600;
     font-size: 0.7rem;
     cursor: pointer;
@@ -599,12 +634,12 @@
   }
 
   .toast-undo:hover {
-    color: rgba(147, 197, 253, 1);
+    opacity: 0.85;
   }
 
   .toast-error {
-    border-color: rgba(248, 113, 113, 0.3);
-    color: rgba(248, 113, 113, 0.9);
+    border-color: color-mix(in srgb, var(--color-danger) 30%, transparent);
+    color: var(--color-danger);
   }
 
   @keyframes toast-in {

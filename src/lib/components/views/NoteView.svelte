@@ -231,22 +231,22 @@
     justify-content: center;
     width: 1.75rem;
     height: 1.75rem;
-    background: rgba(251, 191, 36, 0.12);
-    border: 1px solid rgba(251, 191, 36, 0.25);
-    color: rgba(251, 191, 36, 0.85);
+    background: color-mix(in srgb, var(--color-accent) 12%, transparent);
+    border: 1px solid color-mix(in srgb, var(--color-accent) 25%, transparent);
+    color: var(--color-accent);
     cursor: pointer;
-    border-radius: 0.35rem;
+    border-radius: var(--radius-md, 0.35rem);
     transition: color 0.12s, background 0.12s;
   }
 
   .add-btn:hover {
-    background: rgba(251, 191, 36, 0.22);
+    background: color-mix(in srgb, var(--color-accent) 22%, transparent);
   }
 
   .note-label {
-    font-size: 0.7rem;
+    font-size: var(--font-sm, 0.7rem);
     font-weight: 700;
-    color: rgba(251, 191, 36, 0.85);
+    color: var(--color-accent);
     flex-shrink: 0;
   }
 
@@ -255,9 +255,9 @@
     display: flex;
     align-items: center;
     gap: 0.25rem;
-    background: rgba(15, 23, 42, 0.5);
-    border: 1px solid rgba(148, 163, 184, 0.12);
-    border-radius: 0.3rem;
+    background: var(--surface-2);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md, 0.3rem);
     padding: 0 0.35rem;
     height: 1.75rem;
   }
@@ -271,7 +271,7 @@
     flex: 1;
     background: none;
     border: none;
-    color: var(--dock-text-color);
+    color: var(--text-primary);
     font-size: 0.6rem;
     font-family: inherit;
     outline: none;
@@ -280,21 +280,21 @@
   }
 
   .search-input::placeholder {
-    color: rgba(148, 163, 184, 0.35);
+    color: var(--text-faint);
   }
 
   .search-clear {
     background: none;
     border: none;
-    color: rgba(148, 163, 184, 0.5);
-    font-size: 0.6rem;
+    color: var(--text-muted);
+    font-size: var(--font-sm, 0.6rem);
     cursor: pointer;
     padding: 0;
     font-family: inherit;
   }
 
   .search-clear:hover {
-    color: var(--dock-text-color);
+    color: var(--text-primary);
   }
 
   .new-form {
@@ -307,11 +307,11 @@
 
   .new-textarea {
     width: 100%;
-    background: rgba(15, 23, 42, 0.6);
-    border: 1px solid rgba(251, 191, 36, 0.2);
-    border-radius: 0.5rem;
-    color: #e5eef7;
-    font-size: 0.7rem;
+    background: var(--surface-2);
+    border: 1px solid color-mix(in srgb, var(--color-accent) 20%, transparent);
+    border-radius: var(--radius-lg, 0.5rem);
+    color: var(--text-primary);
+    font-size: var(--font-sm, 0.7rem);
     font-family: inherit;
     line-height: 1.45;
     padding: 0.4rem 0.5rem;
@@ -322,11 +322,11 @@
   }
 
   .new-textarea::placeholder {
-    color: rgba(148, 163, 184, 0.35);
+    color: var(--text-faint);
   }
 
   .new-textarea:focus {
-    border-color: rgba(251, 191, 36, 0.4);
+    border-color: color-mix(in srgb, var(--color-accent) 40%, transparent);
   }
 
   .new-form-actions {
@@ -345,25 +345,25 @@
   }
 
   .form-cancel {
-    background: rgba(15, 23, 42, 0.5);
-    border: 1px solid rgba(148, 163, 184, 0.15);
-    color: rgba(148, 163, 184, 0.7);
+    background: var(--surface-2);
+    border: 1px solid var(--border-default);
+    color: var(--text-muted);
   }
 
   .form-cancel:hover {
-    background: rgba(148, 163, 184, 0.1);
-    color: #e5eef7;
+    background: var(--border-default);
+    color: var(--text-primary);
   }
 
   .form-submit {
-    background: rgba(251, 191, 36, 0.15);
-    border: 1px solid rgba(251, 191, 36, 0.3);
-    color: rgba(251, 191, 36, 0.9);
+    background: color-mix(in srgb, var(--color-accent) 15%, transparent);
+    border: 1px solid color-mix(in srgb, var(--color-accent) 30%, transparent);
+    color: var(--color-accent);
     font-weight: 500;
   }
 
   .form-submit:hover:not(:disabled) {
-    background: rgba(251, 191, 36, 0.25);
+    background: color-mix(in srgb, var(--color-accent) 25%, transparent);
   }
 
   .form-submit:disabled {
@@ -383,14 +383,14 @@
     align-items: center;
     justify-content: center;
     padding: 2rem 0;
-    color: rgba(148, 163, 184, 0.4);
-    font-size: 0.75rem;
+    color: var(--text-faint);
+    font-size: var(--font-sm, 0.75rem);
     text-align: center;
   }
 
   .dock-empty .hint {
-    font-size: 0.65rem;
-    color: rgba(148, 163, 184, 0.3);
+    font-size: var(--font-sm, 0.65rem);
+    color: var(--text-faint);
     margin-top: 0.2rem;
   }
 
@@ -409,12 +409,12 @@
   }
 
   .entry-wrapper.drag-over-top {
-    border-top: 2px solid rgba(251, 191, 36, 0.6);
+    border-top: 2px solid color-mix(in srgb, var(--color-accent) 60%, transparent);
     padding-top: 0;
   }
 
   .entry-wrapper.drag-over-bottom {
-    border-bottom: 2px solid rgba(251, 191, 36, 0.6);
+    border-bottom: 2px solid color-mix(in srgb, var(--color-accent) 60%, transparent);
     padding-bottom: 0;
   }
 </style>

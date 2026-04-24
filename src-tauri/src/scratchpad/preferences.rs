@@ -1,4 +1,5 @@
 use rusqlite::{params, Connection};
+use serde_json;
 
 use crate::models::preferences::DockPreferences;
 use crate::storage::error::StorageResult;
@@ -6,18 +7,25 @@ use crate::storage::error::StorageResult;
 pub fn save_preferences(conn: &mut Connection, prefs: &DockPreferences) -> StorageResult<()> {
     let tx = conn.transaction()?;
     tx.execute("DELETE FROM preferences", [])?;
+
+    let overrides_json = serde_json::to_string(&prefs.theme_overrides)
+        .unwrap_or_else(|_| "{}".to_string());
+
     for (key, value) in [
-        ("entry_surface_opacity", prefs.entry_surface_opacity.to_string()),
-        ("dock_bg_opacity", prefs.dock_bg_opacity.to_string()),
-        ("dock_bg_color", prefs.dock_bg_color.clone()),
-        ("dock_minimized", prefs.dock_minimized.to_string()),
+        ("theme_mode", prefs.theme_mode.clone()),
+        ("theme_preset_id", prefs.theme_preset_id.clone()),
+        ("custom_base_preset_id", prefs.custom_base_preset_id.clone()),
+        ("theme_overrides", overrides_json),
+        ("ui_text_size_px", prefs.ui_text_size_px.to_string()),
+        ("content_text_size_px", prefs.content_text_size_px.to_string()),
+        ("spacing_preset", prefs.spacing_preset.clone()),
+        ("radius_preset", prefs.radius_preset.clone()),
         ("dock_position_x", prefs.dock_position_x.to_string()),
         ("dock_position_y", prefs.dock_position_y.to_string()),
         ("dock_width", prefs.dock_width.to_string()),
         ("dock_height", prefs.dock_height.to_string()),
         ("dock_edge_anchor", prefs.dock_edge_anchor.clone()),
-        ("text_size_px", prefs.text_size_px.to_string()),
-        ("text_color", prefs.text_color.clone()),
+        ("dock_minimized", prefs.dock_minimized.to_string()),
         ("font_family_zh", prefs.font_family_zh.clone()),
         ("font_family_en", prefs.font_family_en.clone()),
         ("launch_on_startup", prefs.launch_on_startup.to_string()),
@@ -40,17 +48,31 @@ pub fn load_preferences(conn: &Connection) -> StorageResult<DockPreferences> {
     let map: std::collections::HashMap<String, String> = raw.into_iter().collect();
 
     let mut prefs = DockPreferences::default();
-    if let Some(v) = map.get("entry_surface_opacity") {
-        prefs.entry_surface_opacity = v.parse().unwrap_or(prefs.entry_surface_opacity);
+
+    if let Some(v) = map.get("theme_mode") {
+        prefs.theme_mode = v.clone();
     }
-    if let Some(v) = map.get("dock_bg_opacity") {
-        prefs.dock_bg_opacity = v.parse().unwrap_or(prefs.dock_bg_opacity);
+    if let Some(v) = map.get("theme_preset_id") {
+        prefs.theme_preset_id = v.clone();
     }
-    if let Some(v) = map.get("dock_bg_color") {
-        prefs.dock_bg_color = v.clone();
+    if let Some(v) = map.get("custom_base_preset_id") {
+        prefs.custom_base_preset_id = v.clone();
     }
-    if let Some(v) = map.get("dock_minimized") {
-        prefs.dock_minimized = v.parse().unwrap_or(false);
+    if let Some(v) = map.get("theme_overrides") {
+        prefs.theme_overrides = serde_json::from_str(v)
+            .unwrap_or_default();
+    }
+    if let Some(v) = map.get("ui_text_size_px") {
+        prefs.ui_text_size_px = v.parse().unwrap_or(prefs.ui_text_size_px);
+    }
+    if let Some(v) = map.get("content_text_size_px") {
+        prefs.content_text_size_px = v.parse().unwrap_or(prefs.content_text_size_px);
+    }
+    if let Some(v) = map.get("spacing_preset") {
+        prefs.spacing_preset = v.clone();
+    }
+    if let Some(v) = map.get("radius_preset") {
+        prefs.radius_preset = v.clone();
     }
     if let Some(v) = map.get("dock_position_x") {
         prefs.dock_position_x = v.parse().unwrap_or(prefs.dock_position_x);
@@ -67,11 +89,8 @@ pub fn load_preferences(conn: &Connection) -> StorageResult<DockPreferences> {
     if let Some(v) = map.get("dock_edge_anchor") {
         prefs.dock_edge_anchor = v.clone();
     }
-    if let Some(v) = map.get("text_size_px") {
-        prefs.text_size_px = v.parse().unwrap_or(prefs.text_size_px);
-    }
-    if let Some(v) = map.get("text_color") {
-        prefs.text_color = v.clone();
+    if let Some(v) = map.get("dock_minimized") {
+        prefs.dock_minimized = v.parse().unwrap_or(false);
     }
     if let Some(v) = map.get("font_family_zh") {
         prefs.font_family_zh = v.clone();
@@ -127,21 +146,25 @@ mod preference_tests {
     use crate::scratchpad::storage::ensure_dock_schema;
 
     #[test]
-    fn preferences_roundtrip_persists_opacity_and_geometry() {
+    fn preferences_roundtrip_persists_theme_fields() {
         let mut conn = Connection::open_in_memory().unwrap();
         ensure_dock_schema(&mut conn).unwrap();
 
         let mut prefs = DockPreferences::default();
-        prefs.entry_surface_opacity = 0.66;
-        prefs.dock_width = 420.0;
-        prefs.dock_height = 700.0;
+        prefs.theme_mode = "custom".to_string();
+        prefs.custom_base_preset_id = "dark-glass".to_string();
+        prefs.theme_overrides.insert("--color-primary".to_string(), "#ff0000".to_string());
+        prefs.ui_text_size_px = 14.0;
+        prefs.spacing_preset = "compact".to_string();
 
         save_preferences(&mut conn, &prefs).unwrap();
         let loaded = load_preferences(&conn).unwrap();
 
-        assert_eq!(loaded.entry_surface_opacity, 0.66);
-        assert_eq!(loaded.dock_width, 420.0);
-        assert_eq!(loaded.dock_height, 700.0);
+        assert_eq!(loaded.theme_mode, "custom");
+        assert_eq!(loaded.custom_base_preset_id, "dark-glass");
+        assert_eq!(loaded.theme_overrides.get("--color-primary"), Some(&"#ff0000".to_string()));
+        assert_eq!(loaded.ui_text_size_px, 14.0);
+        assert_eq!(loaded.spacing_preset, "compact");
     }
 
     #[test]

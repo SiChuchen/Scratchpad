@@ -46,14 +46,14 @@
     align-items: center;
     gap: 0.35rem;
     padding: 0.3rem;
-    background: rgba(15, 23, 42, 0.4);
-    border-radius: 0.375rem;
-    color: rgba(148, 163, 184, 0.5);
+    background: var(--surface-2);
+    border-radius: var(--radius-md, 0.375rem);
+    color: var(--text-muted);
   }
 
   .file-name {
-    font-size: 0.65rem;
-    color: rgba(225, 238, 247, 0.75);
+    font-size: var(--font-sm, 0.65rem);
+    color: var(--text-primary);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -62,8 +62,8 @@
   }
 
   .file-size {
-    font-size: 0.5rem;
-    color: rgba(148, 163, 184, 0.45);
+    font-size: var(--font-xs, 0.5rem);
+    color: var(--text-faint);
     flex-shrink: 0;
   }
 
@@ -77,32 +77,31 @@
     display: flex;
     align-items: center;
     gap: 0.3rem;
-    background: color-mix(in srgb, var(--dock-text-color) 8%, transparent);
-    border: 1px solid color-mix(in srgb, var(--dock-text-color) 15%, transparent);
-    border-radius: 0.35rem;
-    color: color-mix(in srgb, var(--dock-text-color) 60%, transparent);
+    background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+    border: 1px solid color-mix(in srgb, var(--text-primary) 15%, transparent);
+    border-radius: var(--radius-md, 0.35rem);
+    color: color-mix(in srgb, var(--text-primary) 60%, transparent);
     padding: 0.3rem 0.65rem;
-    font-size: 0.65rem;
+    font-size: var(--font-sm, 0.65rem);
     cursor: pointer;
     transition: background 0.12s, color 0.12s;
     font-family: inherit;
   }
 
   .action-btn:hover {
-    background: color-mix(in srgb, var(--dock-text-color) 18%, transparent);
-    color: var(--dock-text-color);
+    background: color-mix(in srgb, var(--text-primary) 18%, transparent);
+    color: var(--text-primary);
   }
 
   .copy-action {
-    background: rgba(125, 211, 252, 0.12);
-    border-color: rgba(125, 211, 252, 0.25);
-    color: rgba(125, 211, 252, 0.85);
+    background: color-mix(in srgb, var(--color-primary) 12%, transparent);
+    border-color: color-mix(in srgb, var(--color-primary) 25%, transparent);
+    color: var(--color-primary);
     font-weight: 500;
   }
 
   .copy-action:hover {
-    background: rgba(125, 211, 252, 0.22);
-    border-color: rgba(125, 211, 252, 0.4);
-    color: rgba(125, 211, 252, 1);
+    background: color-mix(in srgb, var(--color-primary) 22%, transparent);
+    border-color: color-mix(in srgb, var(--color-primary) 40%, transparent);
   }
 </style>

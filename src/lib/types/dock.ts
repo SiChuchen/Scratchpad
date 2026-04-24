@@ -22,19 +22,31 @@ export interface DockEntry {
 }
 
 export interface DockPreferences {
-  entrySurfaceOpacity: number
-  dockBgOpacity: number
-  dockBgColor: string
-  dockMinimized: boolean
+  // Theme
+  themeMode: 'system' | 'preset' | 'custom'
+  themePresetId: string
+  customBasePresetId: string
+  themeOverrides: Record<string, string>
+
+  // Layout
+  uiTextSizePx: number
+  contentTextSizePx: number
+  spacingPreset: 'compact' | 'normal' | 'spacious'
+  radiusPreset: 'sharp' | 'normal' | 'round'
+
+  // Window geometry
   dockPositionX: number
   dockPositionY: number
   dockWidth: number
   dockHeight: number
   dockEdgeAnchor: string
-  textSizePx: number
-  textColor: string
+  dockMinimized: boolean
+
+  // Fonts
   fontFamilyZh: string
   fontFamilyEn: string
+
+  // System
   launchOnStartup: boolean
   updateProxy: string
 }

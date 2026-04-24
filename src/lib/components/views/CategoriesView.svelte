@@ -96,11 +96,11 @@
 
   .filter-btn {
     background: none;
-    border: 1px solid rgba(148, 163, 184, 0.12);
-    color: rgba(148, 163, 184, 0.5);
-    font-size: 0.6rem;
+    border: 1px solid var(--border-default);
+    color: var(--text-muted);
+    font-size: var(--font-sm, 0.6rem);
     padding: 0.25rem 0.55rem;
-    border-radius: 0.3rem;
+    border-radius: var(--radius-md, 0.3rem);
     cursor: pointer;
     transition: color 0.12s, background 0.12s, border-color 0.12s;
     font-family: inherit;
@@ -110,14 +110,14 @@
   }
 
   .filter-btn:hover {
-    color: #e5eef7;
-    background: rgba(148, 163, 184, 0.08);
+    color: var(--text-primary);
+    background: var(--border-subtle);
   }
 
   .filter-btn.active {
-    color: rgba(125, 211, 252, 0.9);
-    border-color: rgba(125, 211, 252, 0.3);
-    background: rgba(125, 211, 252, 0.1);
+    color: var(--color-primary);
+    border-color: color-mix(in srgb, var(--color-primary) 30%, transparent);
+    background: color-mix(in srgb, var(--color-primary) 10%, transparent);
   }
 
   .categories-body {
@@ -132,8 +132,8 @@
     align-items: center;
     justify-content: center;
     padding: 2rem 0;
-    color: rgba(148, 163, 184, 0.4);
-    font-size: 0.75rem;
+    color: var(--text-faint);
+    font-size: var(--font-sm, 0.75rem);
   }
 
   .entry-list {

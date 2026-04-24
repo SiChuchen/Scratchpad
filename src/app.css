@@ -1,17 +1,22 @@
 :root {
-  --dock-text-size: 15px;
-  --dock-text-color: #e8edf5;
-  --dock-font-zh: "Microsoft YaHei";
-  --dock-font-en: "Segoe UI";
-  --entry-surface-opacity: 0.82;
-  --dock-bg-color: #2a3548;
-  --dock-bg-opacity: 85%;
+  /* Initial fallback values — overwritten by theme engine at runtime */
+  --surface-0: rgba(42, 53, 72, 0.95);
+  --surface-1: rgba(255, 255, 255, 0.04);
+  --surface-2: rgba(15, 23, 42, 0.5);
+  --text-primary: #e8edf5;
+  --text-muted: rgba(148, 163, 184, 0.5);
+  --text-faint: rgba(148, 163, 184, 0.35);
+  --border-default: rgba(148, 163, 184, 0.1);
+  --border-subtle: rgba(148, 163, 184, 0.08);
+  --border-emphasis: rgba(148, 163, 184, 0.25);
+  --color-primary: rgba(125, 211, 252, 0.9);
+  --shadow-default: 0 8px 32px rgba(0, 0, 0, 0.45);
 
-  font-family: var(--dock-font-en), var(--dock-font-zh), sans-serif;
+  font-family: var(--font-family-en, "Segoe UI"), var(--font-family-zh, "Microsoft YaHei"), sans-serif;
   line-height: 1.5;
   font-weight: 400;
-  color: var(--dock-text-color);
-  font-size: var(--dock-text-size);
+  color: var(--text-primary);
+  font-size: 15px;
   background: transparent;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
@@ -35,13 +40,12 @@ body {
   height: 100vh;
   display: flex;
   flex-direction: column;
-  background: color-mix(in srgb, var(--dock-bg-color) var(--dock-bg-opacity), transparent);
+  background: var(--surface-0);
   backdrop-filter: blur(24px);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
+  border: 1px solid var(--border-emphasis);
+  box-shadow: var(--shadow-default);
   border-radius: 0.5rem;
 }
-
 
 ::-webkit-scrollbar {
   width: 3px;
@@ -52,6 +56,6 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(148, 163, 184, 0.15);
+  background: color-mix(in srgb, var(--text-muted) 30%, transparent);
   border-radius: 2px;
 }

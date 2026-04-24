@@ -197,9 +197,9 @@
 
 <style>
   .entry-card {
-    background: rgba(255, 255, 255, 0.04);
-    border: 1px solid rgba(148, 163, 184, 0.1);
-    border-radius: 0.5rem;
+    background: var(--surface-1);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-lg, 0.5rem);
     padding: 0.4rem 0.55rem;
     display: flex;
     flex-direction: column;
@@ -208,7 +208,7 @@
   }
 
   .entry-card:hover {
-    border-color: rgba(148, 163, 184, 0.2);
+    border-color: var(--border-emphasis);
   }
 
   .entry-card.collapsed {
@@ -228,40 +228,40 @@
 
   .kind-badge {
     padding: 0.1rem 0.4rem;
-    border-radius: 0.2rem;
-    font-size: 0.55rem;
+    border-radius: var(--radius-sm, 0.2rem);
+    font-size: var(--font-xs, 0.55rem);
     font-weight: 600;
     letter-spacing: 0.03em;
     flex-shrink: 0;
-    background: rgba(125, 211, 252, 0.12);
-    border: 1px solid rgba(125, 211, 252, 0.2);
-    color: rgba(125, 211, 252, 0.85);
+    background: color-mix(in srgb, var(--color-primary) 12%, transparent);
+    border: 1px solid color-mix(in srgb, var(--color-primary) 20%, transparent);
+    color: var(--color-primary);
   }
 
   .kind-badge.image {
-    background: rgba(192, 132, 252, 0.1);
-    border-color: rgba(192, 132, 252, 0.2);
-    color: rgba(192, 132, 252, 0.85);
+    background: color-mix(in srgb, var(--color-info) 10%, transparent);
+    border-color: color-mix(in srgb, var(--color-info) 20%, transparent);
+    color: var(--color-info);
   }
 
   .kind-badge.file {
-    background: rgba(74, 222, 128, 0.1);
-    border-color: rgba(74, 222, 128, 0.2);
-    color: rgba(74, 222, 128, 0.85);
+    background: color-mix(in srgb, var(--color-file) 10%, transparent);
+    border-color: color-mix(in srgb, var(--color-file) 20%, transparent);
+    color: var(--color-file);
   }
 
   .source-badge {
     padding: 0.0625rem 0.3rem;
     border-radius: 0.1875rem;
-    font-size: 0.5rem;
-    background: rgba(251, 191, 36, 0.1);
-    border: 1px solid rgba(251, 191, 36, 0.2);
-    color: rgba(251, 191, 36, 0.75);
+    font-size: var(--font-xs, 0.5rem);
+    background: color-mix(in srgb, var(--color-accent) 10%, transparent);
+    border: 1px solid color-mix(in srgb, var(--color-accent) 20%, transparent);
+    color: var(--color-accent);
   }
 
   .entry-preview {
-    font-size: 0.65rem;
-    color: rgba(148, 163, 184, 0.55);
+    font-size: var(--font-sm, 0.65rem);
+    color: var(--text-muted);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -271,12 +271,12 @@
   }
 
   .entry-preview:hover {
-    color: rgba(148, 163, 184, 0.85);
+    color: var(--text-primary);
   }
 
   .entry-time {
-    font-size: 0.55rem;
-    color: rgba(148, 163, 184, 0.4);
+    font-size: var(--font-xs, 0.55rem);
+    color: var(--text-faint);
     flex-shrink: 0;
   }
 
@@ -292,77 +292,76 @@
     justify-content: center;
     width: 1.6rem;
     height: 1.6rem;
-    background: color-mix(in srgb, var(--dock-text-color) 8%, transparent);
-    border: 1px solid color-mix(in srgb, var(--dock-text-color) 15%, transparent);
-    border-radius: 0.25rem;
-    color: color-mix(in srgb, var(--dock-text-color) 55%, transparent);
+    background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+    border: 1px solid color-mix(in srgb, var(--text-primary) 15%, transparent);
+    border-radius: var(--radius-sm, 0.25rem);
+    color: color-mix(in srgb, var(--text-primary) 55%, transparent);
     cursor: pointer;
     transition: color 0.12s, background 0.12s, border-color 0.12s;
   }
 
   .icon-btn:hover {
-    color: var(--dock-text-color);
-    background: color-mix(in srgb, var(--dock-text-color) 18%, transparent);
-    border-color: color-mix(in srgb, var(--dock-text-color) 30%, transparent);
+    color: var(--text-primary);
+    background: color-mix(in srgb, var(--text-primary) 18%, transparent);
+    border-color: color-mix(in srgb, var(--text-primary) 30%, transparent);
   }
 
   .icon-btn.note-btn {
-    color: rgba(251, 191, 36, 0.85);
-    border-color: rgba(251, 191, 36, 0.2);
+    color: var(--color-accent);
+    border-color: color-mix(in srgb, var(--color-accent) 20%, transparent);
   }
 
   .icon-btn.note-btn:disabled {
-    color: rgba(251, 191, 36, 0.35);
+    color: color-mix(in srgb, var(--color-accent) 35%, transparent);
     cursor: default;
   }
 
   .icon-btn.note-btn:not(:disabled):hover {
-    background: rgba(251, 191, 36, 0.15);
-    border-color: rgba(251, 191, 36, 0.35);
+    background: color-mix(in srgb, var(--color-accent) 15%, transparent);
+    border-color: color-mix(in srgb, var(--color-accent) 35%, transparent);
   }
 
   .icon-btn.danger:hover {
-    color: rgba(248, 113, 113, 0.9);
-    background: rgba(248, 113, 113, 0.12);
-    border-color: rgba(248, 113, 113, 0.25);
+    color: var(--color-danger);
+    background: color-mix(in srgb, var(--color-danger) 12%, transparent);
+    border-color: color-mix(in srgb, var(--color-danger) 25%, transparent);
   }
 
   .copy-collapsed {
-    background: rgba(125, 211, 252, 0.1);
-    border-color: rgba(125, 211, 252, 0.25);
-    color: rgba(125, 211, 252, 0.8);
+    background: color-mix(in srgb, var(--color-primary) 10%, transparent);
+    border-color: color-mix(in srgb, var(--color-primary) 25%, transparent);
+    color: var(--color-primary);
     width: 1.5rem;
     height: 1.5rem;
-    border-radius: 0.25rem;
+    border-radius: var(--radius-sm, 0.25rem);
     flex-shrink: 0;
   }
 
   .copy-collapsed:hover {
-    background: rgba(125, 211, 252, 0.2);
-    border-color: rgba(125, 211, 252, 0.4);
-    color: rgba(125, 211, 252, 1);
+    background: color-mix(in srgb, var(--color-primary) 20%, transparent);
+    border-color: color-mix(in srgb, var(--color-primary) 40%, transparent);
   }
 
   .title-edit-input {
     flex: 1;
     min-width: 0;
-    background: rgba(15, 23, 42, 0.6);
-    border: 1px solid rgba(125, 211, 252, 0.3);
-    border-radius: 0.2rem;
-    color: var(--dock-text-color);
-    font-size: 0.55rem;
+    background: var(--surface-2);
+    border: 1px solid color-mix(in srgb, var(--color-primary) 30%, transparent);
+    border-radius: var(--radius-sm, 0.2rem);
+    color: var(--text-primary);
+    font-size: var(--font-xs, 0.55rem);
     font-family: inherit;
     padding: 0.1rem 0.3rem;
     outline: none;
   }
 
   .title-edit-input:focus {
-    border-color: rgba(125, 211, 252, 0.5);
+    border-color: color-mix(in srgb, var(--color-primary) 50%, transparent);
   }
 
   .entry-title {
-    font-size: 0.55rem;
-    color: rgba(148, 163, 184, 0.6);
+    font-size: var(--font-xs, 0.55rem);
+    color: var(--text-muted);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -372,6 +371,6 @@
   }
 
   .entry-title:hover {
-    color: rgba(148, 163, 184, 0.9);
+    color: var(--text-primary);
   }
 </style>
