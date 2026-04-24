@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { DockEntry } from '$lib/types/dock'
+  import { looksLikeCode } from '$lib/utils/title'
 
   interface Props {
     entry: DockEntry
@@ -11,7 +12,7 @@
 
   let editing = $state(false)
   let editValue = $state('')
-  let mono = $state(false)
+  let isCode = $derived(looksLikeCode(entry.content || ''))
   let textareaEl: HTMLTextAreaElement | undefined = $state()
 
   function startEdit() {
@@ -58,7 +59,7 @@
   ></textarea>
 {:else}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="entry-content" class:mono onclick={startEdit}>
+  <div class="entry-content" class:mono={isCode} onclick={startEdit}>
     {entry.content || '(空)'}
   </div>
 {/if}
@@ -70,13 +71,6 @@
       <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
     </svg>
     <span>复制</span>
-  </button>
-  <button class="action-btn" class:active={mono} onclick={() => mono = !mono} title={mono ? '等宽字体' : '切换等宽字体'}>
-    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-      <polyline points="4 7 4 4 20 4 20 7" />
-      <line x1="9" y1="20" x2="15" y2="20" />
-      <line x1="12" y1="4" x2="12" y2="20" />
-    </svg>
   </button>
 </div>
 
@@ -130,37 +124,26 @@
     display: flex;
     align-items: center;
     gap: 0.3rem;
-    background: color-mix(in srgb, var(--text-primary) 8%, transparent);
-    border: 1px solid color-mix(in srgb, var(--text-primary) 15%, transparent);
+    background: transparent;
+    border: 1px solid transparent;
     border-radius: var(--radius-md, 0.35rem);
-    color: color-mix(in srgb, var(--text-primary) 60%, transparent);
-    padding: 0.3rem 0.65rem;
-    font-size: var(--font-sm, 0.65rem);
+    color: var(--text-faint);
+    padding: 0.25rem 0.55rem;
+    font-size: var(--font-xs, 0.6rem);
     cursor: pointer;
-    transition: background 0.12s, color 0.12s;
+    transition: background 0.12s, color 0.12s, border-color 0.12s;
     font-family: inherit;
   }
 
   .action-btn:hover {
-    background: color-mix(in srgb, var(--text-primary) 18%, transparent);
+    background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+    border-color: color-mix(in srgb, var(--text-primary) 12%, transparent);
     color: var(--text-primary);
   }
 
-  .action-btn.active {
-    color: var(--color-primary);
-    background: color-mix(in srgb, var(--color-primary) 12%, transparent);
-    border-color: color-mix(in srgb, var(--color-primary) 25%, transparent);
-  }
-
-  .copy-action {
-    background: color-mix(in srgb, var(--color-primary) 12%, transparent);
-    border-color: color-mix(in srgb, var(--color-primary) 25%, transparent);
-    color: var(--color-primary);
-    font-weight: 500;
-  }
-
   .copy-action:hover {
-    background: color-mix(in srgb, var(--color-primary) 22%, transparent);
-    border-color: color-mix(in srgb, var(--color-primary) 40%, transparent);
+    background: color-mix(in srgb, var(--color-primary) 10%, transparent);
+    border-color: color-mix(in srgb, var(--color-primary) 20%, transparent);
+    color: var(--color-primary);
   }
 </style>
