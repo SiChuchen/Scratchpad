@@ -150,7 +150,7 @@
         <input
           type="text"
           class="search-input"
-          placeholder="搜索..."
+          placeholder="搜索内容、标题、文件名..."
           bind:value={searchQuery}
         />
         {#if searchQuery}
@@ -179,9 +179,8 @@
   <div class="home-body" bind:this={bodyEl}>
     {#if entries.length === 0}
       <div class="dock-empty">
-        <p>暂无内容</p>
-        <p class="hint">点击 + 添加文本片段</p>
-        <p class="hint">Ctrl + 拖动移动窗口 | 粘贴或拖入文件</p>
+        <p>还没有收纳内容</p>
+        <p class="hint">你可以直接粘贴文字、图片或文件，也可以拖入文件到窗口，或点击左上角 + 新建文本。</p>
       </div>
     {:else if filtered.length === 0}
       <div class="dock-empty">

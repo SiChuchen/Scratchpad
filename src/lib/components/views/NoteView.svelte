@@ -137,7 +137,6 @@
         <line x1="5" y1="12" x2="19" y2="12" />
       </svg>
     </button>
-    <span class="note-label">Note</span>
     {#if entries.length > 0}
       <div class="search-box">
         <svg class="search-icon" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -147,7 +146,7 @@
         <input
           type="text"
           class="search-input"
-          placeholder="搜索..."
+          placeholder="搜索内容、标题、文件名..."
           bind:value={searchQuery}
         />
         {#if searchQuery}
@@ -161,7 +160,7 @@
     <div class="new-form">
       <textarea
         class="new-textarea"
-        placeholder="输入笔记内容..."
+        placeholder="输入文本内容..."
         bind:value={newText}
         onkeydown={handleKeydown}
         rows="3"
@@ -176,9 +175,8 @@
   <div class="note-body" bind:this={bodyEl}>
     {#if entries.length === 0}
       <div class="dock-empty">
-        <p>Note 为空</p>
-        <p class="hint">点击 + 创建笔记，或从主页收藏</p>
-        <p class="hint">Ctrl + 拖动移动窗口 | 粘贴或拖入文件</p>
+        <p>暂无收藏内容</p>
+        <p class="hint">在收纳页点击星标，即可把重要内容放到这里。也可以点击 + 新建一条文本。</p>
       </div>
     {:else if filtered.length === 0}
       <div class="dock-empty">
@@ -251,13 +249,6 @@
 
   .add-btn:hover {
     background: color-mix(in srgb, var(--color-accent) 22%, transparent);
-  }
-
-  .note-label {
-    font-size: var(--font-sm, 0.7rem);
-    font-weight: 700;
-    color: var(--color-accent);
-    flex-shrink: 0;
   }
 
   .search-box {

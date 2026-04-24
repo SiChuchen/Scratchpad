@@ -54,7 +54,7 @@
   <div class="categories-body">
     {#if filtered.length === 0}
       <div class="dock-empty">
-        <p>{activeFilter ? '该分类暂无内容' : '暂无内容'}</p>
+        <p>{activeFilter ? '该类型暂无内容' : '暂无任何内容'}</p>
       </div>
     {:else}
       <div class="entry-list">
