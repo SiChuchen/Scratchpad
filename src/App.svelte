@@ -193,7 +193,7 @@
     }
 
     // Show toast with undo, auto-commit after 3s
-    showToast('已删除', 'success', undoDelete)
+    showToast('已删除 1 条内容', 'success', undoDelete)
     toastTimer = setTimeout(() => {
       commitDelete()
     }, 3000)
@@ -210,7 +210,6 @@
           e.id === entryId ? { ...e, inNote: false } : e,
         )
         noteEntries = noteEntries.filter((e) => e.id !== entryId)
-        showToast('已取消收藏')
       } else {
         await dockApi.addToNote(entryId)
         homeEntries = homeEntries.map((e) =>
@@ -219,9 +218,7 @@
         noteEntries = noteEntries.map((e) =>
           e.id === entryId ? { ...e, inNote: true } : e,
         )
-        // Refresh note entries to include the new one
         noteEntries = await dockApi.listEntries('note')
-        showToast('已收藏到 Note')
       }
     } catch (e) {
       showToast(`收藏操作失败: ${formatError(e)}`, 'error')
@@ -429,6 +426,7 @@
         } else {
           homeEntries = insertHomeEntry(homeEntries, { ...created, inHome: true })
         }
+        showToast('已收纳图片')
       } catch (e) {
         showToast(`粘贴失败: ${formatError(e)}`, 'error')
       }
@@ -464,7 +462,7 @@
             }
           }
         }
-        showToast(`已导入 ${files.length} 个文件`)
+        showToast(`已收纳 ${files.length} 个文件`)
       } catch (e) {
         showToast(`导入失败: ${formatError(e)}`, 'error')
       }
@@ -483,6 +481,7 @@
           const created = await dockApi.createText('home', pastedText, 'manual')
           homeEntries = insertHomeEntry(homeEntries, created)
         }
+        showToast('已收纳文本')
       } catch (e) {
         showToast(`粘贴失败: ${formatError(e)}`, 'error')
       }
@@ -500,7 +499,7 @@
           const created = await dockApi.createText('home', text, 'manual')
           homeEntries = insertHomeEntry(homeEntries, created)
         }
-        showToast('已粘贴')
+        showToast('已收纳文本')
       }
     } catch {
       showToast('粘贴失败', 'error')
@@ -517,6 +516,12 @@
         } else {
           homeEntries = insertHomeEntry(homeEntries, { ...created, inHome: true })
         }
+      }
+      const fileNames = paths.map((p) => p.split(/[\\/]/).pop()).filter(Boolean)
+      if (paths.length === 1 && fileNames[0]) {
+        showToast(`已收纳文件：${fileNames[0]}`)
+      } else {
+        showToast(`已收纳 ${paths.length} 个文件`)
       }
     } catch (e) {
       showToast(`导入失败: ${formatError(e)}`, 'error')
