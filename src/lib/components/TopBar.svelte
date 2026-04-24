@@ -35,17 +35,17 @@
     class="nav-btn"
     class:active={currentView === 'home'}
     onclick={() => onNavigate('home')}
-  >主页</button>
+  >收纳</button>
   <button
     class="nav-btn"
     class:active={currentView === 'categories'}
     onclick={() => onNavigate('categories')}
-  >分类</button>
+  >全部</button>
   <button
     class="nav-btn"
     class:active={currentView === 'note'}
     onclick={() => onNavigate('note')}
-  >Note</button>
+  >收藏</button>
   <div class="top-bar-spacer"></div>
   <button
     class="nav-btn pin-btn"
