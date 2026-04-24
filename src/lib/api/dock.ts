@@ -76,6 +76,14 @@ export const dockApi = {
     return invoke<string[]>('ipc_preferences_list_fonts')
   },
 
+  copyFile(path: string) {
+    return invoke<void>('ipc_clipboard_copy_file', { path })
+  },
+
+  copyImage(path: string) {
+    return invoke<void>('ipc_clipboard_copy_image', { path })
+  },
+
   async toggleAlwaysOnTop(): Promise<boolean> {
     const res = await invoke<{ always_on_top: boolean }>('ipc_toggle_always_on_top')
     return res.always_on_top

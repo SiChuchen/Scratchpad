@@ -31,17 +31,17 @@
   let copyStatus = $state<'idle' | 'copying' | 'done'>('idle')
 
   async function copyImage() {
-    if (!imageUrl || copyStatus === 'copying') return
+    if (!entry.filePath || copyStatus === 'copying') return
     copyStatus = 'copying'
     try {
-      const response = await fetch(imageUrl)
-      const blob = await response.blob()
-      await navigator.clipboard.write([
-        new ClipboardItem({ [blob.type]: blob })
-      ])
+      console.log('[ImageEntryBody] copyImage IPC:', entry.filePath)
+      await dockApi.copyImage(entry.filePath)
+      console.log('[ImageEntryBody] copyImage IPC success')
       copyStatus = 'done'
       setTimeout(() => { copyStatus = 'idle' }, 1500)
-    } catch {
+    } catch (e) {
+      console.error('[ImageEntryBody] copyImage IPC error:', e)
+      alert('复制图片失败: ' + String(e))
       copyStatus = 'idle'
     }
   }

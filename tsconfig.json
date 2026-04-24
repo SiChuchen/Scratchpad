@@ -8,6 +8,7 @@
     "resolveJsonModule": true,
     "allowJs": false,
     "checkJs": false,
+    "noEmit": true,
     "isolatedModules": true,
     "strict": true,
     "lib": ["ES2020", "DOM", "DOM.Iterable"],

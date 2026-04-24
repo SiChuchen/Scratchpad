@@ -168,6 +168,18 @@ fn ipc_entries_import_file_bytes(
     .map_err(|e| e.to_string())
 }
 
+// --- Clipboard IPC commands ---
+
+#[tauri::command]
+fn ipc_clipboard_copy_file(path: String) -> Result<(), String> {
+    scratchpad::clipboard::copy_file(&path)
+}
+
+#[tauri::command]
+fn ipc_clipboard_copy_image(path: String) -> Result<(), String> {
+    scratchpad::clipboard::copy_image(&path)
+}
+
 // --- System IPC commands ---
 
 #[tauri::command]
@@ -331,6 +343,8 @@ pub fn run() {
             ipc_entries_import_file,
             ipc_entries_import_image_bytes,
             ipc_entries_import_file_bytes,
+            ipc_clipboard_copy_file,
+            ipc_clipboard_copy_image,
             ipc_preferences_get,
             ipc_preferences_set,
             ipc_preferences_list_fonts,

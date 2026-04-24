@@ -23,22 +23,14 @@
     if (!entry.filePath || copyStatus === 'copying') return
     copyStatus = 'copying'
     try {
-      const url = dockApi.previewUrl(entry.filePath)
-      const response = await fetch(url)
-      const blob = await response.blob()
-      const type = blob.type || 'application/octet-stream'
-      // Try writing as ClipboardItem; fall back to text if unsupported type
-      try {
-        await navigator.clipboard.write([
-          new ClipboardItem({ [type]: blob })
-        ])
-      } catch {
-        const text = await blob.text()
-        await navigator.clipboard.writeText(text)
-      }
+      console.log('[FileEntryBody] copyFile IPC:', entry.filePath)
+      await dockApi.copyFile(entry.filePath)
+      console.log('[FileEntryBody] copyFile IPC success')
       copyStatus = 'done'
       setTimeout(() => { copyStatus = 'idle' }, 1500)
-    } catch {
+    } catch (e) {
+      console.error('[FileEntryBody] copyFile IPC error:', e)
+      alert('复制文件失败: ' + String(e))
       copyStatus = 'idle'
     }
   }
