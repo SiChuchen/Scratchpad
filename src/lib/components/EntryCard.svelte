@@ -211,14 +211,6 @@
     border-color: var(--border-emphasis);
   }
 
-  .entry-card.collapsed {
-    padding: 0.25rem 0.45rem;
-  }
-
-  .entry-card.collapsed .entry-header-actions .icon-btn {
-    width: 1.4rem;
-    height: 1.4rem;
-  }
 
   .entry-header {
     display: flex;

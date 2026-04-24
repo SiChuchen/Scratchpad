@@ -30,9 +30,9 @@
 
   // Section open/close state
   let themeOpen = $state(true)
-  let fontOpen = $state(false)
-  let updateOpen = $state(false)
-  let advancedOpen = $state(false)
+  let fontOpen = $state(true)
+  let updateOpen = $state(true)
+  let advancedOpen = $state(true)
   let expertMode = $state(false)
   let expertErrors = $state<Record<string, string>>({})
 
