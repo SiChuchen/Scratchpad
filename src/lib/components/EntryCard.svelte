@@ -205,6 +205,8 @@
     flex-direction: column;
     gap: 0.25rem;
     transition: border-color 0.12s;
+    user-select: none;
+    -webkit-user-drag: none;
   }
 
   .entry-card:hover {

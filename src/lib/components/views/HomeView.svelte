@@ -87,7 +87,15 @@
   function onCardDragOver(idx: number, event: DragEvent) {
     if (event.dataTransfer?.types.includes('application/x-dock-reorder')) {
       event.preventDefault()
+      event.dataTransfer.dropEffect = 'move'
       dragOverIdx = idx
+    }
+  }
+
+  function onListDragOver(event: DragEvent) {
+    if (event.dataTransfer?.types.includes('application/x-dock-reorder')) {
+      event.preventDefault()
+      event.dataTransfer.dropEffect = 'move'
     }
   }
 
@@ -180,7 +188,7 @@
         <p>未找到匹配内容</p>
       </div>
     {:else}
-      <div class="entry-list">
+      <div class="entry-list" ondragover={onListDragOver}>
         {#each filtered as entry, i (entry.id)}
           <div
             class="entry-wrapper"

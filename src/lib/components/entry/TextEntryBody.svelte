@@ -112,6 +112,7 @@
     font-family: inherit;
     font-size: inherit;
     overflow: hidden;
+    user-select: text;
   }
 
   .entry-edit:focus {

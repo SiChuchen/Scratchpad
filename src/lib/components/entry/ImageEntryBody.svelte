@@ -31,7 +31,7 @@
 
 {#if imageUrl}
   <div class="image-preview">
-    <img src={imageUrl} alt={entry.fileName || '图片'} />
+    <img src={imageUrl} alt={entry.fileName || '图片'} draggable="false" />
   </div>
 {:else}
   <div class="image-placeholder">
