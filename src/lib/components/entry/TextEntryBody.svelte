@@ -124,10 +124,10 @@
     display: flex;
     align-items: center;
     gap: 0.3rem;
-    background: transparent;
-    border: 1px solid transparent;
+    background: color-mix(in srgb, var(--color-primary) 8%, transparent);
+    border: 1px solid color-mix(in srgb, var(--color-primary) 18%, transparent);
     border-radius: var(--radius-md, 0.35rem);
-    color: var(--text-faint);
+    color: var(--color-primary);
     padding: 0.25rem 0.55rem;
     font-size: var(--font-xs, 0.6rem);
     cursor: pointer;
@@ -136,14 +136,8 @@
   }
 
   .action-btn:hover {
-    background: color-mix(in srgb, var(--text-primary) 8%, transparent);
-    border-color: color-mix(in srgb, var(--text-primary) 12%, transparent);
-    color: var(--text-primary);
-  }
-
-  .copy-action:hover {
-    background: color-mix(in srgb, var(--color-primary) 10%, transparent);
-    border-color: color-mix(in srgb, var(--color-primary) 20%, transparent);
+    background: color-mix(in srgb, var(--color-primary) 16%, transparent);
+    border-color: color-mix(in srgb, var(--color-primary) 30%, transparent);
     color: var(--color-primary);
   }
 </style>
