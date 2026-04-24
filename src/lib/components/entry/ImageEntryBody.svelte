@@ -27,6 +27,24 @@
     if (entry.width && entry.height) return `${entry.width}x${entry.height}`
     return ''
   })
+
+  let copyStatus = $state<'idle' | 'copying' | 'done'>('idle')
+
+  async function copyImage() {
+    if (!imageUrl || copyStatus === 'copying') return
+    copyStatus = 'copying'
+    try {
+      const response = await fetch(imageUrl)
+      const blob = await response.blob()
+      await navigator.clipboard.write([
+        new ClipboardItem({ [blob.type]: blob })
+      ])
+      copyStatus = 'done'
+      setTimeout(() => { copyStatus = 'idle' }, 1500)
+    } catch {
+      copyStatus = 'idle'
+    }
+  }
 </script>
 
 {#if imageUrl}
@@ -59,22 +77,20 @@
 </div>
 
 <div class="entry-actions">
+  <button class="action-btn copy-action" onclick={copyImage} disabled={copyStatus === 'copying'} title="复制图片">
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+      <rect x="9" y="9" width="13" height="13" rx="2" />
+      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+    </svg>
+    <span>{copyStatus === 'done' ? '已复制' : '复制'}</span>
+  </button>
   {#if entry.filePath}
-    <button class="action-btn copy-action" onclick={() => onCopyPath(entry.filePath!)} title="复制路径">
+    <button class="action-btn" onclick={() => onCopyPath(entry.filePath!)} title="复制路径">
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
         <rect x="9" y="9" width="13" height="13" rx="2" />
         <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
       </svg>
       <span>复制路径</span>
-    </button>
-  {/if}
-  {#if entry.content}
-    <button class="action-btn" onclick={() => onCopy(entry.content || '')} title="复制内容">
-      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-        <rect x="9" y="9" width="13" height="13" rx="2" />
-        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-      </svg>
-      <span>复制</span>
     </button>
   {/if}
 </div>
@@ -147,24 +163,25 @@
     padding: 0.3rem 0.65rem;
     font-size: var(--font-sm, 0.65rem);
     cursor: pointer;
-    transition: background 0.12s, color 0.12s;
+    transition: background 0.12s, color 0.12s, border-color 0.12s;
     font-family: inherit;
   }
 
   .action-btn:hover {
     background: color-mix(in srgb, var(--text-primary) 18%, transparent);
+    border-color: color-mix(in srgb, var(--text-primary) 25%, transparent);
     color: var(--text-primary);
   }
 
   .copy-action {
-    background: color-mix(in srgb, var(--color-primary) 12%, transparent);
-    border-color: color-mix(in srgb, var(--color-primary) 25%, transparent);
+    background: color-mix(in srgb, var(--color-primary) 10%, transparent);
+    border-color: color-mix(in srgb, var(--color-primary) 20%, transparent);
     color: var(--color-primary);
     font-weight: 500;
   }
 
   .copy-action:hover {
-    background: color-mix(in srgb, var(--color-primary) 22%, transparent);
-    border-color: color-mix(in srgb, var(--color-primary) 40%, transparent);
+    background: color-mix(in srgb, var(--color-primary) 18%, transparent);
+    border-color: color-mix(in srgb, var(--color-primary) 35%, transparent);
   }
 </style>
