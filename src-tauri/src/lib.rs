@@ -225,8 +225,7 @@ fn ipc_dock_minimize_to_tab(
     };
     use windows_sys::Win32::UI::HiDpi::GetDpiForWindow;
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        GetWindowRect, SetWindowPos, ShowWindow, SWP_NOSIZE, SWP_NOZORDER, SW_HIDE,
-        SW_SHOWNOACTIVATE,
+        GetWindowRect, SetWindowPos, SWP_NOZORDER,
     };
 
     let main_w = app.get_webview_window("main").ok_or("main window not found")?;
@@ -270,10 +269,9 @@ fn ipc_dock_minimize_to_tab(
     };
     unsafe { GetMonitorInfoW(monitor, &mut mi) };
 
-    // 4. Get tab physical size
-    let mut tab_rect = RECT { left: 0, top: 0, right: 0, bottom: 0 };
-    unsafe { GetWindowRect(tab_hwnd, &mut tab_rect) };
-    let tab_size = (tab_rect.right - tab_rect.left, tab_rect.bottom - tab_rect.top);
+    // 4. Calculate tab physical size from DPI (not from hidden window rect)
+    let tab_px = system::tab_controller::tab_physical_size(tab_hwnd);
+    let tab_size = (tab_px, tab_px);
 
     // 5. Calculate snap position with default hidden ratio
     let (snap_x, snap_y) = system::tab_controller::calc_snap_position(
@@ -286,17 +284,17 @@ fn ipc_dock_minimize_to_tab(
     // 6. Install subclass (idempotent)
     system::tab_controller::install(&app, tab_hwnd);
 
-    // 7. Apply circle region (idempotent)
+    // 7. Apply circle region (idempotent, uses same tab_physical_size)
     system::window::apply_circle_region(&app, "minimized-tab")?;
 
-    // 8. Position tab and show it
+    // 8. Position and size tab explicitly, then show
     unsafe {
-        SetWindowPos(tab_hwnd, std::ptr::null_mut(), snap_x, snap_y, 0, 0, SWP_NOSIZE | SWP_NOZORDER);
-        ShowWindow(tab_hwnd, SW_SHOWNOACTIVATE);
+        SetWindowPos(tab_hwnd, std::ptr::null_mut(), snap_x, snap_y, tab_px, tab_px, SWP_NOZORDER);
     }
+    tab_w.show().map_err(|e| e.to_string())?;
 
     // 9. Hide main
-    unsafe { ShowWindow(main_hwnd, SW_HIDE) };
+    main_w.hide().map_err(|e| e.to_string())?;
 
     Ok(())
 }

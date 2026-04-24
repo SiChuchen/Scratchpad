@@ -15,9 +15,7 @@ pub fn apply_circle_region(
             .map_err(|e| e.to_string())?
             .0 as windows_sys::Win32::Foundation::HWND;
 
-        // Use the window's DPI scale factor to convert 48 logical px → physical px
-        let scale = window.scale_factor().map_err(|e| e.to_string())?;
-        let physical = (48.0 * scale).round() as i32;
+        let physical = crate::system::tab_controller::tab_physical_size(hwnd);
 
         unsafe {
             let region = windows_sys::Win32::Graphics::Gdi::CreateEllipticRgn(

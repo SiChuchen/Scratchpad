@@ -6,12 +6,19 @@ use windows_sys::Win32::UI::HiDpi::GetDpiForWindow;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{SetCapture, ReleaseCapture, GetAsyncKeyState, VK_LBUTTON};
 use windows_sys::Win32::UI::Shell::{SetWindowSubclass, DefSubclassProc, RemoveWindowSubclass};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    GetWindowRect, SetTimer, KillTimer, GetCursorPos, SetWindowPos, ShowWindow,
-    SetForegroundWindow,
-    SWP_NOSIZE, SWP_NOZORDER, SW_HIDE, SW_SHOWNORMAL, SW_SHOWNOACTIVATE,
+    GetWindow, GetWindowRect, SetTimer, KillTimer, GetCursorPos, SetWindowPos,
+    SetForegroundWindow, GW_CHILD,
+    SWP_NOSIZE, SWP_NOZORDER,
     WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_TIMER,
     WM_CAPTURECHANGED, WM_CANCELMODE, WM_NCDESTROY,
 };
+
+// EnableWindow is not exported by windows-sys 0.59 under Win32_UI_WindowsAndMessaging.
+// Link directly to user32.
+#[link(name = "user32")]
+extern "system" {
+    fn EnableWindow(hwnd: HWND, benable: i32) -> i32;
+}
 
 // --- Constants ---
 
@@ -19,6 +26,15 @@ pub const TAB_LONG_PRESS_TIMER_ID: usize = 1;
 pub const LONG_PRESS_MS: u32 = 200;
 pub const DEFAULT_HIDDEN_RATIO: f32 = 1.0 / 3.0;
 pub const MAX_HIDDEN_RATIO: f32 = 1.0 / 2.0;
+pub const TAB_LOGICAL_SIZE: i32 = 48;
+
+/// Calculate the tab window's physical pixel size from its DPI.
+/// Uses integer arithmetic to avoid floating-point drift: (logical * dpi + 48) / 96
+/// This is the single source of truth for tab size — used by region, snap, and SetWindowPos.
+pub fn tab_physical_size(hwnd: HWND) -> i32 {
+    let dpi = unsafe { windows_sys::Win32::UI::HiDpi::GetDpiForWindow(hwnd) };
+    (TAB_LOGICAL_SIZE * dpi as i32 + 48) / 96
+}
 
 static SUBCLASS_INSTALLED: AtomicBool = AtomicBool::new(false);
 
@@ -48,10 +64,39 @@ struct TabController {
 
 // --- Subclass installation ---
 
-pub fn install(app: &tauri::AppHandle, hwnd: HWND) {
+/// WebView2 creates its own HWND tree inside the top-level Tauri window.
+/// The deepest child windows reject external SetWindowSubclass, and they
+/// intercept all mouse input before it reaches the parent.
+///
+/// Solution: disable child windows so the system routes mouse messages
+/// to the parent (host) window where our subclass is installed.
+/// A disabled window still renders normally — it just doesn't receive input.
+fn disable_child_input(host_hwnd: HWND) {
+    let mut current = unsafe { GetWindow(host_hwnd, GW_CHILD) };
+    let mut depth = 0u32;
+    while !current.is_null() {
+        depth += 1;
+        eprintln!("[tab_controller] disabling child level {depth}: hwnd={:#x}", current as usize);
+        unsafe { EnableWindow(current, 0) };
+        current = unsafe { GetWindow(current, GW_CHILD) };
+    }
+    if depth == 0 {
+        eprintln!("[tab_controller] WARNING: no child windows found on host={:#x}", host_hwnd as usize);
+    } else {
+        eprintln!("[tab_controller] disabled {depth} levels of child input on host={:#x}", host_hwnd as usize);
+    }
+}
+
+pub fn install(app: &tauri::AppHandle, host_hwnd: HWND) {
     if SUBCLASS_INSTALLED.load(Ordering::SeqCst) {
         return;
     }
+    // Subclass goes on the host (top-level) HWND — it owns positioning and region.
+    eprintln!(
+        "[tab_controller] installing subclass on host hwnd={:#x}",
+        host_hwnd as usize
+    );
+
     let controller = Box::new(TabController {
         state: TabState::Idle,
         press_origin_screen: (0, 0),
@@ -59,14 +104,17 @@ pub fn install(app: &tauri::AppHandle, hwnd: HWND) {
         app: app.clone(),
     });
     let ptr = Box::into_raw(controller);
-    let ok = unsafe {
-        SetWindowSubclass(hwnd, Some(subclass_proc), 0, ptr as usize)
-    };
+    let ok = unsafe { SetWindowSubclass(host_hwnd, Some(subclass_proc), 0, ptr as usize) };
     if ok != 0 {
         SUBCLASS_INSTALLED.store(true, Ordering::SeqCst);
+        // Now disable child windows so mouse input falls through to our subclass
+        disable_child_input(host_hwnd);
     } else {
-        unsafe { drop(Box::from_raw(ptr)); }
-        eprintln!("tab_controller: SetWindowSubclass failed");
+        unsafe { drop(Box::from_raw(ptr)) };
+        eprintln!(
+            "tab_controller: SetWindowSubclass failed on host hwnd={:#x}",
+            host_hwnd as usize
+        );
     }
 }
 
@@ -81,6 +129,21 @@ unsafe extern "system" fn subclass_proc(
     data: usize,
 ) -> LRESULT {
     let controller = &mut *(data as *mut TabController);
+
+    // Diagnostic: log key messages to verify subclass receives input
+    match msg {
+        WM_LBUTTONDOWN => eprintln!("[tab_subclass] WM_LBUTTONDOWN hwnd={:#x}", hwnd as usize),
+        WM_LBUTTONUP => eprintln!(
+            "[tab_subclass] WM_LBUTTONUP hwnd={:#x} state={:?}",
+            hwnd as usize, controller.state
+        ),
+        WM_TIMER if wparam == TAB_LONG_PRESS_TIMER_ID => {
+            eprintln!("[tab_subclass] WM_TIMER (long-press) hwnd={:#x}", hwnd as usize)
+        }
+        WM_CAPTURECHANGED => eprintln!("[tab_subclass] WM_CAPTURECHANGED hwnd={:#x}", hwnd as usize),
+        WM_NCDESTROY => eprintln!("[tab_subclass] WM_NCDESTROY hwnd={:#x}", hwnd as usize),
+        _ => {}
+    }
 
     let handled = match msg {
         WM_LBUTTONDOWN => handle_lbuttondown(hwnd, controller, wparam, lparam),
@@ -255,7 +318,6 @@ fn calc_current_hidden_ratio(win_rect: &RECT, work_rect: &RECT) -> f32 {
 
 pub(crate) fn restore_main_window(app: &tauri::AppHandle) {
     let state = app.state::<crate::AppState>();
-    let db = state.db.lock().unwrap();
 
     let main_w = app.get_webview_window("main");
     let tab_w = app.get_webview_window("minimized-tab");
@@ -264,34 +326,47 @@ pub(crate) fn restore_main_window(app: &tauri::AppHandle) {
         return;
     };
 
-    match crate::scratchpad::preferences::load_preferences(&db) {
-        Ok(prefs) => {
-            drop(db);
-            if let Ok(hwnd) = main.hwnd() {
-                let hwnd = hwnd.0 as HWND;
-                let dpi = unsafe { GetDpiForWindow(hwnd) };
-                let scale = dpi as f64 / 96.0;
-                let px = (prefs.dock_position_x * scale) as i32;
-                let py = (prefs.dock_position_y * scale) as i32;
-                let pw = (prefs.dock_width * scale) as i32;
-                let ph = (prefs.dock_height * scale) as i32;
-                unsafe {
-                    SetWindowPos(hwnd, std::ptr::null_mut(), px, py, pw, ph, SWP_NOZORDER);
-                }
+    // Priority 1: exact geometry saved at minimize time (physical coordinates)
+    let geo = state.main_geometry.lock().unwrap().take();
+
+    if let Some(geo) = geo {
+        if let Ok(hwnd) = main.hwnd() {
+            let hwnd = hwnd.0 as HWND;
+            unsafe {
+                SetWindowPos(hwnd, std::ptr::null_mut(), geo.x, geo.y, geo.width, geo.height, SWP_NOZORDER);
             }
         }
-        Err(e) => {
-            eprintln!("restore_main_window: failed to load preferences: {e}");
-            return;
+    } else {
+        // Fallback: reconstruct from DockPreferences (logical → physical)
+        let db = state.db.lock().unwrap();
+        match crate::scratchpad::preferences::load_preferences(&db) {
+            Ok(prefs) => {
+                drop(db);
+                if let Ok(hwnd) = main.hwnd() {
+                    let hwnd = hwnd.0 as HWND;
+                    let dpi = unsafe { GetDpiForWindow(hwnd) };
+                    let scale = dpi as f64 / 96.0;
+                    let px = (prefs.dock_position_x * scale) as i32;
+                    let py = (prefs.dock_position_y * scale) as i32;
+                    let pw = (prefs.dock_width * scale) as i32;
+                    let ph = (prefs.dock_height * scale) as i32;
+                    unsafe {
+                        SetWindowPos(hwnd, std::ptr::null_mut(), px, py, pw, ph, SWP_NOZORDER);
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("restore_main_window: failed to load preferences: {e}");
+                return;
+            }
         }
     }
 
-    if let Ok(tab_hwnd) = tab.hwnd() {
-        unsafe { ShowWindow(tab_hwnd.0 as HWND, SW_HIDE) };
-    }
+    let _ = tab.hide();
+    let _ = main.show();
+    let _ = main.set_focus();
     if let Ok(main_hwnd) = main.hwnd() {
         unsafe {
-            ShowWindow(main_hwnd.0 as HWND, SW_SHOWNORMAL);
             SetForegroundWindow(main_hwnd.0 as HWND);
         }
     }
