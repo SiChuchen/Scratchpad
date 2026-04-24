@@ -44,7 +44,6 @@ body {
   backdrop-filter: blur(24px);
   border: 1px solid var(--border-emphasis);
   box-shadow: var(--shadow-default);
-  border-radius: 0.5rem;
 }
 
 ::-webkit-scrollbar {

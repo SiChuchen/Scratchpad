@@ -80,7 +80,7 @@
     ],
     "windows": {
       "webviewInstallMode": {
-        "type": "downloadBootstrapper"
+        "type": "embedBootstrapper"
       }
     }
   }

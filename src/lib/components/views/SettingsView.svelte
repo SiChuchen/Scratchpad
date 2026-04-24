@@ -197,7 +197,6 @@
 <div class="settings-view">
   <div class="settings-header">
     <button class="back-btn" onclick={onBack}>← 返回</button>
-    <span class="settings-title">设置</span>
   </div>
 
   <div class="settings-body">
