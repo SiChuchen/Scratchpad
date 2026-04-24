@@ -164,13 +164,13 @@
     <span class="entry-time">{timeLabel}</span>
     <div class="entry-header-actions" data-card-interactive ondblclick={stop}>
       <button class="icon-btn" onclick={(e) => { e.stopPropagation(); handleCopy(e) }} title="复制">
-        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
           <rect x="9" y="9" width="13" height="13" rx="2" />
           <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
         </svg>
       </button>
       <button class="icon-btn" onclick={(e) => { e.stopPropagation(); onToggleCollapse(entry.id) }} title={entry.collapsed ? '展开' : '收起'}>
-        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
           {#if entry.collapsed}
             <polyline points="6 9 12 15 18 9" />
           {:else}
@@ -179,12 +179,12 @@
         </svg>
       </button>
       <button class="icon-btn note-btn" class:active={entry.inNote} onclick={(e) => { e.stopPropagation(); onToggleNote(entry.id) }} title={entry.inNote ? '取消收藏' : '收藏'}>
-        <svg width="11" height="11" viewBox="0 0 24 24" fill={entry.inNote ? 'currentColor' : 'none'} stroke="currentColor" stroke-width="1.5">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill={entry.inNote ? 'currentColor' : 'none'} stroke="currentColor" stroke-width="1.5">
           <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
         </svg>
       </button>
       <button class="icon-btn danger" onclick={(e) => { e.stopPropagation(); onDeleteFromView(entry.id) }} title="删除">
-        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
           <polyline points="3 6 5 6 21 6" />
           <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
         </svg>
@@ -233,7 +233,7 @@
   .kind-badge {
     padding: 0.08rem 0.35rem;
     border-radius: var(--radius-sm, 0.2rem);
-    font-size: var(--font-xs, 0.5rem);
+    font-size: 0.55rem;
     font-weight: 600;
     letter-spacing: 0.03em;
     flex-shrink: 0;
@@ -259,14 +259,14 @@
     border: 0;
     padding: 0;
     font-family: inherit;
-    font-size: var(--font-sm, 0.65rem);
+    font-size: 0.72rem;
     color: var(--text-primary);
-    line-height: 1.2;
+    line-height: 1.3;
     text-align: left;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    max-width: 45%;
+    max-width: 40%;
     flex: 0 1 auto;
     min-width: 0;
     cursor: pointer;
@@ -299,7 +299,7 @@
 
   .entry-header-actions {
     display: flex;
-    gap: 0.1rem;
+    gap: 0.15rem;
     margin-left: auto;
     flex-shrink: 0;
   }
@@ -308,12 +308,12 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 1.4rem;
-    height: 1.4rem;
+    width: 1.5rem;
+    height: 1.5rem;
     background: transparent;
     border: 1px solid transparent;
     border-radius: var(--radius-sm, 0.2rem);
-    color: var(--text-faint);
+    color: var(--text-muted);
     cursor: pointer;
     transition: color 0.12s, background 0.12s, border-color 0.12s;
   }
