@@ -34,6 +34,7 @@
   let themeOpen = $state(true)
   let fontOpen = $state(true)
   let updateOpen = $state(true)
+  let systemOpen = $state(true)
   let advancedOpen = $state(true)
   let expertMode = $state(false)
   let expertErrors = $state<Record<string, string>>({})
@@ -413,13 +414,13 @@
       {/if}
     </div>
 
-    <!-- Advanced section -->
+    <!-- System section -->
     <div class="section">
-      <div class="section-header" onclick={() => advancedOpen = !advancedOpen}>
-        <span class="section-label">高级</span>
-        <span class="chevron" class:open={advancedOpen}>▾</span>
+      <div class="section-header" onclick={() => systemOpen = !systemOpen}>
+        <span class="section-label">系统</span>
+        <span class="chevron" class:open={systemOpen}>▾</span>
       </div>
-      {#if advancedOpen}
+      {#if systemOpen}
         <div class="section-body">
           <div class="row">
             <span class="label">开机自启</span>
@@ -428,6 +429,18 @@
               <div class="toggle-knob"></div>
             </div>
           </div>
+        </div>
+      {/if}
+    </div>
+
+    <!-- Advanced section -->
+    <div class="section">
+      <div class="section-header" onclick={() => advancedOpen = !advancedOpen}>
+        <span class="section-label">高级</span>
+        <span class="chevron" class:open={advancedOpen}>▾</span>
+      </div>
+      {#if advancedOpen}
+        <div class="section-body">
           <div class="row">
             <span class="label">专家模式</span>
             <div class="toggle" class:active={expertMode} onclick={() => expertMode = !expertMode}>
@@ -456,11 +469,18 @@
               {/each}
             </div>
           {/if}
-          <div class="row" style="margin-top: 0.5rem;">
-            <button class="reset-btn" onclick={handleReset}>重置全部设置</button>
-          </div>
         </div>
       {/if}
+    </div>
+
+    <!-- Danger zone -->
+    <div class="section danger-section">
+      <div class="section-header">
+        <span class="section-label danger-label">危险操作</span>
+      </div>
+      <div class="section-body">
+        <button class="reset-btn" onclick={handleReset}>重置全部设置</button>
+      </div>
     </div>
   </div>
 </div>
@@ -953,5 +973,18 @@
     font-size: var(--font-xs, 0.5rem);
     color: var(--color-danger);
     flex-shrink: 0;
+  }
+
+  /* Danger zone */
+  .danger-section {
+    border-top: 1px solid color-mix(in srgb, var(--color-danger) 20%, transparent);
+  }
+
+  .danger-label {
+    color: color-mix(in srgb, var(--color-danger) 70%, var(--text-muted));
+  }
+
+  .danger-section .reset-btn {
+    margin-top: 0.15rem;
   }
 </style>
