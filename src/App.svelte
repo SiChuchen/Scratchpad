@@ -7,7 +7,7 @@
   import NoteView from '$lib/components/views/NoteView.svelte'
   import SettingsView from '$lib/components/views/SettingsView.svelte'
   import { dockApi } from '$lib/api/dock'
-  import { insertHomeEntry, removeEntryFromView } from '$lib/state/dock'
+  import { insertHomeEntry } from '$lib/state/dock'
   import { computeThemeTokens } from '$lib/themes/engine'
 
   import type { DockEntry, DockPreferences, DockView } from '$lib/types/dock'
@@ -105,6 +105,8 @@
 
   // --- Home handlers ---
 
+  const collapsePendingIds = new Set<string>()
+
   async function createHomeText(content: string) {
     try {
       const created = await dockApi.createText('home', content, 'manual')
@@ -120,18 +122,29 @@
 
   async function toggleCollapse(entryId: string) {
     const entry = [...homeEntries, ...noteEntries].find((e) => e.id === entryId)
+    if (collapsePendingIds.has(entryId)) return
     if (!entry) return
+    const previousCollapsed = entry.collapsed
     const newCollapsed = !entry.collapsed
+    collapsePendingIds.add(entryId)
+    homeEntries = homeEntries.map((e) =>
+      e.id === entryId ? { ...e, collapsed: newCollapsed } : e,
+    )
+    noteEntries = noteEntries.map((e) =>
+      e.id === entryId ? { ...e, collapsed: newCollapsed } : e,
+    )
     try {
       await dockApi.toggleCollapse(entryId, newCollapsed)
-      homeEntries = homeEntries.map((e) =>
-        e.id === entryId ? { ...e, collapsed: newCollapsed } : e,
-      )
-      noteEntries = noteEntries.map((e) =>
-        e.id === entryId ? { ...e, collapsed: newCollapsed } : e,
-      )
     } catch (e) {
+      homeEntries = homeEntries.map((entry) =>
+        entry.id === entryId ? { ...entry, collapsed: previousCollapsed } : entry,
+      )
+      noteEntries = noteEntries.map((entry) =>
+        entry.id === entryId ? { ...entry, collapsed: previousCollapsed } : entry,
+      )
       showToast(`操作失败: ${formatError(e)}`, 'error')
+    } finally {
+      collapsePendingIds.delete(entryId)
     }
   }
 
@@ -182,20 +195,32 @@
     }, 3000)
   }
 
-  async function addToNote(entryId: string) {
+  async function toggleNote(entryId: string) {
+    const entry = allEntries.find((e) => e.id === entryId)
+    if (!entry) return
+
     try {
-      await dockApi.addToNote(entryId)
-      homeEntries = homeEntries.map((e) =>
-        e.id === entryId ? { ...e, inNote: true } : e,
-      )
-      noteEntries = noteEntries.map((e) =>
-        e.id === entryId ? { ...e, inNote: true } : e,
-      )
-      // Refresh note entries to include the new one
-      noteEntries = await dockApi.listEntries('note')
-      showToast('已收藏到 Note')
+      if (entry.inNote) {
+        await dockApi.removeFromView('note', entryId)
+        homeEntries = homeEntries.map((e) =>
+          e.id === entryId ? { ...e, inNote: false } : e,
+        )
+        noteEntries = noteEntries.filter((e) => e.id !== entryId)
+        showToast('已取消收藏')
+      } else {
+        await dockApi.addToNote(entryId)
+        homeEntries = homeEntries.map((e) =>
+          e.id === entryId ? { ...e, inNote: true } : e,
+        )
+        noteEntries = noteEntries.map((e) =>
+          e.id === entryId ? { ...e, inNote: true } : e,
+        )
+        // Refresh note entries to include the new one
+        noteEntries = await dockApi.listEntries('note')
+        showToast('已收藏到 Note')
+      }
     } catch (e) {
-      showToast(`收藏失败: ${formatError(e)}`, 'error')
+      showToast(`收藏操作失败: ${formatError(e)}`, 'error')
     }
   }
 
@@ -538,7 +563,7 @@
     entries={homeEntries}
     onToggleCollapse={toggleCollapse}
     onDeleteFromView={(id) => deleteFromView('home', id)}
-    onAddToNote={addToNote}
+    onToggleNote={toggleNote}
     onCreateText={createHomeText}
     onImportEntry={importHomeEntry}
     onUpdateText={updateText}
@@ -551,7 +576,7 @@
     entries={allEntries}
     onToggleCollapse={toggleCollapse}
     onDeleteFromView={deleteFromAnyView}
-    onAddToNote={addToNote}
+    onToggleNote={toggleNote}
     onUpdateText={updateText}
     onRename={renameEntry}
     onCopy={copyContent}
@@ -562,6 +587,7 @@
     entries={noteEntries}
     onToggleCollapse={toggleCollapse}
     onDeleteFromView={(id) => deleteFromView('note', id)}
+    onToggleNote={toggleNote}
     onCreateText={createNoteText}
     onImportEntry={importNoteEntry}
     onUpdateText={updateText}

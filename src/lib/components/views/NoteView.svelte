@@ -7,6 +7,7 @@
     entries: DockEntry[]
     onToggleCollapse: (entryId: string) => void
     onDeleteFromView: (entryId: string) => void
+    onToggleNote: (entryId: string) => void
     onCreateText: (content: string) => void
     onImportEntry: (entry: DockEntry) => void
     onUpdateText: (id: string, content: string) => void
@@ -19,6 +20,7 @@
     entries,
     onToggleCollapse,
     onDeleteFromView,
+    onToggleNote,
     onCreateText,
     onImportEntry,
     onUpdateText,
@@ -201,7 +203,7 @@
               {entry}
               {onToggleCollapse}
               {onDeleteFromView}
-              onAddToNote={() => {}}
+              {onToggleNote}
               {onUpdateText}
               {onRename}
               {onCopy}

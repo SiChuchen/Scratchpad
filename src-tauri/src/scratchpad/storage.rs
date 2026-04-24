@@ -492,19 +492,25 @@ pub fn update_entry_text(conn: &mut Connection, id: &str, content: &str) -> Stor
 
 pub fn toggle_collapse(conn: &mut Connection, id: &str, collapsed: bool) -> StorageResult<()> {
     let now = now_rfc3339();
-    conn.execute(
+    let rows = conn.execute(
         "UPDATE entries SET collapsed = ?2, updated_at = ?3 WHERE id = ?1",
         params![id, collapsed as i32, now],
     )?;
+    if rows == 0 {
+        return Err(rusqlite::Error::QueryReturnedNoRows.into());
+    }
     Ok(())
 }
 
 pub fn rename_entry(conn: &mut Connection, id: &str, title: Option<&str>) -> StorageResult<()> {
     let now = now_rfc3339();
-    conn.execute(
+    let rows = conn.execute(
         "UPDATE entries SET title = ?2, updated_at = ?3 WHERE id = ?1",
         params![id, title, now],
     )?;
+    if rows == 0 {
+        return Err(rusqlite::Error::QueryReturnedNoRows.into());
+    }
     Ok(())
 }
 
@@ -871,5 +877,25 @@ mod repository_tests {
             .query_row("SELECT COUNT(*) FROM entries", [], |row| row.get(0))
             .unwrap();
         assert_eq!(rows, 1);
+    }
+
+    #[test]
+    fn toggle_collapse_returns_error_for_missing_entry() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        ensure_dock_schema(&mut conn).unwrap();
+
+        let result = toggle_collapse(&mut conn, "missing-entry", true);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn rename_entry_returns_error_for_missing_entry() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        ensure_dock_schema(&mut conn).unwrap();
+
+        let result = rename_entry(&mut conn, "missing-entry", Some("title"));
+
+        assert!(result.is_err());
     }
 }

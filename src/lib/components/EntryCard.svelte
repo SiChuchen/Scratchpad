@@ -8,7 +8,7 @@
     entry: DockEntry
     onToggleCollapse: (entryId: string) => void
     onDeleteFromView: (entryId: string) => void
-    onAddToNote: (entryId: string) => void
+    onToggleNote: (entryId: string) => void
     onUpdateText: (id: string, content: string) => void
     onRename: (id: string, title: string | null) => void
     onCopy: (content: string) => void
@@ -19,7 +19,7 @@
     entry,
     onToggleCollapse,
     onDeleteFromView,
-    onAddToNote,
+    onToggleNote,
     onUpdateText,
     onRename,
     onCopy,
@@ -29,6 +29,7 @@
   let editingTitle = $state(false)
   let titleDraft = $state('')
   let composing = $state(false)
+  let commitAfterComposition = $state(false)
 
   function autofocus(el: HTMLInputElement) {
     setTimeout(() => el.focus(), 0)
@@ -42,8 +43,13 @@
   }
 
   function commitRename() {
-    if (!editingTitle || composing) return
+    if (!editingTitle) return
+    if (composing) {
+      commitAfterComposition = true
+      return
+    }
     editingTitle = false
+    commitAfterComposition = false
     const trimmed = titleDraft.trim()
     const newTitle = trimmed || null
     if (newTitle !== entry.title) {
@@ -53,6 +59,8 @@
 
   function cancelRename() {
     editingTitle = false
+    composing = false
+    commitAfterComposition = false
   }
 
   function handleTitleKeydown(e: KeyboardEvent) {
@@ -64,14 +72,22 @@
 
   function handleCompositionEnd() {
     composing = false
+    if (commitAfterComposition) commitRename()
   }
 
-  function handleDblClick() {
+  function stopCardToggle(e: MouseEvent) {
+    e.stopPropagation()
+  }
+
+  function handleDblClick(e: MouseEvent) {
     if (editingTitle) return
+    const target = e.target as HTMLElement
+    if (target.closest('[data-card-interactive]')) return
     onToggleCollapse(entry.id)
   }
 
-  function handleCollapsedCopy() {
+  function handleCollapsedCopy(e: MouseEvent) {
+    e.stopPropagation()
     if (entry.kind === 'text') {
       onCopy(entry.content || '')
     } else if (entry.filePath) {
@@ -131,35 +147,49 @@
     {#if sourceLabel}
       <span class="source-badge">{sourceLabel}</span>
     {/if}
-    {#if entry.collapsed}
-      {#if editingTitle}
-        <input
-          class="title-edit-input"
-          type="text"
-          bind:value={titleDraft}
-          use:autofocus
-          onmousedown={(e) => e.stopPropagation()}
-          onclick={(e) => e.stopPropagation()}
-          onblur={commitRename}
-          onkeydown={handleTitleKeydown}
-          oncompositionstart={() => composing = true}
-          oncompositionend={handleCompositionEnd}
-        />
-      {:else if entry.title || previewText}
-        <span class="entry-preview" onclick={startRename}>{entry.title || previewText}</span>
-        <button class="icon-btn copy-collapsed" onclick={() => handleCollapsedCopy()} title="复制">
+    {#if editingTitle}
+      <input
+        class="title-edit-input"
+        type="text"
+        bind:value={titleDraft}
+        use:autofocus
+        data-card-interactive
+        onmousedown={(e) => e.stopPropagation()}
+        onclick={(e) => e.stopPropagation()}
+        ondblclick={stopCardToggle}
+        onblur={commitRename}
+        onkeydown={handleTitleKeydown}
+        oncompositionstart={() => composing = true}
+        oncompositionend={handleCompositionEnd}
+      />
+    {:else if entry.collapsed}
+      <button
+        class="title-trigger entry-preview"
+        class:placeholder={!entry.title && !previewText}
+        data-card-interactive
+        onclick={startRename}
+        ondblclick={stopCardToggle}
+      >{entry.title || previewText || '添加标题'}</button>
+      {#if entry.title || previewText}
+        <button class="icon-btn copy-collapsed" data-card-interactive onclick={handleCollapsedCopy} ondblclick={stopCardToggle} title="复制">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
             <rect x="9" y="9" width="13" height="13" rx="2" />
             <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
           </svg>
         </button>
       {/if}
-    {:else if entry.title}
-      <span class="entry-title" onclick={startRename}>{entry.title}</span>
+    {:else}
+      <button
+        class="title-trigger entry-title"
+        class:placeholder={!entry.title}
+        data-card-interactive
+        onclick={startRename}
+        ondblclick={stopCardToggle}
+      >{entry.title || '添加标题'}</button>
     {/if}
     <span class="entry-time">{timeLabel}</span>
-    <div class="entry-header-actions">
-      <button class="icon-btn" onclick={() => onToggleCollapse(entry.id)} title={entry.collapsed ? '展开' : '收起'}>
+    <div class="entry-header-actions" data-card-interactive ondblclick={stopCardToggle}>
+      <button class="icon-btn" onclick={(e) => { e.stopPropagation(); onToggleCollapse(entry.id) }} title={entry.collapsed ? '展开' : '收起'}>
         <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
           {#if entry.collapsed}
             <polyline points="6 9 12 15 18 9" />
@@ -168,12 +198,12 @@
           {/if}
         </svg>
       </button>
-      <button class="icon-btn note-btn" onclick={() => onAddToNote(entry.id)} disabled={entry.inNote} title={entry.inNote ? '已在 Note 中' : '收藏到 Note'}>
+      <button class="icon-btn note-btn" class:active={entry.inNote} onclick={(e) => { e.stopPropagation(); onToggleNote(entry.id) }} title={entry.inNote ? '取消收藏' : '收藏到 Note'}>
         <svg width="11" height="11" viewBox="0 0 24 24" fill={entry.inNote ? 'currentColor' : 'none'} stroke="currentColor" stroke-width="1.5">
           <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
         </svg>
       </button>
-      <button class="icon-btn danger" onclick={() => onDeleteFromView(entry.id)} title="删除">
+      <button class="icon-btn danger" onclick={(e) => { e.stopPropagation(); onDeleteFromView(entry.id) }} title="删除">
         <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
           <polyline points="3 6 5 6 21 6" />
           <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
@@ -183,7 +213,7 @@
   </header>
 
   {#if !entry.collapsed}
-    <div class="entry-body">
+    <div class="entry-body" data-card-interactive ondblclick={stopCardToggle}>
       {#if entry.kind === 'text'}
         <TextEntryBody {entry} {onUpdateText} {onCopy} />
       {:else if entry.kind === 'image'}
@@ -253,19 +283,35 @@
     color: var(--color-accent);
   }
 
-  .entry-preview {
+  .title-trigger {
+    background: none;
+    border: 0;
+    padding: 0;
+    font-family: inherit;
     font-size: var(--font-sm, 0.65rem);
     color: var(--text-muted);
+    line-height: 1.2;
+    text-align: left;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    flex: 1;
+    max-width: 50%;
+    flex: 0 1 auto;
     min-width: 0;
     cursor: pointer;
   }
 
-  .entry-preview:hover {
+  .title-trigger:hover {
     color: var(--text-primary);
+  }
+
+  .entry-preview {
+    width: 50%;
+    flex-basis: 50%;
+  }
+
+  .title-trigger.placeholder {
+    color: var(--text-faint);
   }
 
   .entry-time {
@@ -305,12 +351,11 @@
     border-color: color-mix(in srgb, var(--color-accent) 20%, transparent);
   }
 
-  .icon-btn.note-btn:disabled {
-    color: color-mix(in srgb, var(--color-accent) 35%, transparent);
-    cursor: default;
+  .icon-btn.note-btn.active {
+    color: var(--color-accent);
   }
 
-  .icon-btn.note-btn:not(:disabled):hover {
+  .icon-btn.note-btn:hover {
     background: color-mix(in srgb, var(--color-accent) 15%, transparent);
     border-color: color-mix(in srgb, var(--color-accent) 35%, transparent);
   }
@@ -351,20 +396,5 @@
 
   .title-edit-input:focus {
     border-color: color-mix(in srgb, var(--color-primary) 50%, transparent);
-  }
-
-  .entry-title {
-    font-size: var(--font-xs, 0.55rem);
-    color: var(--text-muted);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    flex: 1;
-    min-width: 0;
-    cursor: pointer;
-  }
-
-  .entry-title:hover {
-    color: var(--text-primary);
   }
 </style>
