@@ -61,8 +61,9 @@ jobs:
           New-Item -ItemType Directory -Force -Path $downloadDir | Out-Null
           gh release download $tag --dir $downloadDir --clobber
 
-          # Rename MSI and NSIS
+          # Rename MSI and NSIS, keep updater artifacts as-is
           $renamedAssets = @()
+          $updaterAssets = @()
           foreach ($asset in $releaseJson.assets) {
             $name = $asset.name
             $newName = $null
@@ -71,6 +72,9 @@ jobs:
               $newName = "${label}.msi"
             } elseif ($name -match '-setup\.exe$' -or $name -match '\.exe$' -and $name -notmatch 'updater') {
               $newName = "${label}.exe"
+            } elseif ($name -match '^(latest\.json|.*\.tar\.gz(\.sig)?)$') {
+              $updaterAssets += $name
+              Write-Host "Keeping updater artifact: $name"
             }
 
             if ($newName) {
@@ -100,8 +104,12 @@ jobs:
             Write-Warning "Release exe not found at $releaseExe, skipping portable zip"
           }
 
-          # Delete old assets and upload renamed ones
+          # Delete old assets (except updater artifacts) and upload renamed ones
           foreach ($asset in $releaseJson.assets) {
+            if ($updaterAssets -contains $asset.name) {
+              Write-Host "Skipping updater artifact: $($asset.name)"
+              continue
+            }
             Write-Host "Deleting old asset: $($asset.name)"
             gh release delete-asset $tag $asset.name --yes
           }
