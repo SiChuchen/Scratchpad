@@ -74,6 +74,7 @@ Images never land in your project directory and won't end up in Git commits.
 - **Bilingual UI** — switch between Chinese and English instantly
 - **Proxy update** — configure HTTP / SOCKS5 proxy for version checks and downloads
 - **Auto-start** — optionally launch on system startup
+- **Auto-cleanup** — configure how many days to keep unstarred entries (default: clean on every launch)
 
 ---
 

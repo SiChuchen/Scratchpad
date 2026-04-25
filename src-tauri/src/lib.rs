@@ -318,7 +318,10 @@ fn ipc_dock_minimize_to_tab(
 
 fn init_db() -> Connection {
     let mut conn = storage::connection::open_db().expect("Failed to open scratchpad DB");
-    scratchpad::storage::ensure_dock_schema(&mut conn)
+    let cleanup_days = scratchpad::preferences::load_preferences(&conn)
+        .map(|p| p.auto_cleanup_days)
+        .unwrap_or(0);
+    scratchpad::storage::ensure_dock_schema(&mut conn, cleanup_days)
         .expect("Failed to init scratch dock schema");
     conn
 }

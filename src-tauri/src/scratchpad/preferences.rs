@@ -31,6 +31,7 @@ pub fn save_preferences(conn: &mut Connection, prefs: &DockPreferences) -> Stora
         ("launch_on_startup", prefs.launch_on_startup.to_string()),
         ("update_proxy", prefs.update_proxy.clone()),
         ("language", prefs.language.clone()),
+        ("auto_cleanup_days", prefs.auto_cleanup_days.to_string()),
     ] {
         tx.execute(
             "INSERT INTO preferences(key, value) VALUES (?1, ?2)",
@@ -108,6 +109,9 @@ pub fn load_preferences(conn: &Connection) -> StorageResult<DockPreferences> {
     if let Some(v) = map.get("language") {
         prefs.language = v.clone();
     }
+    if let Some(v) = map.get("auto_cleanup_days") {
+        prefs.auto_cleanup_days = v.parse().unwrap_or(0);
+    }
 
     Ok(prefs)
 }
@@ -152,7 +156,7 @@ mod preference_tests {
     #[test]
     fn preferences_roundtrip_persists_theme_fields() {
         let mut conn = Connection::open_in_memory().unwrap();
-        ensure_dock_schema(&mut conn).unwrap();
+        ensure_dock_schema(&mut conn, 0).unwrap();
 
         let mut prefs = DockPreferences::default();
         prefs.theme_mode = "custom".to_string();
@@ -181,7 +185,7 @@ mod preference_tests {
     #[test]
     fn load_preferences_uses_installed_font_fallbacks() {
         let mut conn = Connection::open_in_memory().unwrap();
-        ensure_dock_schema(&mut conn).unwrap();
+        ensure_dock_schema(&mut conn, 0).unwrap();
 
         let mut prefs = DockPreferences::default();
         prefs.font_family_zh = "Removed Font".to_string();

@@ -314,19 +314,36 @@ fn entry_exists(conn: &Connection, entry_id: &str) -> StorageResult<bool> {
     Ok(exists != 0)
 }
 
-fn home_only_entry_ids(conn: &Connection) -> StorageResult<Vec<String>> {
-    let mut stmt = conn.prepare(
+fn home_only_entry_ids(conn: &Connection, max_age_days: i64) -> StorageResult<Vec<String>> {
+    let sql = if max_age_days <= 0 {
         r#"
         SELECT h.entry_id
         FROM home_entries h
         LEFT JOIN note_entries n ON n.entry_id = h.entry_id
         WHERE n.entry_id IS NULL
         ORDER BY h.created_at DESC
-        "#,
-    )?;
-    let ids = stmt
-        .query_map([], |row| row.get(0))?
-        .collect::<Result<Vec<String>, _>>()?;
+        "#
+    } else {
+        r#"
+        SELECT h.entry_id
+        FROM home_entries h
+        LEFT JOIN note_entries n ON n.entry_id = h.entry_id
+        WHERE n.entry_id IS NULL
+          AND h.created_at <= datetime('now', ?1)
+        ORDER BY h.created_at DESC
+        "#
+    };
+    let mut stmt = conn.prepare(sql)?;
+    let ids = if max_age_days > 0 {
+        stmt.query_map(
+            params![format!("-{} days", max_age_days)],
+            |row| row.get(0),
+        )?
+        .collect::<Result<Vec<String>, _>>()?
+    } else {
+        stmt.query_map([], |row| row.get(0))?
+            .collect::<Result<Vec<String>, _>>()?
+    };
     Ok(ids)
 }
 
@@ -390,11 +407,11 @@ pub fn dock_migrations() -> Vec<Migration> {
     ]
 }
 
-pub fn ensure_dock_schema(conn: &mut Connection) -> StorageResult<()> {
+pub fn ensure_dock_schema(conn: &mut Connection, auto_cleanup_days: i64) -> StorageResult<()> {
     ensure_schema(conn, &dock_migrations())?;
     conn.execute_batch(DOCK_SCHEMA_SQL)?;
     migrate_legacy_scratchpad_items(conn)?;
-    cleanup_home_on_startup(conn)?;
+    cleanup_home_on_startup(conn, auto_cleanup_days)?;
     Ok(())
 }
 
@@ -451,9 +468,9 @@ pub fn reorder_entries(
     Ok(())
 }
 
-pub fn cleanup_home_on_startup(conn: &mut Connection) -> StorageResult<usize> {
+pub fn cleanup_home_on_startup(conn: &mut Connection, max_age_days: i64) -> StorageResult<usize> {
     let tx = conn.transaction()?;
-    let ids = home_only_entry_ids(&tx)?;
+    let ids = home_only_entry_ids(&tx, max_age_days)?;
     let mut deleted = 0usize;
 
     for entry_id in ids {
@@ -791,7 +808,7 @@ mod repository_tests {
         let mut conn = Connection::open_in_memory().unwrap();
         seed_legacy_v1(&mut conn);
 
-        ensure_dock_schema(&mut conn).unwrap();
+        ensure_dock_schema(&mut conn, 0).unwrap();
 
         let entries = list_entries(&conn, EntryView::Home, None).unwrap();
         assert_eq!(entries.len(), 1);
@@ -814,7 +831,7 @@ mod repository_tests {
     #[test]
     fn list_entries_filters_by_kind_and_orders_by_newest_membership_first() {
         let mut conn = Connection::open_in_memory().unwrap();
-        ensure_dock_schema(&mut conn).unwrap();
+        ensure_dock_schema(&mut conn, 0).unwrap();
 
         insert_test_text_entry(
             &mut conn,
@@ -844,7 +861,7 @@ mod repository_tests {
     #[test]
     fn removing_home_membership_keeps_entry_alive_in_note() {
         let mut conn = Connection::open_in_memory().unwrap();
-        ensure_dock_schema(&mut conn).unwrap();
+        ensure_dock_schema(&mut conn, 0).unwrap();
 
         let entry = create_text_entry(&mut conn, EntryView::Home, "shared note text", "manual")
             .unwrap();
@@ -871,14 +888,14 @@ mod repository_tests {
     #[test]
     fn cleanup_home_on_startup_deletes_home_only_entries() {
         let mut conn = Connection::open_in_memory().unwrap();
-        ensure_dock_schema(&mut conn).unwrap();
+        ensure_dock_schema(&mut conn, 0).unwrap();
 
         let _home_only = create_text_entry(&mut conn, EntryView::Home, "remove me", "manual")
             .unwrap();
         let shared = create_text_entry(&mut conn, EntryView::Home, "keep me", "manual").unwrap();
         add_to_note(&mut conn, &shared.id).unwrap();
 
-        let deleted = cleanup_home_on_startup(&mut conn).unwrap();
+        let deleted = cleanup_home_on_startup(&mut conn, 0).unwrap();
         assert_eq!(deleted, 1);
 
         let home_entries = list_entries(&conn, EntryView::Home, None).unwrap();
@@ -898,7 +915,7 @@ mod repository_tests {
     #[test]
     fn toggle_collapse_returns_error_for_missing_entry() {
         let mut conn = Connection::open_in_memory().unwrap();
-        ensure_dock_schema(&mut conn).unwrap();
+        ensure_dock_schema(&mut conn, 0).unwrap();
 
         let result = toggle_collapse(&mut conn, "missing-entry", true);
 
@@ -908,7 +925,7 @@ mod repository_tests {
     #[test]
     fn rename_entry_returns_error_for_missing_entry() {
         let mut conn = Connection::open_in_memory().unwrap();
-        ensure_dock_schema(&mut conn).unwrap();
+        ensure_dock_schema(&mut conn, 0).unwrap();
 
         let result = rename_entry(&mut conn, "missing-entry", Some("title"));
 
@@ -924,7 +941,7 @@ mod repository_tests {
         assert!(file_path.exists());
 
         let mut conn = Connection::open_in_memory().unwrap();
-        ensure_dock_schema(&mut conn).unwrap();
+        ensure_dock_schema(&mut conn, 0).unwrap();
 
         let path_str = file_path.to_string_lossy().to_string();
         conn.execute(
@@ -962,7 +979,7 @@ mod repository_tests {
         std::fs::write(&file_path, b"fake pdf content").unwrap();
 
         let mut conn = Connection::open_in_memory().unwrap();
-        ensure_dock_schema(&mut conn).unwrap();
+        ensure_dock_schema(&mut conn, 0).unwrap();
 
         let path_str = file_path.to_string_lossy().to_string();
         conn.execute(
@@ -1008,7 +1025,7 @@ mod repository_tests {
     #[test]
     fn text_entry_deletion_works_without_file() {
         let mut conn = Connection::open_in_memory().unwrap();
-        ensure_dock_schema(&mut conn).unwrap();
+        ensure_dock_schema(&mut conn, 0).unwrap();
 
         let entry = create_text_entry(&mut conn, EntryView::Home, "hello", "manual").unwrap();
         remove_from_view(&mut conn, EntryView::Home, &entry.id).unwrap();
@@ -1017,5 +1034,48 @@ mod repository_tests {
             .query_row("SELECT COUNT(*) FROM entries", [], |row| row.get(0))
             .unwrap();
         assert_eq!(rows, 0, "text entry should be removed without error");
+    }
+
+    #[test]
+    fn cleanup_with_days_preserves_recent_entries() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        ensure_dock_schema(&mut conn, 0).unwrap();
+
+        // Insert a home-only entry created 2 days ago
+        conn.execute(
+            "INSERT INTO entries (id, kind, content, collapsed, source, created_at, updated_at)
+             VALUES ('de-old', 'text', 'old', 0, 'manual', datetime('now', '-2 days'), datetime('now', '-2 days'))",
+            [],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO home_entries (entry_id, created_at) VALUES ('de-old', datetime('now', '-2 days'))",
+            [],
+        ).unwrap();
+
+        // Insert a home-only entry created just now
+        let recent = create_text_entry(&mut conn, EntryView::Home, "recent", "manual").unwrap();
+
+        // With max_age_days=1, only the 2-day-old entry should be deleted
+        let deleted = cleanup_home_on_startup(&mut conn, 1).unwrap();
+        assert_eq!(deleted, 1);
+
+        let home = list_entries(&conn, EntryView::Home, None).unwrap();
+        assert_eq!(home.len(), 1);
+        assert_eq!(home[0].id, recent.id);
+    }
+
+    #[test]
+    fn cleanup_with_zero_days_deletes_all_unstarred() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        ensure_dock_schema(&mut conn, 0).unwrap();
+
+        let _e1 = create_text_entry(&mut conn, EntryView::Home, "a", "manual").unwrap();
+        let _e2 = create_text_entry(&mut conn, EntryView::Home, "b", "manual").unwrap();
+
+        let deleted = cleanup_home_on_startup(&mut conn, 0).unwrap();
+        assert_eq!(deleted, 2);
+
+        let home = list_entries(&conn, EntryView::Home, None).unwrap();
+        assert!(home.is_empty());
     }
 }

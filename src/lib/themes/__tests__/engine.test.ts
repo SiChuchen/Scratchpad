@@ -25,6 +25,7 @@ function makePrefs(overrides: Partial<DockPreferences> = {}): DockPreferences {
     launchOnStartup: false,
     updateProxy: '',
     language: 'zh-CN',
+    autoCleanupDays: 0,
     ...overrides,
   }
 }

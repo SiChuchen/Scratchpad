@@ -207,6 +207,7 @@
       launchOnStartup: false,
       updateProxy: '',
       language: preferences.language,
+      autoCleanupDays: 0,
     })
     proxyType = 'http'
     proxyIp = ''
@@ -463,6 +464,20 @@
               <div class="toggle-knob"></div>
             </div>
           </div>
+          <div class="row">
+            <span class="label">{messages.settings.autoCleanup}</span>
+            <div class="cleanup-row-inner">
+              <input
+                type="number"
+                class="proxy-input cleanup-input"
+                min="0"
+                value={preferences.autoCleanupDays}
+                onchange={(e) => update({ autoCleanupDays: Math.max(0, parseInt((e.target as HTMLInputElement).value) || 0) })}
+              />
+              <span class="cleanup-suffix">{messages.settings.autoCleanupDays}</span>
+            </div>
+          </div>
+          <p class="section-subtitle">{messages.settings.autoCleanupHint}</p>
         </div>
       {/if}
     </div>
@@ -818,6 +833,23 @@
 
   .proxy-port {
     max-width: 4rem;
+  }
+
+  .cleanup-row-inner {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+  }
+
+  .cleanup-input {
+    width: 3.5rem;
+    text-align: center;
+  }
+
+  .cleanup-suffix {
+    font-size: var(--font-xs, 0.55rem);
+    color: var(--text-muted);
   }
 
   .proxy-input:focus {

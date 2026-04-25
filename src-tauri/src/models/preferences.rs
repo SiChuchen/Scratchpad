@@ -36,6 +36,9 @@ pub struct DockPreferences {
 
     // Language
     pub language: String,                          // "zh-CN" | "en", default "" (auto-detect)
+
+    // Cleanup
+    pub auto_cleanup_days: i64,                    // 0 = clean all unstarred on startup, N = keep N days
 }
 
 impl Default for DockPreferences {
@@ -61,6 +64,7 @@ impl Default for DockPreferences {
             launch_on_startup: false,
             update_proxy: String::new(),
             language: String::new(),
+            auto_cleanup_days: 0,
         }
     }
 }

@@ -66,6 +66,9 @@ export interface LocaleMessages {
     enFont: string
     enFontSearch: string
     update: string
+    autoCleanup: string
+    autoCleanupDays: string
+    autoCleanupHint: string
     proxyNote: string
     proxyType: string
     proxyHost: string

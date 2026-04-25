@@ -52,4 +52,7 @@ export interface DockPreferences {
 
   // Language
   language: string
+
+  // Cleanup
+  autoCleanupDays: number
 }
