@@ -10,7 +10,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     SetForegroundWindow, GW_CHILD,
     SWP_NOSIZE, SWP_NOZORDER,
     WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_TIMER,
-    WM_CAPTURECHANGED, WM_CANCELMODE, WM_NCDESTROY,
+    WM_CAPTURECHANGED, WM_CANCELMODE, WM_NCDESTROY, WM_ACTIVATE, WM_MOUSEACTIVATE,
 };
 
 // EnableWindow is not exported by windows-sys 0.59 under Win32_UI_WindowsAndMessaging.
@@ -24,9 +24,10 @@ extern "system" {
 
 pub const TAB_LONG_PRESS_TIMER_ID: usize = 1;
 pub const LONG_PRESS_MS: u32 = 200;
-pub const DEFAULT_HIDDEN_RATIO: f32 = 1.0 / 3.0;
+pub const DEFAULT_HIDDEN_RATIO: f32 = 0.0;
 pub const MAX_HIDDEN_RATIO: f32 = 1.0 / 2.0;
 pub const TAB_LOGICAL_SIZE: i32 = 48;
+pub const TAB_EDGE_MARGIN: i32 = 4;
 
 /// Calculate the tab window's physical pixel size from its DPI.
 /// Uses integer arithmetic to avoid floating-point drift: (logical * dpi + 48) / 96
@@ -34,6 +35,31 @@ pub const TAB_LOGICAL_SIZE: i32 = 48;
 pub fn tab_physical_size(hwnd: HWND) -> i32 {
     let dpi = unsafe { windows_sys::Win32::UI::HiDpi::GetDpiForWindow(hwnd) };
     (TAB_LOGICAL_SIZE * dpi as i32 + 48) / 96
+}
+
+/// Re-apply circular region directly via Win32.
+/// Called from the subclass proc on WM_ACTIVATE to repair region lost by focus changes.
+fn reapply_circle_region(hwnd: HWND) {
+    use windows_sys::Win32::Graphics::Gdi::{
+        CreateEllipticRgn, DeleteObject, SetWindowRgn,
+        RDW_ERASE, RDW_FRAME, RDW_INVALIDATE, RedrawWindow,
+    };
+
+    unsafe {
+        let mut rect = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+        GetWindowRect(hwnd, &mut rect);
+        let w = rect.right - rect.left;
+        let h = rect.bottom - rect.top;
+        let size = if w > 0 && h > 0 { w.min(h) } else { tab_physical_size(hwnd) };
+
+        let region = CreateEllipticRgn(0, 0, size, size);
+        if region.is_null() { return; }
+        if SetWindowRgn(hwnd, region, 1) == 0 {
+            DeleteObject(region);
+        } else {
+            RedrawWindow(hwnd, std::ptr::null(), std::ptr::null_mut(), RDW_ERASE | RDW_FRAME | RDW_INVALIDATE);
+        }
+    }
 }
 
 static SUBCLASS_INSTALLED: AtomicBool = AtomicBool::new(false);
@@ -162,11 +188,20 @@ unsafe extern "system" fn subclass_proc(
         _ => false,
     };
 
-    if handled {
+    let result = if handled {
         0
     } else {
         DefSubclassProc(hwnd, msg, wparam, lparam)
+    };
+
+    // Re-apply circle region AFTER DefSubclassProc for activation messages.
+    // WebView2 / DWM may clear the region during default processing;
+    // applying after ensures the region is correct for the next repaint.
+    if msg == WM_ACTIVATE || msg == WM_MOUSEACTIVATE {
+        reapply_circle_region(hwnd);
     }
+
+    result
 }
 
 // --- Message handlers ---
@@ -232,6 +267,8 @@ fn handle_lbuttonup(hwnd: HWND, ctrl: &mut TabController) -> bool {
             unsafe { KillTimer(hwnd, TAB_LONG_PRESS_TIMER_ID) };
             unsafe { ReleaseCapture() };
             ctrl.state = TabState::Idle;
+            // Ensure circle region is correct before tab.hide() — DWM captures the last frame
+            reapply_circle_region(hwnd);
             restore_main_window(&ctrl.app);
             true
         }
@@ -283,13 +320,14 @@ fn snap_to_edge(hwnd: HWND) {
 
     let tab_w = win_rect.right - win_rect.left;
     let tab_h = win_rect.bottom - win_rect.top;
-    let hidden_ratio = calc_current_hidden_ratio(&win_rect, &mi.rcWork);
-    let (snap_x, snap_y) = calc_snap_position(&win_rect, &mi.rcWork, (tab_w, tab_h), hidden_ratio);
+    let (snap_x, snap_y) = calc_snap_position(&win_rect, &mi.rcWork, (tab_w, tab_h), 0.0);
     unsafe {
         SetWindowPos(hwnd, std::ptr::null_mut(), snap_x, snap_y, 0, 0, SWP_NOSIZE | SWP_NOZORDER);
     }
+    reapply_circle_region(hwnd);
 }
 
+#[allow(dead_code)]
 fn calc_current_hidden_ratio(win_rect: &RECT, work_rect: &RECT) -> f32 {
     let tw = (win_rect.right - win_rect.left) as f32;
     let th = (win_rect.bottom - win_rect.top) as f32;
@@ -380,6 +418,8 @@ pub fn calc_snap_position(
     tab_size: (i32, i32),
     hidden_ratio: f32,
 ) -> (i32, i32) {
+    let _ = hidden_ratio; // Full-visibility mode: tab stays entirely within work area
+
     let center_x = window_rect.left + (window_rect.right - window_rect.left) / 2;
     let center_y = window_rect.top + (window_rect.bottom - window_rect.top) / 2;
 
@@ -388,39 +428,33 @@ pub fn calc_snap_position(
     let work_right = work_rect.right;
     let work_bottom = work_rect.bottom;
 
+    let (tw, th) = tab_size;
+    let margin = TAB_EDGE_MARGIN;
+
     let dist_left = (center_x - work_left).abs();
     let dist_right = (work_right - center_x).abs();
     let dist_top = (center_y - work_top).abs();
     let dist_bottom = (work_bottom - center_y).abs();
-
-    let (tw, th) = tab_size;
-    let ratio = hidden_ratio.clamp(0.0, MAX_HIDDEN_RATIO);
-    let margin = 2i32;
-
-    let hidden_w = (tw as f32 * ratio) as i32;
-    let visible_w = (tw as f32 * (1.0 - ratio)) as i32;
-    let hidden_h = (th as f32 * ratio) as i32;
-    let visible_h = (th as f32 * (1.0 - ratio)) as i32;
 
     let snap_x: i32;
     let snap_y: i32;
 
     if dist_left <= dist_right && dist_left <= dist_top && dist_left <= dist_bottom {
         // Left edge
-        snap_x = work_left - hidden_w;
+        snap_x = work_left + margin;
         snap_y = (center_y - th / 2).clamp(work_top + margin, work_bottom - th - margin);
     } else if dist_right <= dist_top && dist_right <= dist_bottom {
         // Right edge
-        snap_x = work_right - visible_w;
+        snap_x = work_right - tw - margin;
         snap_y = (center_y - th / 2).clamp(work_top + margin, work_bottom - th - margin);
     } else if dist_top <= dist_bottom {
         // Top edge
         snap_x = (center_x - tw / 2).clamp(work_left + margin, work_right - tw - margin);
-        snap_y = work_top - hidden_h;
+        snap_y = work_top + margin;
     } else {
         // Bottom edge
         snap_x = (center_x - tw / 2).clamp(work_left + margin, work_right - tw - margin);
-        snap_y = work_bottom - th + hidden_h;
+        snap_y = work_bottom - th - margin;
     }
 
     (snap_x, snap_y)
@@ -441,51 +475,49 @@ mod tests {
     }
 
     #[test]
-    fn snap_to_right_edge_default_ratio() {
+    fn snap_to_right_edge_full_visibility() {
         let win = RECT { left: 1800, top: 500, right: 1848, bottom: 548 };
         let work = make_work_rect();
         let (x, y) = calc_snap_position(&win, &work, make_tab_size(), DEFAULT_HIDDEN_RATIO);
-        let expected_visible = 48.0 * (1.0 - DEFAULT_HIDDEN_RATIO);
-        assert_eq!(x, work.right - expected_visible as i32);
-        assert!(y >= work.top && y <= work.bottom - 48);
+        assert_eq!(x, work.right - 48 - TAB_EDGE_MARGIN);
+        assert!(y >= work.top + TAB_EDGE_MARGIN && y + 48 <= work.bottom - TAB_EDGE_MARGIN);
     }
 
     #[test]
-    fn snap_to_left_edge() {
+    fn snap_to_left_edge_full_visibility() {
         let win = RECT { left: 10, top: 500, right: 58, bottom: 548 };
         let work = make_work_rect();
         let (x, y) = calc_snap_position(&win, &work, make_tab_size(), DEFAULT_HIDDEN_RATIO);
-        let hidden_px = (48.0 * DEFAULT_HIDDEN_RATIO) as i32;
-        assert_eq!(x, work.left - hidden_px);
-        assert!(y >= work.top && y <= work.bottom - 48);
+        assert_eq!(x, work.left + TAB_EDGE_MARGIN);
+        assert!(y >= work.top + TAB_EDGE_MARGIN && y + 48 <= work.bottom - TAB_EDGE_MARGIN);
     }
 
     #[test]
-    fn snap_to_top_edge() {
+    fn snap_to_top_edge_full_visibility() {
         let win = RECT { left: 900, top: 20, right: 948, bottom: 68 };
         let work = make_work_rect();
         let (x, y) = calc_snap_position(&win, &work, make_tab_size(), DEFAULT_HIDDEN_RATIO);
-        let hidden_px = (48.0 * DEFAULT_HIDDEN_RATIO) as i32;
-        assert_eq!(y, work.top - hidden_px);
-        assert!(x >= work.left && x <= work.right - 48);
+        assert_eq!(y, work.top + TAB_EDGE_MARGIN);
+        assert!(x >= work.left + TAB_EDGE_MARGIN && x + 48 <= work.right - TAB_EDGE_MARGIN);
     }
 
     #[test]
-    fn snap_to_bottom_edge() {
+    fn snap_to_bottom_edge_full_visibility() {
         let win = RECT { left: 900, top: 1020, right: 948, bottom: 1068 };
         let work = make_work_rect();
         let (x, y) = calc_snap_position(&win, &work, make_tab_size(), DEFAULT_HIDDEN_RATIO);
-        let hidden_px = (48.0 * DEFAULT_HIDDEN_RATIO) as i32;
-        assert_eq!(y, work.bottom - 48 + hidden_px);
+        assert_eq!(y, work.bottom - 48 - TAB_EDGE_MARGIN);
+        assert!(x >= work.left + TAB_EDGE_MARGIN && x + 48 <= work.right - TAB_EDGE_MARGIN);
     }
 
     #[test]
-    fn max_hidden_ratio_clamps_to_half() {
+    fn hidden_ratio_ignored_in_full_visibility_mode() {
         let win = RECT { left: 1800, top: 500, right: 1848, bottom: 548 };
         let work = make_work_rect();
-        let (x, _) = calc_snap_position(&win, &work, make_tab_size(), 0.8);
-        let expected_visible = 48.0 * (1.0 - MAX_HIDDEN_RATIO);
-        assert_eq!(x, work.right - expected_visible as i32);
+        let (x1, y1) = calc_snap_position(&win, &work, make_tab_size(), 0.0);
+        let (x2, y2) = calc_snap_position(&win, &work, make_tab_size(), 0.5);
+        // hidden_ratio is ignored — both should produce identical results
+        assert_eq!((x1, y1), (x2, y2));
     }
 
     #[test]
@@ -493,18 +525,34 @@ mod tests {
         let win = RECT { left: 3700, top: 500, right: 3748, bottom: 548 };
         let work = RECT { left: 1920, top: 0, right: 3840, bottom: 1080 };
         let (x, y) = calc_snap_position(&win, &work, make_tab_size(), DEFAULT_HIDDEN_RATIO);
-        let expected_visible = (48.0 * (1.0 - DEFAULT_HIDDEN_RATIO)) as i32;
-        assert_eq!(x, work.right - expected_visible);
-        assert!(y >= work.top && y <= work.bottom - 48);
+        assert_eq!(x, work.right - 48 - TAB_EDGE_MARGIN);
+        assert!(y >= work.top + TAB_EDGE_MARGIN && y + 48 <= work.bottom - TAB_EDGE_MARGIN);
     }
 
     #[test]
     fn center_y_clamped_to_work_area() {
-        // Window center at x=1824 (near right edge), y=-500 (far above screen).
-        // dist_left=1824, dist_right=96, dist_top=500, dist_bottom=1580 -> snaps to right edge.
         let win = RECT { left: 1800, top: -524, right: 1848, bottom: -476 };
         let work = make_work_rect();
         let (_, y) = calc_snap_position(&win, &work, make_tab_size(), DEFAULT_HIDDEN_RATIO);
-        assert!(y >= work.top + 2);
+        assert!(y >= work.top + TAB_EDGE_MARGIN);
+        assert!(y + 48 <= work.bottom - TAB_EDGE_MARGIN);
+    }
+
+    #[test]
+    fn window_fully_within_work_area() {
+        let work = make_work_rect();
+        let positions = [
+            RECT { left: 10, top: 500, right: 58, bottom: 548 },
+            RECT { left: 1800, top: 500, right: 1848, bottom: 548 },
+            RECT { left: 900, top: 20, right: 948, bottom: 68 },
+            RECT { left: 900, top: 1020, right: 948, bottom: 1068 },
+        ];
+        for win in &positions {
+            let (x, y) = calc_snap_position(win, &work, make_tab_size(), DEFAULT_HIDDEN_RATIO);
+            assert!(x >= work.left, "x {} >= work.left {}", x, work.left);
+            assert!(y >= work.top, "y {} >= work.top {}", y, work.top);
+            assert!(x + 48 <= work.right, "x+48 {} <= work.right {}", x + 48, work.right);
+            assert!(y + 48 <= work.bottom, "y+48 {} <= work.bottom {}", y + 48, work.bottom);
+        }
     }
 }

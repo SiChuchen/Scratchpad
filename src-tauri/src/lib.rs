@@ -273,7 +273,7 @@ fn ipc_dock_minimize_to_tab(
         drop(db);
     }
 
-    // 3. Get monitor work rect
+    // 3. Get monitor work rect and calculate tab physical size + snap position
     let monitor = unsafe { MonitorFromWindow(main_hwnd, MONITOR_DEFAULTTONEAREST) };
     let mut mi = MONITORINFO {
         cbSize: std::mem::size_of::<MONITORINFO>() as u32,
@@ -281,31 +281,34 @@ fn ipc_dock_minimize_to_tab(
     };
     unsafe { GetMonitorInfoW(monitor, &mut mi) };
 
-    // 4. Calculate tab physical size from DPI (not from hidden window rect)
     let tab_px = system::tab_controller::tab_physical_size(tab_hwnd);
     let tab_size = (tab_px, tab_px);
 
-    // 5. Calculate snap position with default hidden ratio
     let (snap_x, snap_y) = system::tab_controller::calc_snap_position(
         &main_rect,
         &mi.rcWork,
         tab_size,
-        system::tab_controller::DEFAULT_HIDDEN_RATIO,
+        0.0, // Full-visibility mode: tab stays entirely within work area
     );
 
-    // 6. Install subclass (idempotent)
+    // 4. Install subclass (idempotent)
     system::tab_controller::install(&app, tab_hwnd);
 
-    // 7. Apply circle region (idempotent, uses same tab_physical_size)
-    system::window::apply_circle_region(&app, "minimized-tab")?;
-
-    // 8. Position and size tab explicitly, then show
+    // 5. SetWindowPos FIRST — position and size tab at final location
     unsafe {
         SetWindowPos(tab_hwnd, std::ptr::null_mut(), snap_x, snap_y, tab_px, tab_px, SWP_NOZORDER);
     }
+
+    // 6. Apply circle region AFTER SetWindowPos (region based on actual window size)
+    system::window::apply_circle_region(&app, "minimized-tab")?;
+
+    // 7. Show minimized-tab
     tab_w.show().map_err(|e| e.to_string())?;
 
-    // 9. Hide main
+    // 8. Re-apply circle region after show (window now visible, GetWindowRect reliable)
+    system::window::apply_circle_region(&app, "minimized-tab")?;
+
+    // 9. Hide main window
     main_w.hide().map_err(|e| e.to_string())?;
 
     Ok(())

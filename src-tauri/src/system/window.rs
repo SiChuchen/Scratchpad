@@ -15,19 +15,50 @@ pub fn apply_circle_region(
             .map_err(|e| e.to_string())?
             .0 as windows_sys::Win32::Foundation::HWND;
 
-        let physical = crate::system::tab_controller::tab_physical_size(hwnd);
+        use windows_sys::Win32::Foundation::RECT;
+        use windows_sys::Win32::Graphics::Gdi::{
+            CreateEllipticRgn, DeleteObject, RDW_ERASE, RDW_FRAME, RDW_INVALIDATE,
+            RedrawWindow, SetWindowRgn,
+        };
+        use windows_sys::Win32::UI::WindowsAndMessaging::GetWindowRect;
 
         unsafe {
-            let region = windows_sys::Win32::Graphics::Gdi::CreateEllipticRgn(
-                0,
-                0,
-                physical,
-                physical,
-            );
+            // Read actual window size, fall back to DPI-based calculation for hidden windows
+            let mut rect = RECT {
+                left: 0,
+                top: 0,
+                right: 0,
+                bottom: 0,
+            };
+            GetWindowRect(hwnd, &mut rect);
+            let w = rect.right - rect.left;
+            let h = rect.bottom - rect.top;
+            let size = if w > 0 && h > 0 {
+                w.min(h)
+            } else {
+                crate::system::tab_controller::tab_physical_size(hwnd)
+            };
+
+            let region = CreateEllipticRgn(0, 0, size, size);
             if region.is_null() {
                 return Err("CreateEllipticRgn failed".into());
             }
-            windows_sys::Win32::Graphics::Gdi::SetWindowRgn(hwnd, region, 1);
+
+            let ok = SetWindowRgn(hwnd, region, 1);
+            if ok == 0 {
+                // SetWindowRgn failed — we must free the region ourselves
+                DeleteObject(region);
+                return Err("SetWindowRgn failed".into());
+            }
+            // Success: system owns the region, do NOT DeleteObject
+
+            // Force a full redraw to eliminate stale artifacts
+            RedrawWindow(
+                hwnd,
+                std::ptr::null(),
+                std::ptr::null_mut(),
+                RDW_ERASE | RDW_FRAME | RDW_INVALIDATE,
+            );
         }
     }
 

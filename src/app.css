@@ -30,20 +30,34 @@
 
 body {
   margin: 0;
-  min-width: 260px;
   height: 100vh;
   overflow: hidden;
   background: transparent;
 }
 
 #app {
+  width: 100vw;
   height: 100vh;
   display: flex;
-  flex-direction: column;
-  background: var(--surface-0);
-  backdrop-filter: blur(24px);
-  border: 1px solid var(--border-emphasis);
-  box-shadow: var(--shadow-default);
+}
+
+html.minimized-tab-window,
+html.minimized-tab-window body,
+html.minimized-tab-window #app {
+  width: 48px;
+  height: 48px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  background: transparent;
+}
+
+html.minimized-tab-window #app {
+  display: block;
+  border: none;
+  box-shadow: none;
+  backdrop-filter: none;
 }
 
 ::-webkit-scrollbar {

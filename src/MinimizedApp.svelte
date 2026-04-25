@@ -6,10 +6,6 @@
   let hideTimer: ReturnType<typeof setTimeout> | null = null
 
   onMount(() => {
-    const appEl = document.getElementById('app')!
-    appEl.style.cssText = 'width:48px;height:48px;background:transparent!important;backdrop-filter:none!important;border:none!important;box-shadow:none!important;border-radius:0!important;overflow:hidden;min-width:0;margin:0;padding:0;'
-    document.body.style.cssText = 'width:48px;height:48px;min-width:0;background:transparent!important;margin:0;padding:0;overflow:hidden;'
-    document.documentElement.style.cssText = 'width:48px;height:48px;background:transparent!important;overflow:hidden;'
     scheduleAutoHide()
   })
 

@@ -638,9 +638,15 @@
 
 <style>
   .app-shell {
+    width: 100vw;
     height: 100vh;
+    min-width: 240px;
     display: flex;
     flex-direction: column;
+    background: var(--surface-0);
+    backdrop-filter: blur(24px);
+    border: 1px solid var(--border-emphasis);
+    box-shadow: var(--shadow-default);
   }
 
   .ctrl-drag {

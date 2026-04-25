@@ -8,6 +8,7 @@ import "./app.css";
 document.addEventListener("contextmenu", (e) => e.preventDefault());
 
 const label = getCurrentWindow().label;
+document.documentElement.classList.add(label === "minimized-tab" ? "minimized-tab-window" : "main-window");
 
 const app = mount(label === "minimized-tab" ? MinimizedApp : App, {
   target: document.getElementById("app")!,
