@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { DockEntry } from '$lib/types/dock'
   import { dockApi } from '$lib/api/dock'
+  import { messages } from '$lib/i18n'
 
   interface Props {
     entry: DockEntry
@@ -41,7 +42,7 @@
       setTimeout(() => { copyStatus = 'idle' }, 1500)
     } catch (e) {
       console.error('[ImageEntryBody] copyImage IPC error:', e)
-      alert('复制图片失败: ' + String(e))
+      alert(messages.toast.copyImageFailed + ': ' + String(e))
       copyStatus = 'idle'
     }
   }
@@ -49,7 +50,7 @@
 
 {#if imageUrl}
   <div class="image-preview">
-    <img src={imageUrl} alt={entry.fileName || '图片'} draggable="false" />
+    <img src={imageUrl} alt={entry.fileName || messages.entry.imageShort} draggable="false" />
   </div>
 {:else}
   <div class="image-placeholder">
@@ -77,20 +78,20 @@
 </div>
 
 <div class="entry-actions">
-  <button class="action-btn copy-action" onclick={copyImage} disabled={copyStatus === 'copying'} title="复制图片">
+  <button class="action-btn copy-action" onclick={copyImage} disabled={copyStatus === 'copying'} title={messages.entry.copyImage}>
     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
       <rect x="9" y="9" width="13" height="13" rx="2" />
       <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
     </svg>
-    <span>{copyStatus === 'done' ? '已复制' : '复制'}</span>
+    <span>{copyStatus === 'done' ? messages.entry.copied : messages.entry.copy}</span>
   </button>
   {#if entry.filePath}
-    <button class="action-btn" onclick={() => onCopyPath(entry.filePath!)} title="复制路径">
+    <button class="action-btn" onclick={() => onCopyPath(entry.filePath!)} title={messages.entry.copyPath}>
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
         <rect x="9" y="9" width="13" height="13" rx="2" />
         <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
       </svg>
-      <span>复制路径</span>
+      <span>{messages.entry.copyPath}</span>
     </button>
   {/if}
 </div>

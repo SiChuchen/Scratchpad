@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { DockView } from '$lib/types/dock'
   import { dockApi } from '$lib/api/dock'
+  import { messages } from '$lib/i18n'
 
   interface Props {
     currentView: DockView
@@ -35,23 +36,23 @@
     class="nav-btn"
     class:active={currentView === 'home'}
     onclick={() => onNavigate('home')}
-  >收纳</button>
+  >{messages.nav.home}</button>
   <button
     class="nav-btn"
     class:active={currentView === 'categories'}
     onclick={() => onNavigate('categories')}
-  >全部</button>
+  >{messages.nav.all}</button>
   <button
     class="nav-btn"
     class:active={currentView === 'note'}
     onclick={() => onNavigate('note')}
-  >收藏</button>
+  >{messages.nav.favorites}</button>
   <div class="top-bar-spacer"></div>
   <button
     class="nav-btn pin-btn"
     class:active={alwaysOnTop}
     onclick={togglePin}
-    title={alwaysOnTop ? '取消置顶' : '置顶'}
+    title={alwaysOnTop ? messages.nav.unpin : messages.nav.pin}
   >
     <svg width="11" height="11" viewBox="0 0 24 24" fill={alwaysOnTop ? 'currentColor' : 'none'} stroke="currentColor" stroke-width="1.5">
       <path d="M12 17v5M9 3h6l-1 7h3l-5 7-5-7h3z" />
@@ -61,8 +62,8 @@
     class="nav-btn"
     class:active={currentView === 'settings'}
     onclick={onToggleSettings}
-  >设置</button>
-  <button class="nav-btn minimize-btn" onclick={onMinimize} title="最小化">
+  >{messages.nav.settings}</button>
+  <button class="nav-btn minimize-btn" onclick={onMinimize} title={messages.nav.minimize}>
     <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
       <line x1="5" y1="12" x2="19" y2="12" />
     </svg>

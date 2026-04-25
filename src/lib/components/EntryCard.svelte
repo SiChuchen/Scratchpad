@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { DockEntry } from '$lib/types/dock'
   import { generateTitle, looksLikeCode } from '$lib/utils/title'
+  import { messages } from '$lib/i18n'
   import TextEntryBody from './entry/TextEntryBody.svelte'
   import ImageEntryBody from './entry/ImageEntryBody.svelte'
   import FileEntryBody from './entry/FileEntryBody.svelte'
@@ -78,7 +79,7 @@
 
   function stop(e: MouseEvent) { e.stopPropagation() }
 
-  let displayTitle = $derived(entry.title || generateTitle(entry) || '未命名条目')
+  let displayTitle = $derived(entry.title || generateTitle(entry) || messages.entry.untitled)
 
   let showPreview = $derived.by(() => {
     if (!entry.collapsed) return false
@@ -102,9 +103,9 @@
 
   let kindLabel = $derived.by(() => {
     switch (entry.kind) {
-      case 'text': return '文本'
-      case 'image': return '图片'
-      case 'file': return '文件'
+      case 'text': return messages.entry.text
+      case 'image': return messages.entry.image
+      case 'file': return messages.entry.file
     }
   })
 
@@ -163,13 +164,13 @@
     {/if}
     <span class="entry-time">{timeLabel}</span>
     <div class="entry-header-actions" data-card-interactive ondblclick={stop}>
-      <button class="icon-btn" onclick={(e) => { e.stopPropagation(); handleCopy(e) }} title="复制">
+      <button class="icon-btn" onclick={(e) => { e.stopPropagation(); handleCopy(e) }} title={messages.entry.copy}>
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
           <rect x="9" y="9" width="13" height="13" rx="2" />
           <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
         </svg>
       </button>
-      <button class="icon-btn" onclick={(e) => { e.stopPropagation(); onToggleCollapse(entry.id) }} title={entry.collapsed ? '展开' : '收起'}>
+      <button class="icon-btn" onclick={(e) => { e.stopPropagation(); onToggleCollapse(entry.id) }} title={entry.collapsed ? messages.entry.expand : messages.entry.collapse}>
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
           {#if entry.collapsed}
             <polyline points="6 9 12 15 18 9" />
@@ -178,12 +179,12 @@
           {/if}
         </svg>
       </button>
-      <button class="icon-btn note-btn" class:active={entry.inNote} onclick={(e) => { e.stopPropagation(); onToggleNote(entry.id) }} title={entry.inNote ? '取消收藏' : '收藏'}>
+      <button class="icon-btn note-btn" class:active={entry.inNote} onclick={(e) => { e.stopPropagation(); onToggleNote(entry.id) }} title={entry.inNote ? messages.entry.unfavorite : messages.entry.favorite}>
         <svg width="12" height="12" viewBox="0 0 24 24" fill={entry.inNote ? 'currentColor' : 'none'} stroke="currentColor" stroke-width="1.5">
           <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
         </svg>
       </button>
-      <button class="icon-btn danger" onclick={(e) => { e.stopPropagation(); onDeleteFromView(entry.id) }} title="删除">
+      <button class="icon-btn danger" onclick={(e) => { e.stopPropagation(); onDeleteFromView(entry.id) }} title={messages.entry.delete}>
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
           <polyline points="3 6 5 6 21 6" />
           <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />

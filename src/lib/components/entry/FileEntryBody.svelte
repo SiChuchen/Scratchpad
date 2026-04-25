@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { DockEntry } from '$lib/types/dock'
   import { dockApi } from '$lib/api/dock'
+  import { messages } from '$lib/i18n'
 
   interface Props {
     entry: DockEntry
@@ -30,7 +31,7 @@
       setTimeout(() => { copyStatus = 'idle' }, 1500)
     } catch (e) {
       console.error('[FileEntryBody] copyFile IPC error:', e)
-      alert('复制文件失败: ' + String(e))
+      alert(messages.toast.copyFileFailed + ': ' + String(e))
       copyStatus = 'idle'
     }
   }
@@ -41,27 +42,27 @@
     <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
     <polyline points="14 2 14 8 20 8" />
   </svg>
-  <span class="file-name">{entry.fileName || '未知文件'}</span>
+  <span class="file-name">{entry.fileName || messages.entry.unknownFile}</span>
   {#if sizeLabel}
     <span class="file-size">{sizeLabel}</span>
   {/if}
 </div>
 
 <div class="entry-actions">
-  <button class="action-btn copy-action" onclick={copyFile} disabled={copyStatus === 'copying'} title="复制文件">
+  <button class="action-btn copy-action" onclick={copyFile} disabled={copyStatus === 'copying'} title={messages.entry.copyFile}>
     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
       <rect x="9" y="9" width="13" height="13" rx="2" />
       <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
     </svg>
-    <span>{copyStatus === 'done' ? '已复制' : '复制'}</span>
+    <span>{copyStatus === 'done' ? messages.entry.copied : messages.entry.copy}</span>
   </button>
   {#if entry.filePath}
-    <button class="action-btn" onclick={() => onCopyPath(entry.filePath!)} title="复制路径">
+    <button class="action-btn" onclick={() => onCopyPath(entry.filePath!)} title={messages.entry.copyPath}>
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
         <rect x="9" y="9" width="13" height="13" rx="2" />
         <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
       </svg>
-      <span>复制路径</span>
+      <span>{messages.entry.copyPath}</span>
     </button>
   {/if}
 </div>
