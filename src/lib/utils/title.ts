@@ -1,4 +1,5 @@
 import type { DockEntry } from '$lib/types/dock'
+import { messages } from '$lib/i18n'
 
 const CODE_KEYWORDS_RE =
   /^(import\s|function\s|const\s|let\s|var\s|class\s|def\s|return\s|from\s|export\s|require\()/m
@@ -44,15 +45,15 @@ export function generateTitle(entry: DockEntry): string {
   if (entry.kind === 'image') {
     const label =
       entry.source === 'clipboard'
-        ? '粘贴图片'
+        ? messages.entry.pastedImage
         : entry.source === 'drop'
-          ? '拖入图片'
-          : '图片'
+          ? messages.entry.droppedImage
+          : messages.entry.imageShort
     return `${label} ${formatDate(entry.createdAt)}`
   }
 
   if (entry.kind === 'file') {
-    return entry.fileName ?? '未命名文件'
+    return entry.fileName ?? messages.entry.unnamedFile
   }
 
   // kind === 'text'

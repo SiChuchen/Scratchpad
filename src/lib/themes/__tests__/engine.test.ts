@@ -24,6 +24,7 @@ function makePrefs(overrides: Partial<DockPreferences> = {}): DockPreferences {
     fontFamilyEn: 'Segoe UI',
     launchOnStartup: false,
     updateProxy: '',
+    language: 'zh-CN',
     ...overrides,
   }
 }

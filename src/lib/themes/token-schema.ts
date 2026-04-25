@@ -37,25 +37,25 @@ export const TOKEN_SCHEMA: Record<string, TokenSchemaEntry> = {
   '--radius-lg':            { type: 'length', label: '圆角-大', min: 0, max: 2.0 },
 }
 
-export function validateToken(key: string, value: string): { valid: boolean; error?: string } {
+export function validateToken(key: string, value: string): { valid: boolean; errorCode?: string } {
   const schema = TOKEN_SCHEMA[key]
-  if (!schema) return { valid: false, error: '未知 token' }
+  if (!schema) return { valid: false, errorCode: 'unknownToken' }
 
   switch (schema.type) {
     case 'color': {
       if (/^(rgba?\(|#|oklch\()/.test(value.trim())) return { valid: true }
-      return { valid: false, error: '格式应为 rgba(...), #hex, 或 oklch(...)' }
+      return { valid: false, errorCode: 'invalidColor' }
     }
     case 'length': {
       const num = parseFloat(value)
-      if (isNaN(num)) return { valid: false, error: '请输入数值' }
-      if (schema.min !== undefined && num < schema.min) return { valid: false, error: `最小 ${schema.min}` }
-      if (schema.max !== undefined && num > schema.max) return { valid: false, error: `最大 ${schema.max}` }
+      if (isNaN(num)) return { valid: false, errorCode: 'notNumber' }
+      if (schema.min !== undefined && num < schema.min) return { valid: false, errorCode: 'minValue' }
+      if (schema.max !== undefined && num > schema.max) return { valid: false, errorCode: 'maxValue' }
       return { valid: true }
     }
     case 'shadow': {
       if (/\d/.test(value)) return { valid: true }
-      return { valid: false, error: '格式应为 box-shadow 值' }
+      return { valid: false, errorCode: 'invalidShadow' }
     }
   }
 }

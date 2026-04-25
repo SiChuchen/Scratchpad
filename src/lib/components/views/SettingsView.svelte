@@ -4,6 +4,7 @@
   import { dockApi } from '$lib/api/dock'
   import { THEME_PRESETS } from '$lib/themes/presets'
   import { TOKEN_SCHEMA, validateToken } from '$lib/themes/token-schema'
+  import { messages } from '$lib/i18n'
 
   interface Props {
     preferences: DockPreferences
@@ -42,7 +43,17 @@
   function handleExpertOverride(key: string, value: string) {
     const result = validateToken(key, value)
     if (!result.valid) {
-      expertErrors = { ...expertErrors, [key]: result.error || '无效' }
+      const schema = TOKEN_SCHEMA[key]
+      let msg = messages.toast.invalid
+      switch (result.errorCode) {
+        case 'unknownToken': msg = messages.validation.unknownToken; break
+        case 'invalidColor': msg = messages.validation.invalidColor; break
+        case 'notNumber': msg = messages.validation.notNumber; break
+        case 'minValue': msg = messages.validation.minValue.replace('{n}', String(schema?.min)); break
+        case 'maxValue': msg = messages.validation.maxValue.replace('{n}', String(schema?.max)); break
+        case 'invalidShadow': msg = messages.validation.invalidShadow; break
+      }
+      expertErrors = { ...expertErrors, [key]: msg }
       return
     }
     expertErrors = { ...expertErrors, [key]: '' }
@@ -195,6 +206,7 @@
       fontFamilyEn: defaultEn,
       launchOnStartup: false,
       updateProxy: '',
+      language: preferences.language,
     })
     proxyType = 'http'
     proxyIp = ''
