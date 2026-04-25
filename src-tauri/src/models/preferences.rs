@@ -33,6 +33,9 @@ pub struct DockPreferences {
     // System
     pub launch_on_startup: bool,
     pub update_proxy: String,
+
+    // Language
+    pub language: String,                          // "zh-CN" | "en", default "" (auto-detect)
 }
 
 impl Default for DockPreferences {
@@ -57,6 +60,7 @@ impl Default for DockPreferences {
             font_family_en: sys_font,
             launch_on_startup: false,
             update_proxy: String::new(),
+            language: String::new(),
         }
     }
 }

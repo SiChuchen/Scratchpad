@@ -49,4 +49,7 @@ export interface DockPreferences {
   // System
   launchOnStartup: boolean
   updateProxy: string
+
+  // Language
+  language: string
 }
