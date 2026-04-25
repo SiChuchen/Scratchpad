@@ -141,6 +141,68 @@
       background: rgba(125, 211, 252, 0.18);
       border-color: rgba(125, 211, 252, 0.4);
     }
+    .nav-hamburger {
+      display: none;
+      flex-direction: column;
+      justify-content: center;
+      gap: 5px;
+      width: 36px;
+      height: 36px;
+      padding: 6px;
+      background: none;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      transition: border-color 0.2s;
+    }
+    .nav-hamburger:hover { border-color: var(--border-strong); }
+    .nav-hamburger span {
+      display: block;
+      width: 100%;
+      height: 2px;
+      background: var(--text-muted);
+      border-radius: 1px;
+      transition: transform 0.3s, opacity 0.3s;
+    }
+    .nav-hamburger.open span:nth-child(1) { transform: translateY(7px) rotate(45deg); }
+    .nav-hamburger.open span:nth-child(2) { opacity: 0; }
+    .nav-hamburger.open span:nth-child(3) { transform: translateY(-7px) rotate(-45deg); }
+    .nav-mobile {
+      display: none;
+      position: fixed;
+      top: 60px;
+      left: 0;
+      right: 0;
+      flex-direction: column;
+      align-items: center;
+      gap: 0;
+      padding: 12px 0 16px;
+      background: rgba(12, 18, 34, 0.95);
+      backdrop-filter: blur(16px) saturate(180%);
+      -webkit-backdrop-filter: blur(16px) saturate(180%);
+      border-bottom: 1px solid var(--border);
+      transform: translateY(-10px);
+      opacity: 0;
+      pointer-events: none;
+      transition: transform 0.25s, opacity 0.25s;
+      z-index: 99;
+    }
+    .nav-mobile.open {
+      transform: translateY(0);
+      opacity: 1;
+      pointer-events: auto;
+    }
+    .nav-mobile a, .nav-mobile button {
+      display: block;
+      width: 100%;
+      padding: 12px 24px;
+      text-align: center;
+      color: var(--text-muted);
+      font-size: 15px;
+      transition: color 0.2s, background 0.2s;
+    }
+    .nav-mobile a:hover { color: var(--text); background: rgba(148, 163, 184, 0.06); }
+    .nav-mobile .nav-download { margin: 8px 24px 0; width: auto; }
     .lang-toggle {
       display: inline-flex;
       align-items: center;
@@ -787,12 +849,16 @@
       .safety-grid { grid-template-columns: 1fr; }
       .cta-cards { grid-template-columns: 1fr; max-width: 320px; }
       .nav-links { display: none; }
+      .nav-hamburger { display: flex; }
+      .nav-mobile { display: flex; }
       section { padding: 64px 0; }
     }
 
     @media (max-width: 480px) {
       .container { padding: 0 16px; }
       .hero { padding: 100px 0 48px; }
+      .mock-win { transform: scale(1.08); transform-origin: top left; }
+      .gallery-grid .mock-win { transform-origin: top center; }
     }
 
     /* ── Reduced motion ── */
@@ -817,6 +883,20 @@
         <a href="#gallery" data-i18n="nav.gallery">预览</a>
         <a href="#download" data-i18n="nav.download">下载</a>
         <button class="lang-toggle" onclick="toggleLang()" id="langBtn">EN</button>
+        <a href="https://github.com/SiChuchen/Scratchpad" target="_blank" class="nav-download">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
+          GitHub
+        </a>
+      </div>
+      <button class="nav-hamburger" id="hamburgerBtn" onclick="toggleMobileNav()" aria-label="Menu">
+        <span></span><span></span><span></span>
+      </button>
+      <div class="nav-mobile" id="mobileNav">
+        <a href="#why" onclick="closeMobileNav()" data-i18n="nav.why">为什么</a>
+        <a href="#features" onclick="closeMobileNav()" data-i18n="nav.features">功能</a>
+        <a href="#gallery" onclick="closeMobileNav()" data-i18n="nav.gallery">预览</a>
+        <a href="#download" onclick="closeMobileNav()" data-i18n="nav.download">下载</a>
+        <button class="lang-toggle" onclick="toggleLang()" id="langBtnMobile">EN</button>
         <a href="https://github.com/SiChuchen/Scratchpad" target="_blank" class="nav-download">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
           GitHub
@@ -1382,6 +1462,7 @@
         'nav.features': '功能',
         'nav.gallery': '预览',
         'nav.download': '下载',
+        'page.title': 'Soma Scratchpad — AI 编程协作的桌面中转站',
         'hero.tag': '开源免费 · Windows 桌面工具',
         'hero.h1a': 'AI 编程协作的',
         'hero.h1b': '桌面中转站',
@@ -1489,6 +1570,7 @@
         'nav.features': 'Features',
         'nav.gallery': 'Preview',
         'nav.download': 'Download',
+        'page.title': 'Soma Scratchpad — A Desktop Staging Area for AI-Assisted Programming',
         'hero.tag': 'Open Source · Windows Desktop Tool',
         'hero.h1a': 'A Desktop Staging Area',
         'hero.h1b': 'for AI-Assisted Programming',
@@ -1601,8 +1683,11 @@
       currentLang = lang;
       document.documentElement.lang = lang === 'zh' ? 'zh-CN' : 'en';
       localStorage.setItem('sp-lang', lang);
-      const btn = document.getElementById('langBtn');
-      btn.textContent = lang === 'zh' ? 'EN' : '中文';
+      if (T[lang]['page.title']) document.title = T[lang]['page.title'];
+      const label = lang === 'zh' ? 'EN' : '中文';
+      document.getElementById('langBtn').textContent = label;
+      const mBtn = document.getElementById('langBtnMobile');
+      if (mBtn) mBtn.textContent = label;
       document.querySelectorAll('[data-i18n]').forEach(el => {
         const key = el.getAttribute('data-i18n');
         if (T[lang][key] !== undefined) {
@@ -1613,6 +1698,18 @@
 
     function toggleLang() {
       applyLang(currentLang === 'zh' ? 'en' : 'zh');
+    }
+
+    // ── Mobile nav ──
+    function toggleMobileNav() {
+      const menu = document.getElementById('mobileNav');
+      const btn = document.getElementById('hamburgerBtn');
+      menu.classList.toggle('open');
+      btn.classList.toggle('open');
+    }
+    function closeMobileNav() {
+      document.getElementById('mobileNav').classList.remove('open');
+      document.getElementById('hamburgerBtn').classList.remove('open');
     }
 
     // ── Init ──
