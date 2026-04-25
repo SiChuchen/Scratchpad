@@ -2,6 +2,7 @@
   import type { DockEntry } from '$lib/types/dock'
   import EntryCard from '$lib/components/EntryCard.svelte'
   import { dockApi } from '$lib/api/dock'
+  import { messages } from '$lib/i18n'
 
   interface Props {
     entries: DockEntry[]
@@ -150,7 +151,7 @@
         <input
           type="text"
           class="search-input"
-          placeholder="搜索内容、标题、文件名..."
+          placeholder={messages.home.search}
           bind:value={searchQuery}
         />
         {#if searchQuery}
@@ -164,14 +165,14 @@
     <div class="new-form">
       <textarea
         class="new-textarea"
-        placeholder="输入文本内容..."
+        placeholder={messages.home.inputHint}
         bind:value={newText}
         onkeydown={handleKeydown}
         rows="3"
       ></textarea>
       <div class="new-form-actions">
-        <button class="form-btn form-cancel" onclick={() => { showNewForm = false; newText = '' }}>取消</button>
-        <button class="form-btn form-submit" onclick={submitText} disabled={!newText.trim()}>添加</button>
+        <button class="form-btn form-cancel" onclick={() => { showNewForm = false; newText = '' }}>{messages.home.cancel}</button>
+        <button class="form-btn form-submit" onclick={submitText} disabled={!newText.trim()}>{messages.home.add}</button>
       </div>
     </div>
   {/if}
@@ -179,12 +180,12 @@
   <div class="home-body" bind:this={bodyEl}>
     {#if entries.length === 0}
       <div class="dock-empty">
-        <p>还没有收纳内容</p>
-        <p class="hint">你可以直接粘贴文字、图片或文件，也可以拖入文件到窗口，或点击左上角 + 新建文本。</p>
+        <p>{messages.home.empty}</p>
+        <p class="hint">{messages.home.emptyHint}</p>
       </div>
     {:else if filtered.length === 0}
       <div class="dock-empty">
-        <p>未找到匹配内容</p>
+        <p>{messages.home.noMatch}</p>
       </div>
     {:else}
       <div class="entry-list" ondragover={onListDragOver}>

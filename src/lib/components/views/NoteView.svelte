@@ -2,6 +2,7 @@
   import type { DockEntry } from '$lib/types/dock'
   import EntryCard from '$lib/components/EntryCard.svelte'
   import { dockApi } from '$lib/api/dock'
+  import { messages } from '$lib/i18n'
 
   interface Props {
     entries: DockEntry[]
@@ -146,7 +147,7 @@
         <input
           type="text"
           class="search-input"
-          placeholder="搜索内容、标题、文件名..."
+          placeholder={messages.note.search}
           bind:value={searchQuery}
         />
         {#if searchQuery}
@@ -160,14 +161,14 @@
     <div class="new-form">
       <textarea
         class="new-textarea"
-        placeholder="输入文本内容..."
+        placeholder={messages.note.inputHint}
         bind:value={newText}
         onkeydown={handleKeydown}
         rows="3"
       ></textarea>
       <div class="new-form-actions">
-        <button class="form-btn form-cancel" onclick={() => { showNewForm = false; newText = '' }}>取消</button>
-        <button class="form-btn form-submit" onclick={submitText} disabled={!newText.trim()}>添加</button>
+        <button class="form-btn form-cancel" onclick={() => { showNewForm = false; newText = '' }}>{messages.note.cancel}</button>
+        <button class="form-btn form-submit" onclick={submitText} disabled={!newText.trim()}>{messages.note.add}</button>
       </div>
     </div>
   {/if}
@@ -175,12 +176,12 @@
   <div class="note-body" bind:this={bodyEl}>
     {#if entries.length === 0}
       <div class="dock-empty">
-        <p>暂无收藏内容</p>
-        <p class="hint">在收纳页点击星标，即可把重要内容放到这里。也可以点击 + 新建一条文本。</p>
+        <p>{messages.note.empty}</p>
+        <p class="hint">{messages.note.emptyHint}</p>
       </div>
     {:else if filtered.length === 0}
       <div class="dock-empty">
-        <p>未找到匹配内容</p>
+        <p>{messages.note.noMatch}</p>
       </div>
     {:else}
       <div class="entry-list" ondragover={onListDragOver}>

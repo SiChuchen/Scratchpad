@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { DockEntry, EntryKind } from '$lib/types/dock'
   import EntryCard from '$lib/components/EntryCard.svelte'
+  import { messages } from '$lib/i18n'
 
   interface Props {
     entries: DockEntry[]
@@ -33,10 +34,10 @@
   )
 
   let filters: { kind: EntryKind | null; label: string }[] = [
-    { kind: null, label: '全部' },
-    { kind: 'text', label: '文本' },
-    { kind: 'image', label: '图片' },
-    { kind: 'file', label: '文件' },
+    { kind: null, label: messages.categories.all },
+    { kind: 'text', label: messages.categories.text },
+    { kind: 'image', label: messages.categories.image },
+    { kind: 'file', label: messages.categories.file },
   ]
 </script>
 
@@ -54,7 +55,7 @@
   <div class="categories-body">
     {#if filtered.length === 0}
       <div class="dock-empty">
-        <p>{activeFilter ? '该类型暂无内容' : '暂无任何内容'}</p>
+        <p>{activeFilter ? messages.categories.emptyFiltered : messages.categories.empty}</p>
       </div>
     {:else}
       <div class="entry-list">
