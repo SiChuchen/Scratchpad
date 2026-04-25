@@ -1,5 +1,44 @@
 use tauri::Manager;
 
+pub fn disable_dwm_transitions(
+    app: &tauri::AppHandle,
+    label: &str,
+) -> Result<(), String> {
+    let window = app
+        .get_webview_window(label)
+        .ok_or_else(|| format!("window not found: {label}"))?;
+
+    #[cfg(target_os = "windows")]
+    {
+        let hwnd = window
+            .hwnd()
+            .map_err(|e| e.to_string())?
+            .0 as windows_sys::Win32::Foundation::HWND;
+
+        use windows_sys::Win32::Graphics::Dwm::{
+            DwmSetWindowAttribute, DWMWA_TRANSITIONS_FORCEDISABLED,
+        };
+
+        let disabled: i32 = 1;
+        let hr = unsafe {
+            DwmSetWindowAttribute(
+                hwnd,
+                DWMWA_TRANSITIONS_FORCEDISABLED as u32,
+                &disabled as *const _ as *const core::ffi::c_void,
+                std::mem::size_of_val(&disabled) as u32,
+            )
+        };
+        if hr < 0 {
+            return Err(format!(
+                "DwmSetWindowAttribute(DWMWA_TRANSITIONS_FORCEDISABLED) failed: 0x{:08x}",
+                hr as u32
+            ));
+        }
+    }
+
+    Ok(())
+}
+
 pub fn apply_circle_region(
     app: &tauri::AppHandle,
     label: &str,

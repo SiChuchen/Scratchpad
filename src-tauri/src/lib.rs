@@ -418,6 +418,10 @@ pub fn run() {
                 let _ = w.set_focus();
             }
 
+            // The minimized tab is a transparent shaped HWND. Disable DWM show/hide
+            // transitions so Windows does not animate a cached rectangular frame.
+            let _ = system::window::disable_dwm_transitions(app.handle(), "minimized-tab");
+
             // Set window icon for all windows (taskbar, alt-tab, etc.)
             let icon_result = (|| -> Option<tauri::image::Image> {
                 if let Ok(icon) = tauri::image::Image::from_path("icons/icon.ico") {

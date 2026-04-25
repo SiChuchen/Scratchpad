@@ -8,7 +8,7 @@ use windows_sys::Win32::UI::Shell::{SetWindowSubclass, DefSubclassProc, RemoveWi
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     GetWindow, GetWindowRect, SetTimer, KillTimer, GetCursorPos, SetWindowPos,
     SetForegroundWindow, GW_CHILD,
-    SWP_NOSIZE, SWP_NOZORDER,
+    SWP_HIDEWINDOW, SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER,
     WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_TIMER,
     WM_CAPTURECHANGED, WM_CANCELMODE, WM_NCDESTROY, WM_ACTIVATE, WM_MOUSEACTIVATE,
 };
@@ -28,6 +28,7 @@ pub const DEFAULT_HIDDEN_RATIO: f32 = 0.0;
 pub const MAX_HIDDEN_RATIO: f32 = 1.0 / 2.0;
 pub const TAB_LOGICAL_SIZE: i32 = 48;
 pub const TAB_EDGE_MARGIN: i32 = 4;
+const TAB_OFFSCREEN_HIDE_COORD: i32 = -32000;
 
 /// Calculate the tab window's physical pixel size from its DPI.
 /// Uses integer arithmetic to avoid floating-point drift: (logical * dpi + 48) / 96
@@ -327,6 +328,20 @@ fn snap_to_edge(hwnd: HWND) {
     reapply_circle_region(hwnd);
 }
 
+fn hide_tab_offscreen(hwnd: HWND) {
+    unsafe {
+        SetWindowPos(
+            hwnd,
+            std::ptr::null_mut(),
+            TAB_OFFSCREEN_HIDE_COORD,
+            TAB_OFFSCREEN_HIDE_COORD,
+            0,
+            0,
+            SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_HIDEWINDOW,
+        );
+    }
+}
+
 #[allow(dead_code)]
 fn calc_current_hidden_ratio(win_rect: &RECT, work_rect: &RECT) -> f32 {
     let tw = (win_rect.right - win_rect.left) as f32;
@@ -400,6 +415,9 @@ pub(crate) fn restore_main_window(app: &tauri::AppHandle) {
         }
     }
 
+    if let Ok(tab_hwnd) = tab.hwnd() {
+        hide_tab_offscreen(tab_hwnd.0 as HWND);
+    }
     let _ = tab.hide();
     let _ = main.show();
     let _ = main.set_focus();
