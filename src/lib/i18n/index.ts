@@ -12,7 +12,7 @@ function getInitialLocale(): 'zh-CN' | 'en' {
 const initial = getInitialLocale()
 
 /** Current locale messages — initialized from system locale, updated via loadLocale(). */
-export const messages: LocaleMessages = locales[initial]
+export const messages: LocaleMessages = JSON.parse(JSON.stringify(locales[initial]))
 
 /** Detect language from navigator.language. Returns 'zh-CN' or 'en'. */
 export function detectLanguage(): string {
