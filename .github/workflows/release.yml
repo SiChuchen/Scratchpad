@@ -84,6 +84,26 @@ jobs:
             }
           }
 
+          # Update latest.json URLs to match renamed assets
+          $latestJsonPath = "$downloadDir/latest.json"
+          if (Test-Path $latestJsonPath) {
+            $latestJson = Get-Content $latestJsonPath -Raw | ConvertFrom-Json
+            foreach ($item in $renamedAssets) {
+              if ($item.old -and $item.new) {
+                foreach ($platform in $latestJson.platforms.PSObject.Properties) {
+                  if ($platform.Value.url -match [regex]::Escape($item.old)) {
+                    $oldUrl = $platform.Value.url
+                    $newUrl = $oldUrl -replace [regex]::Escape($item.old), $item.new
+                    $platform.Value.url = $newUrl
+                    Write-Host "Updated URL: $oldUrl -> $newUrl"
+                  }
+                }
+              }
+            }
+            $latestJson | ConvertTo-Json -Depth 10 | Set-Content $latestJsonPath -Encoding UTF8
+            Write-Host "Updated latest.json with renamed asset URLs"
+          }
+
           # Create portable zip from release exe
           $releaseExe = "src-tauri/target/release/soma-scratchpad.exe"
           if (Test-Path $releaseExe) {
