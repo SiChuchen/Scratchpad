@@ -1,61 +1,185 @@
+<div align="center">
+
 # Soma Scratchpad
 
-**[中文文档](README_ZH.md)**
+**A Windows desktop scratchpad designed for AI-assisted programming**
 
-A lightweight floating dock for Windows that lets you quickly collect and manage text snippets, images, and files.
+<img src="docs/assets/readme/hero.png" alt="Soma Scratchpad" width="520" />
+
+[![GitHub Release](https://img.shields.io/github/v/release/SiChuchen/Scratchpad?style=flat-square&color=6e40c9)](https://github.com/SiChuchen/Scratchpad/releases/latest)
+[![Windows](https://img.shields.io/badge/platform-Windows%2010+-0078D4?style=flat-square)](https://github.com/SiChuchen/Scratchpad/releases/latest)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
+
+[**Download Latest**](https://github.com/SiChuchen/Scratchpad/releases/latest) &nbsp;·&nbsp; [Features](#features) &nbsp;·&nbsp; [Quick Start](#quick-start) &nbsp;·&nbsp; [Development](#development)
+
+Collect text, screenshots, and files with `Ctrl+V`. Copy content or paths in one click. Keep your desktop and Git repo clean.
+
+[中文文档](README_ZH.md)
+
+</div>
+
+---
+
+## Why
+
+When working with AI coding assistants like Claude Code, Codex, Cursor, or ChatGPT, you may run into these problems:
+
+- Error screenshots dumped into the project directory get committed to Git by AI agents
+- Long prompt texts need editing, but chat boxes truncate them — you copy out, edit, paste back, repeat
+- Temporary code snippets, logs, links, and file paths scatter across the desktop and clipboard
+- You want to share an image or file with an AI without polluting your working directory
+
+Soma Scratchpad is a **floating, always-on-top staging area** on your desktop. Drop things in, use them, let them go.
+
+---
 
 ## Features
 
-### Data Collection
+### Text
 
-- **Text Paste** — Copy text and Ctrl+V in the dock to create an entry instantly
-- **Screenshot Paste** — Take a screenshot and Ctrl+V to save it as an image entry
-- **File Paste** — Ctrl+C a file in Explorer, then Ctrl+V to import (doc, xlsx, pdf, etc.)
-- **File Drag & Drop** — Drag files from Explorer directly into the dock window
+Paste text and it gets an auto-generated summary title. Rename it to whatever makes sense — even collapsed, you can tell what each entry contains at a glance. Expand to edit inline, then one-click copy. No window switching needed.
 
-### Content Management
+### Images
 
-- **Dock** — All collected entries, with expand/collapse and rename support
-- **All** — Browse all entries sorted by time
-- **Favorites** — Star important entries for separate management
-- **Auto Titles** — Text entries get auto-generated summary titles; code content is auto-detected
-- **Quick Actions** — Copy content, copy path, favorite, delete
+Take a screenshot and `Ctrl+V` to import it. Images are stored in the scratchpad's own directory. Two copy modes:
 
-### Minimized Tab
+- **Copy image content** — paste directly into chat, docs, etc.
+- **Copy image path** — paste the local path for AI tools to read
 
-- **Circular Tab** — Minimizes to a 48x48 floating circle that snaps to screen edges
-- **Drag & Snap** — Long-press and drag to reposition; snaps to nearest edge on release
-- **Full Visibility** — Tab stays entirely within the screen work area
-- **Multi-Monitor** — Position calculated based on the current monitor's work area
+Images never land in your project directory and won't end up in Git commits.
 
-### Window Controls
+### Files
 
-- **Transparent Floating** — Borderless, always-on-top semi-transparent window
-- **Ctrl+Drag** — Hold Ctrl and drag to move the window
-- **Global Hotkey** — Alt+Shift+V to toggle window visibility
-- **System Tray** — Runs in background with tray icon control
+`Ctrl+C` a file in Explorer, then `Ctrl+V` in the scratchpad to import. You can also drag and drop files directly. Both content copy and path copy are supported.
 
-### Personalization
+### Dock / Favorites / All
 
-- **Themes** — 3 built-in presets, plus follow-system mode
-- **Fonts** — Separate Chinese/English font settings
-- **Window** — Size, position, background color, and transparency
-- **Bilingual** — UI language switchable between Chinese and English
-- **Auto-Start** — Launch on system startup
-- **Auto-Update** — Check for and install new versions
+| View | Purpose |
+|------|---------|
+| **Dock** | Temporary staging area — unpinned entries are cleared on each launch |
+| **Favorites** | Click the star button to keep entries permanently, even across restarts |
+| **All** | Browse all entries by time, with filters for text / images / files |
+
+### Desktop Presence
+
+- **Pin mode** — toggle always-on-top with one click; unpin when you don't need it
+- **Minimize** — collapses to a small cat icon on the screen edge; one click to restore
+- **Global hotkey** — `Alt+Shift+V` to toggle window visibility
+- **System tray** — runs quietly in the background
+
+### Settings
+
+- **Three themes** — Dark Glass / Light Matte / Light Frosted, plus auto-detect system preference
+- **Fonts** — configure Chinese and English fonts separately
+- **Bilingual UI** — switch between Chinese and English instantly
+- **Proxy update** — configure HTTP / SOCKS5 proxy for version checks and downloads
+- **Auto-start** — optionally launch on system startup
+
+---
+
+## Screenshots
+
+<p align="center">
+  <img src="docs/assets/readme/text-edit.png" alt="Text editing" width="240" />
+  &nbsp;&nbsp;
+  <img src="docs/assets/readme/image-file.png" alt="Images and files" width="240" />
+</p>
+
+<p align="center">
+  <em>Text editing &nbsp;&nbsp;|&nbsp;&nbsp; Images &amp; files</em>
+</p>
+
+<p align="center">
+  <img src="docs/assets/readme/categories.png" alt="Category filters" width="240" />
+  &nbsp;&nbsp;
+  <img src="docs/assets/readme/settings.png" alt="Settings" width="240" />
+</p>
+
+<p align="center">
+  <em>All entries with filters &nbsp;&nbsp;|&nbsp;&nbsp; Settings</em>
+</p>
+
+<p align="center">
+  <img src="docs/assets/readme/minimized.png" alt="Minimized" width="240" />
+  &nbsp;&nbsp;
+  <img src="public/app-icon-circle.png" alt="Cat icon" width="80" />
+</p>
+
+<p align="center">
+  <em>Minimized state &nbsp;&nbsp;|&nbsp;&nbsp; Desktop cat</em>
+</p>
+
+---
+
+## Download & Install
+
+Grab the latest release from [GitHub Releases](https://github.com/SiChuchen/Scratchpad/releases/latest):
+
+| File | Description |
+|------|-------------|
+| `Soma Scratchpad_x.x.x_Windows.exe` | NSIS installer — recommended for most users |
+| `Soma Scratchpad_x.x.x_Windows.msi` | MSI installer |
+| `Soma Scratchpad_x.x.x_Windows_Portable.zip` | Portable version — unzip and run |
+
+The app checks for updates automatically. If you're behind a proxy, configure it in Settings.
+
+---
+
+## Quick Start
+
+1. **Paste** — copy text, a screenshot, or a file, then `Ctrl+V` in the scratchpad
+2. **Edit** — expand a text entry to edit inline
+3. **Rename** — click the title to rename, so you can identify entries when collapsed
+4. **Copy** — click the copy button; text copies content, images and files support content or path copy
+5. **Favorite** — click the star button to keep entries permanently in Favorites
+6. **Minimize** — collapse to the desktop cat icon; click to restore
+
+---
+
+## Data Safety
+
+- All data is stored in a `data/` directory next to the application executable — nothing in system directories
+- SQLite local database — nothing is uploaded to the cloud
+- Images and file attachments are organized under `data/assets/YYYY-MM-DD/`
+- To reset, simply delete the `data/` directory
+
+---
 
 ## Tech Stack
 
-- **Frontend**: Svelte 5 + TypeScript + Vite
-- **Backend**: Tauri 2 (Rust), SQLite (rusqlite)
-- **Platform**: Windows 10+
+| Layer | Tech |
+|-------|------|
+| Framework | [Tauri 2](https://v2.tauri.app/) |
+| Backend | Rust |
+| Frontend | [Svelte 5](https://svelte.dev/) + TypeScript + Vite |
+| Storage | SQLite (rusqlite) |
+| Platform | Windows 10+ |
+
+---
 
 ## Development
 
 ```bash
+# Install frontend dependencies
 pnpm install
+
+# Start dev mode (frontend + Rust backend with hot reload)
 pnpm tauri dev
 ```
+
+Frontend type check:
+
+```bash
+pnpm check
+```
+
+Rust tests:
+
+```bash
+cd src-tauri && cargo test
+```
+
+---
 
 ## Build
 
@@ -63,35 +187,18 @@ pnpm tauri dev
 pnpm tauri build
 ```
 
-## Data Storage
+Output goes to `src-tauri/target/release/bundle/`. See `package.json` scripts for all available commands.
 
-Data is stored in a `data/` directory next to the application executable, not on the system drive.
+---
 
-| Path | Content |
-|------|---------|
-| `<exe_dir>/data/scratchpad.sqlite3` | Entry metadata (text content, collapse state, view membership, etc.) |
-| `<exe_dir>/data/assets/YYYY-MM-DD/` | Image and file attachments (organized by date) |
+## Roadmap
 
-To reset, simply delete the `data/` directory.
+- [ ] Richer entry types (link previews, code syntax highlighting)
+- [ ] Keyboard-driven workflow improvements
+- [ ] Cross-platform exploration (macOS / Linux)
 
-## Project Structure
+---
 
-```
-src/                          # Svelte frontend
-  lib/api/dock.ts             # Tauri IPC call layer
-  lib/components/             # UI components
-    entry/                    # Entry cards (text, image, file)
-    views/                    # Views (dock, all, favorites, settings)
-  lib/i18n/                   # Internationalization (locales, types)
-  lib/state/                  # Frontend state management
-  lib/types/                  # TypeScript type definitions
-  App.svelte                  # Main app entry; handles global paste and drag-drop
-  MinimizedApp.svelte         # Minimized tab entry
+## License
 
-src-tauri/src/                # Rust backend
-  models/                     # Data models (entry, preferences)
-  scratchpad/                 # Business logic (storage, assets, preferences, clipboard)
-  storage/                    # SQLite connection and migrations
-  system/                     # System features (tab_controller, window, fonts)
-  lib.rs                      # Tauri command registration
-```
+[MIT](LICENSE)
