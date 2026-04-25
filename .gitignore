@@ -16,3 +16,6 @@ src/lib/**/*.js.map
 
 # Tauri updater signing key (private, never commit)
 tauri-key.pem
+docs/superpowers/
+.codex-run/
+.superpowers/
