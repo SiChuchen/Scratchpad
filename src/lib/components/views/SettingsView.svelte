@@ -131,16 +131,16 @@
     const port = proxyPort.trim()
     const errors: string[] = []
     if (!ip && !port) return errors
-    if (!ip && port) errors.push('请填写代理主机')
-    if (ip && !port) errors.push('请填写代理端口')
-    if (port && !/^\d+$/.test(port)) errors.push('端口必须是数字')
+    if (!ip && port) errors.push(messages.settings.proxyErrHostRequired)
+    if (ip && !port) errors.push(messages.settings.proxyErrPortRequired)
+    if (port && !/^\d+$/.test(port)) errors.push(messages.settings.proxyErrPortNumeric)
     if (port && /^\d+$/.test(port)) {
       const num = parseInt(port, 10)
-      if (num < 1 || num > 65535) errors.push('端口范围应为 1-65535')
+      if (num < 1 || num > 65535) errors.push(messages.settings.proxyErrPortRange)
     }
-    if (ip && /^https?:\/\//i.test(ip)) errors.push('代理主机中不需要填写协议')
-    if (ip && /^socks[45]:\/\//i.test(ip)) errors.push('代理主机中不需要填写协议')
-    if (ip && /[:：]/.test(ip)) errors.push('代理主机中不需要填写端口')
+    if (ip && /^https?:\/\//i.test(ip)) errors.push(messages.settings.proxyErrNoProtocol)
+    if (ip && /^socks[45]:\/\//i.test(ip)) errors.push(messages.settings.proxyErrNoProtocol)
+    if (ip && /[:：]/.test(ip)) errors.push(messages.settings.proxyErrNoPort)
     return errors
   }
 
@@ -228,7 +228,7 @@
       }
     } catch (e) {
       updateStatus = 'error'
-      updateErrorMsg = e instanceof Error ? e.message : '检查失败'
+      updateErrorMsg = e instanceof Error ? e.message : messages.settings.checkFailed
     }
   }
 
@@ -241,7 +241,7 @@
       getCurrentWindow().close()
     } catch (e) {
       updateStatus = 'error'
-      updateErrorMsg = e instanceof Error ? e.message : '更新失败'
+      updateErrorMsg = e instanceof Error ? e.message : messages.settings.updateFailed
     }
   }
 
@@ -250,20 +250,42 @@
 
 <div class="settings-view">
   <div class="settings-header">
-    <button class="back-btn" onclick={onBack}>← 返回</button>
+    <button class="back-btn" onclick={onBack}>{messages.settings.back}</button>
   </div>
 
   <div class="settings-body">
+    <!-- Language section -->
+    <div class="section">
+      <div class="section-header">
+        <span class="section-label">{messages.settings.language} / Language</span>
+      </div>
+      <div class="section-body">
+        <div class="lang-options">
+          <button
+            class="lang-btn"
+            class:active={preferences.language === 'zh-CN'}
+            onclick={() => update({ language: 'zh-CN' })}
+          >中文 (简体)</button>
+          <button
+            class="lang-btn"
+            class:active={preferences.language === 'en'}
+            onclick={() => update({ language: 'en' })}
+          >English</button>
+        </div>
+        <p class="lang-hint">{messages.settings.restartHint}</p>
+      </div>
+    </div>
+
     <!-- Theme section -->
     <div class="section">
       <div class="section-header" onclick={() => themeOpen = !themeOpen}>
-        <span class="section-label">主题</span>
+        <span class="section-label">{messages.settings.theme}</span>
         <span class="chevron" class:open={themeOpen}>▾</span>
       </div>
       {#if themeOpen}
         <div class="section-body">
           <div class="row">
-            <span class="label">跟随系统</span>
+            <span class="label">{messages.settings.followSystem}</span>
             <div class="toggle" class:active={themeAuto} onclick={toggleThemeAuto}>
               <div class="toggle-knob"></div>
             </div>
@@ -289,18 +311,18 @@
     <!-- Font section -->
     <div class="section">
       <div class="section-header" onclick={() => fontOpen = !fontOpen}>
-        <span class="section-label">字体</span>
+        <span class="section-label">{messages.settings.font}</span>
         <span class="chevron" class:open={fontOpen}>▾</span>
       </div>
       {#if fontOpen}
         <div class="section-body">
           <div class="row">
-            <span class="label">中文字体</span>
+            <span class="label">{messages.settings.zhFont}</span>
             <div class="font-picker">
               <input
                 type="text"
                 class="font-input"
-                placeholder="搜索中文字体..."
+                placeholder={messages.settings.zhFontSearch}
                 value={zhFontDirty ? zhFontQuery : preferences.fontFamilyZh}
                 onfocus={() => { zhFontQuery = ''; zhFontDirty = false; zhFontOpen = true }}
                 onblur={() => setTimeout(() => { zhFontOpen = false }, 150)}
@@ -320,12 +342,12 @@
             </div>
           </div>
           <div class="row">
-            <span class="label">英文字体</span>
+            <span class="label">{messages.settings.enFont}</span>
             <div class="font-picker">
               <input
                 type="text"
                 class="font-input"
-                placeholder="搜索英文字体..."
+                placeholder={messages.settings.enFontSearch}
                 value={enFontDirty ? enFontQuery : preferences.fontFamilyEn}
                 onfocus={() => { enFontQuery = ''; enFontDirty = false; enFontOpen = true }}
                 onblur={() => setTimeout(() => { enFontOpen = false }, 150)}
@@ -351,34 +373,34 @@
     <!-- Update section -->
     <div class="section">
       <div class="section-header" onclick={() => updateOpen = !updateOpen}>
-        <span class="section-label">更新</span>
+        <span class="section-label">{messages.settings.update}</span>
         <span class="chevron" class:open={updateOpen}>▾</span>
       </div>
       {#if updateOpen}
         <div class="section-body">
-          <p class="section-subtitle">代理仅用于检查和下载更新，不影响本地内容收纳。</p>
+          <p class="section-subtitle">{messages.settings.proxyNote}</p>
           <div class="row proxy-row">
-            <span class="label">代理类型</span>
+            <span class="label">{messages.settings.proxyType}</span>
             <select class="proxy-select" bind:value={proxyType}>
               <option value="http">HTTP</option>
               <option value="socks5">SOCKS5</option>
             </select>
           </div>
           <div class="row proxy-row">
-            <span class="label">代理主机</span>
+            <span class="label">{messages.settings.proxyHost}</span>
             <input
               type="text"
               class="proxy-input"
-              placeholder="例如 127.0.0.1"
+              placeholder={messages.settings.proxyHostExample}
               bind:value={proxyIp}
             />
           </div>
           <div class="row proxy-row">
-            <span class="label">代理端口</span>
+            <span class="label">{messages.settings.proxyPort}</span>
             <input
               type="text"
               class="proxy-input proxy-port"
-              placeholder="例如 11809"
+              placeholder={messages.settings.proxyPortExample}
               bind:value={proxyPort}
             />
           </div>
@@ -392,8 +414,8 @@
           <div class="row proxy-actions">
             <span class="label"></span>
             <div class="proxy-btns">
-              <button class="proxy-save-btn" onclick={saveProxy}>保存代理</button>
-              <button class="proxy-clear-btn" onclick={clearProxy}>清除</button>
+              <button class="proxy-save-btn" onclick={saveProxy}>{messages.settings.saveProxy}</button>
+              <button class="proxy-clear-btn" onclick={clearProxy}>{messages.settings.clear}</button>
             </div>
           </div>
           <div class="about-section">
@@ -405,20 +427,20 @@
             </div>
             <div class="update-row">
               {#if updateStatus === 'idle'}
-                <button class="update-btn" onclick={handleCheckUpdate}>检查更新</button>
+                <button class="update-btn" onclick={handleCheckUpdate}>{messages.settings.checkUpdate}</button>
               {:else if updateStatus === 'checking'}
-                <span class="update-status">正在检查...</span>
+                <span class="update-status">{messages.settings.checking}</span>
               {:else if updateStatus === 'up-to-date'}
-                <span class="update-status ok">已是最新版本</span>
-                <button class="update-btn" onclick={() => { updateStatus = 'idle' }}>重新检查</button>
+                <span class="update-status ok">{messages.settings.upToDate}</span>
+                <button class="update-btn" onclick={() => { updateStatus = 'idle' }}>{messages.settings.recheck}</button>
               {:else if updateStatus === 'available'}
-                <span class="update-status available">发现新版本</span>
-                <button class="update-btn install-btn" onclick={handleInstallUpdate}>立即更新</button>
+                <span class="update-status available">{messages.settings.newVersion}</span>
+                <button class="update-btn install-btn" onclick={handleInstallUpdate}>{messages.settings.updateNow}</button>
               {:else if updateStatus === 'downloading'}
-                <span class="update-status">正在下载并安装...</span>
+                <span class="update-status">{messages.settings.downloading}</span>
               {:else if updateStatus === 'error'}
                 <span class="update-status err">{updateErrorMsg}</span>
-                <button class="update-btn" onclick={handleCheckUpdate}>重试</button>
+                <button class="update-btn" onclick={handleCheckUpdate}>{messages.settings.recheck}</button>
               {/if}
             </div>
           </div>
@@ -429,13 +451,13 @@
     <!-- System section -->
     <div class="section">
       <div class="section-header" onclick={() => systemOpen = !systemOpen}>
-        <span class="section-label">系统</span>
+        <span class="section-label">{messages.settings.system}</span>
         <span class="chevron" class:open={systemOpen}>▾</span>
       </div>
       {#if systemOpen}
         <div class="section-body">
           <div class="row">
-            <span class="label">开机自启</span>
+            <span class="label">{messages.settings.launchOnStartup}</span>
             <div class="toggle" class:active={preferences.launchOnStartup}
                  onclick={() => update({ launchOnStartup: !preferences.launchOnStartup })}>
               <div class="toggle-knob"></div>
@@ -448,13 +470,13 @@
     <!-- Advanced section -->
     <div class="section">
       <div class="section-header" onclick={() => advancedOpen = !advancedOpen}>
-        <span class="section-label">高级</span>
+        <span class="section-label">{messages.settings.advanced}</span>
         <span class="chevron" class:open={advancedOpen}>▾</span>
       </div>
       {#if advancedOpen}
         <div class="section-body">
           <div class="row">
-            <span class="label">专家模式</span>
+            <span class="label">{messages.settings.expertMode}</span>
             <div class="toggle" class:active={expertMode} onclick={() => expertMode = !expertMode}>
               <div class="toggle-knob"></div>
             </div>
@@ -464,13 +486,13 @@
               {#each Object.entries(TOKEN_SCHEMA) as [key, schema]}
                 {@const current = preferences.themeOverrides[key] || ''}
                 <div class="expert-row">
-                  <span class="expert-label">{schema.label}</span>
+                  <span class="expert-label">{messages.expert[key]}</span>
                   <input
                     class="expert-input"
                     class:invalid={expertErrors[key]}
                     type="text"
                     value={current}
-                    placeholder="使用预设值"
+                    placeholder={messages.settings.usePreset}
                     onblur={(e) => handleExpertOverride(key, (e.target as HTMLInputElement).value)}
                     onkeydown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
                   />
@@ -488,10 +510,10 @@
     <!-- Danger zone -->
     <div class="section danger-section">
       <div class="section-header">
-        <span class="section-label danger-label">危险操作</span>
+        <span class="section-label danger-label">{messages.settings.dangerZone}</span>
       </div>
       <div class="section-body">
-        <button class="reset-btn" onclick={handleReset}>重置全部设置</button>
+        <button class="reset-btn" onclick={handleReset}>{messages.settings.resetAll}</button>
       </div>
     </div>
   </div>
@@ -505,6 +527,45 @@
     padding: 0.5rem 0.65rem;
     overflow: hidden;
     min-height: 0;
+  }
+
+  /* Language section */
+  .lang-options {
+    display: flex;
+    gap: 0.3rem;
+    padding: 0.3rem 0;
+  }
+
+  .lang-btn {
+    flex: 1;
+    padding: 0.3rem 0.5rem;
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md, 0.35rem);
+    background: transparent;
+    color: var(--text-muted);
+    font-size: var(--font-sm, 0.65rem);
+    cursor: pointer;
+    font-family: inherit;
+    transition: border-color 0.15s, background 0.15s, color 0.15s;
+  }
+
+  .lang-btn:hover:not(.active) {
+    border-color: var(--border-emphasis);
+    color: var(--text-primary);
+  }
+
+  .lang-btn.active {
+    border-color: var(--color-primary);
+    background: var(--color-primary-faint);
+    color: var(--color-primary);
+    font-weight: 500;
+  }
+
+  .lang-hint {
+    font-size: var(--font-xs, 0.5rem);
+    color: var(--text-faint);
+    margin: 0;
+    padding-top: 0.15rem;
   }
 
   .settings-header {
