@@ -9,20 +9,27 @@ function getInitialLocale(): 'zh-CN' | 'en' {
   return 'en'
 }
 
-const initial = getInitialLocale()
+function cloneLocale(lang: string): LocaleMessages {
+  const locale = locales[lang as keyof typeof locales] || locales.en
+  return JSON.parse(JSON.stringify(locale))
+}
 
-/** Current locale messages — initialized from system locale, updated via loadLocale(). */
-export const messages: LocaleMessages = JSON.parse(JSON.stringify(locales[initial]))
+/** Current locale messages. Mutated by loadLocale(). */
+export const messages: LocaleMessages = cloneLocale(getInitialLocale())
 
 /** Detect language from navigator.language. Returns 'zh-CN' or 'en'. */
 export function detectLanguage(): string {
   return getInitialLocale()
 }
 
-/** Load a locale into the exported messages object. */
+/** Incremented each time loadLocale() is called. */
+export let localeVersion = 0
+
+/** Load a locale into the messages object. */
 export function loadLocale(lang: string): void {
-  const locale: LocaleMessages = locales[lang as keyof typeof locales] || locales.en
+  const locale = cloneLocale(lang)
   for (const key of Object.keys(locale) as (keyof LocaleMessages)[]) {
     ;(messages as unknown as Record<string, unknown>)[key] = locale[key]
   }
+  localeVersion++
 }

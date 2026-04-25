@@ -16,8 +16,10 @@
   let currentView = $state<DockView>('home')
   let homeEntries = $state<DockEntry[]>([])
   let noteEntries = $state<DockEntry[]>([])
+  let langKey = $state(0)
   let preferences = $state<DockPreferences | null>(null)
   let toast = $state<{ text: string; kind: 'success' | 'error'; undo?: () => void; actionLabel?: string } | null>(null)
+  let confirmDialog = $state<{ message: string; onConfirm: () => void; onCancel: () => void } | null>(null)
   let toastTimer: ReturnType<typeof setTimeout> | null = null
 
   // Reactive system dark mode — separate from main async onMount
@@ -37,6 +39,7 @@
         dockApi.setPreferences(preferences)
       }
       loadLocale(preferences.language)
+      langKey++
     } catch (e) {
       showToast(`${messages.toast.loadFailed}: ${formatError(e)}`, 'error')
     }
@@ -300,7 +303,14 @@
 
   async function updatePreferences(next: DockPreferences) {
     const prev = preferences
+    const prevLang = prev?.language ?? ''
     preferences = next  // immediate visual effect via $effect
+
+    // Detect if language changed — apply immediately
+    if (prevLang && prevLang !== next.language) {
+      loadLocale(next.language)
+      langKey++
+    }
 
     // Detect if system settings changed (need immediate save + OS sync)
     const autostartChanged = prev?.launchOnStartup !== next.launchOnStartup
@@ -574,6 +584,7 @@
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="app-shell" class:ctrl-drag={ctrlHeld} onmousedown={handleAppPointerDown}>
+  {#key langKey}
   <TopBar {currentView} onNavigate={navigate} onToggleSettings={toggleSettings} onMinimize={minimize} />
 
   {#if currentView === 'home'}
@@ -620,7 +631,7 @@
     onBack={() => navigate('home')}
   />
 {/if}
-</div>
+{/key}
 
 {#if toast}
   <div class="toast" class:toast-error={toast.kind === 'error'}>
@@ -628,6 +639,18 @@
     {#if toast.undo}
       <button class="toast-undo" onclick={toast.undo}>{toast.actionLabel || messages.toast.undo}</button>
     {/if}
+  </div>
+{/if}
+
+{#if confirmDialog}
+  <div class="confirm-backdrop" onclick={confirmDialog.onCancel}>
+    <div class="confirm-dialog">
+      <p class="confirm-msg">{confirmDialog.message}</p>
+      <div class="confirm-actions">
+        <button class="confirm-btn cancel" onclick={confirmDialog.onCancel}>{messages.settings.restartLater}</button>
+        <button class="confirm-btn ok" onclick={confirmDialog.onConfirm}>{messages.settings.restartNow}</button>
+      </div>
+    </div>
   </div>
 {/if}
 
@@ -643,12 +666,14 @@
     </div>
   </div>
 {/if}
+</div>
 
 <style>
   .app-shell {
     width: 100vw;
     height: 100vh;
     min-width: 240px;
+    position: relative;
     display: flex;
     flex-direction: column;
     background: var(--surface-0);
@@ -736,5 +761,76 @@
     color: var(--color-primary);
     font-size: var(--font-sm, 0.75rem);
     font-weight: 500;
+  }
+
+  .confirm-backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.4);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 300;
+  }
+
+  .confirm-dialog {
+    background: var(--surface-0);
+    border: 1px solid var(--border-emphasis);
+    border-radius: var(--radius-lg, 0.5rem);
+    padding: 1rem 1.1rem 0.8rem;
+    min-width: 220px;
+    max-width: 300px;
+    box-shadow: var(--shadow-default);
+    backdrop-filter: blur(24px);
+    animation: dialog-in 0.15s ease-out;
+  }
+
+  .confirm-msg {
+    margin: 0 0 0.8rem;
+    font-size: 0.8rem;
+    color: var(--text-primary);
+    line-height: 1.5;
+  }
+
+  .confirm-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.4rem;
+  }
+
+  .confirm-btn {
+    padding: 0.3rem 0.7rem;
+    border-radius: var(--radius-md, 0.35rem);
+    font-size: 0.72rem;
+    cursor: pointer;
+    font-family: inherit;
+    border: 1px solid var(--border-default);
+    transition: background 0.15s, border-color 0.15s;
+  }
+
+  .confirm-btn.cancel {
+    background: transparent;
+    color: var(--text-muted);
+  }
+
+  .confirm-btn.cancel:hover {
+    border-color: var(--border-emphasis);
+    color: var(--text-primary);
+  }
+
+  .confirm-btn.ok {
+    background: var(--color-primary-faint);
+    border-color: var(--color-primary);
+    color: var(--color-primary);
+    font-weight: 500;
+  }
+
+  .confirm-btn.ok:hover {
+    opacity: 0.85;
+  }
+
+  @keyframes dialog-in {
+    from { opacity: 0; transform: scale(0.95); }
+    to { opacity: 1; transform: scale(1); }
   }
 </style>

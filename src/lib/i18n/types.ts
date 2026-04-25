@@ -92,6 +92,8 @@ export interface LocaleMessages {
     resetAll: string
     language: string
     restartHint: string
+    restartNow: string
+    restartLater: string
     proxyErrHostRequired: string
     proxyErrPortRequired: string
     proxyErrPortNumeric: string
