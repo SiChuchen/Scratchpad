@@ -9,6 +9,7 @@
   import { dockApi } from '$lib/api/dock'
   import { insertHomeEntry } from '$lib/state/dock'
   import { computeThemeTokens } from '$lib/themes/engine'
+  import { messages, loadLocale, detectLanguage } from '$lib/i18n'
 
   import type { DockEntry, DockPreferences, DockView } from '$lib/types/dock'
 
@@ -29,8 +30,15 @@
         dockApi.listEntries('note'),
         dockApi.getPreferences(),
       ])
+      // Resolve language
+      if (!preferences.language) {
+        const detected = detectLanguage()
+        preferences = { ...preferences, language: detected }
+        dockApi.setPreferences(preferences)
+      }
+      loadLocale(preferences.language)
     } catch (e) {
-      showToast(`加载失败: ${formatError(e)}`, 'error')
+      showToast(`${messages.toast.loadFailed}: ${formatError(e)}`, 'error')
     }
 
     window.addEventListener('paste', handleGlobalPaste as unknown as EventListener)
@@ -73,7 +81,7 @@
       const proxyUrl = proxy ? (proxy.startsWith('http') ? proxy : `http://${proxy}`) : undefined
       const update = await check({ proxy: proxyUrl })
       if (update?.available) {
-        showToast(`发现新版本 v${update.version}`, 'success', () => installUpdate(update), '更新')
+        showToast(`${messages.toast.newVersion} v${update.version}`, 'success', () => installUpdate(update), messages.settings.updateNow)
       }
     } catch {
       // update check is not critical
@@ -81,16 +89,16 @@
   }
 
   async function installUpdate(update: any) {
-    showToast('正在下载更新...', 'success')
+    showToast(messages.toast.downloading, 'success')
     try {
       await update.downloadAndInstall()
-      showToast('更新完成，即将重启...', 'success')
+      showToast(messages.toast.updateDone, 'success')
       setTimeout(async () => {
         const { getCurrentWindow } = await import('@tauri-apps/api/window')
         getCurrentWindow().close()
       }, 1500)
     } catch (e) {
-      showToast(`更新失败: ${formatError(e)}`, 'error')
+      showToast(`${messages.toast.updateFailed}: ${formatError(e)}`, 'error')
     }
   }
 
@@ -116,7 +124,7 @@
       const created = await dockApi.createText('home', content, 'manual')
       homeEntries = insertHomeEntry(homeEntries, created)
     } catch (e) {
-      showToast(`创建失败: ${formatError(e)}`, 'error')
+      showToast(`${messages.toast.createFailed}: ${formatError(e)}`, 'error')
     }
   }
 
@@ -146,7 +154,7 @@
       noteEntries = noteEntries.map((entry) =>
         entry.id === entryId ? { ...entry, collapsed: previousCollapsed } : entry,
       )
-      showToast(`操作失败: ${formatError(e)}`, 'error')
+      showToast(`${messages.toast.operationFailed}: ${formatError(e)}`, 'error')
     } finally {
       collapsePendingIds.delete(entryId)
     }
@@ -172,7 +180,7 @@
       try {
         await dockApi.removeFromView(view, entryId)
       } catch (e) {
-        showToast(`删除失败: ${formatError(e)}`, 'error')
+        showToast(`${messages.toast.deleteFailed}: ${formatError(e)}`, 'error')
       }
     }
 
@@ -193,7 +201,7 @@
     }
 
     // Show toast with undo, auto-commit after 3s
-    showToast('已删除 1 条内容', 'success', undoDelete)
+    showToast(messages.toast.deleted, 'success', undoDelete)
     toastTimer = setTimeout(() => {
       commitDelete()
     }, 3000)
@@ -221,7 +229,7 @@
         noteEntries = await dockApi.listEntries('note')
       }
     } catch (e) {
-      showToast(`收藏操作失败: ${formatError(e)}`, 'error')
+      showToast(`${messages.toast.favoriteFailed}: ${formatError(e)}`, 'error')
     }
   }
 
@@ -235,7 +243,7 @@
         e.id === id ? { ...e, content } : e,
       )
     } catch (e) {
-      showToast(`编辑失败: ${formatError(e)}`, 'error')
+      showToast(`${messages.toast.editFailed}: ${formatError(e)}`, 'error')
     }
   }
 
@@ -249,25 +257,25 @@
         e.id === id ? { ...e, title } : e,
       )
     } catch (e) {
-      showToast(`重命名失败: ${formatError(e)}`, 'error')
+      showToast(`${messages.toast.renameFailed}: ${formatError(e)}`, 'error')
     }
   }
 
   async function copyContent(content: string) {
     try {
       await navigator.clipboard.writeText(content)
-      showToast('已复制')
+      showToast(messages.toast.copied)
     } catch {
-      showToast('复制失败', 'error')
+      showToast(messages.toast.copyFailed, 'error')
     }
   }
 
   async function copyPath(path: string) {
     try {
       await navigator.clipboard.writeText(path)
-      showToast('已复制路径')
+      showToast(messages.toast.copiedPath)
     } catch {
-      showToast('复制失败', 'error')
+      showToast(messages.toast.copyFailed, 'error')
     }
   }
 
@@ -278,7 +286,7 @@
       const created = await dockApi.createText('note', content, 'manual')
       noteEntries = [{ ...created, inNote: true, inHome: false }, ...noteEntries]
     } catch (e) {
-      showToast(`创建失败: ${formatError(e)}`, 'error')
+      showToast(`${messages.toast.createFailed}: ${formatError(e)}`, 'error')
     }
   }
 
@@ -315,7 +323,7 @@
           // autostart plugin may not be available in dev
         }
       } catch (e) {
-        showToast(`保存失败: ${formatError(e)}`, 'error')
+        showToast(`${messages.toast.saveFailed}: ${formatError(e)}`, 'error')
       }
     } else {
       // Debounce appearance/theme changes (300ms)
@@ -323,7 +331,7 @@
         try {
           await dockApi.setPreferences(preferences!)
         } catch (e) {
-          showToast(`保存失败: ${formatError(e)}`, 'error')
+          showToast(`${messages.toast.saveFailed}: ${formatError(e)}`, 'error')
         }
         saveTimer = null
       }, 300)
@@ -374,7 +382,7 @@
     try {
       await invoke('ipc_dock_minimize_to_tab')
     } catch (e) {
-      showToast(`最小化失败: ${formatError(e)}`, 'error')
+      showToast(`${messages.toast.minimizeFailed}: ${formatError(e)}`, 'error')
     }
   }
 
@@ -426,9 +434,9 @@
         } else {
           homeEntries = insertHomeEntry(homeEntries, { ...created, inHome: true })
         }
-        showToast('已收纳图片')
+        showToast(messages.toast.storedImage)
       } catch (e) {
-        showToast(`粘贴失败: ${formatError(e)}`, 'error')
+        showToast(`${messages.toast.pasteFailed}: ${formatError(e)}`, 'error')
       }
       return
     }
@@ -462,9 +470,9 @@
             }
           }
         }
-        showToast(`已收纳 ${files.length} 个文件`)
+        showToast(messages.toast.storedFiles.replace('{n}', String(files.length)))
       } catch (e) {
-        showToast(`导入失败: ${formatError(e)}`, 'error')
+        showToast(`${messages.toast.importFailed}: ${formatError(e)}`, 'error')
       }
       return
     }
@@ -481,9 +489,9 @@
           const created = await dockApi.createText('home', pastedText, 'manual')
           homeEntries = insertHomeEntry(homeEntries, created)
         }
-        showToast('已收纳文本')
+        showToast(messages.toast.storedText)
       } catch (e) {
-        showToast(`粘贴失败: ${formatError(e)}`, 'error')
+        showToast(`${messages.toast.pasteFailed}: ${formatError(e)}`, 'error')
       }
     }
   }
@@ -499,10 +507,10 @@
           const created = await dockApi.createText('home', text, 'manual')
           homeEntries = insertHomeEntry(homeEntries, created)
         }
-        showToast('已收纳文本')
+        showToast(messages.toast.storedText)
       }
     } catch {
-      showToast('粘贴失败', 'error')
+      showToast(messages.toast.pasteFailed, 'error')
     }
   }
 
@@ -519,12 +527,12 @@
       }
       const fileNames = paths.map((p) => p.split(/[\\/]/).pop()).filter(Boolean)
       if (paths.length === 1 && fileNames[0]) {
-        showToast(`已收纳文件：${fileNames[0]}`)
+        showToast(messages.toast.storedFileNamed.replace('{name}', fileNames[0]))
       } else {
-        showToast(`已收纳 ${paths.length} 个文件`)
+        showToast(messages.toast.storedFiles.replace('{n}', String(paths.length)))
       }
     } catch (e) {
-      showToast(`导入失败: ${formatError(e)}`, 'error')
+      showToast(`${messages.toast.importFailed}: ${formatError(e)}`, 'error')
     }
   }
 
@@ -557,7 +565,7 @@
   function formatError(error: unknown): string {
     if (error instanceof Error && error.message) return error.message
     if (typeof error === 'string') return error
-    return '未知错误'
+    return messages.toast.unknownError
   }
 </script>
 
@@ -618,7 +626,7 @@
   <div class="toast" class:toast-error={toast.kind === 'error'}>
     <span>{toast.text}</span>
     {#if toast.undo}
-      <button class="toast-undo" onclick={toast.undo}>{toast.actionLabel || '撤销'}</button>
+      <button class="toast-undo" onclick={toast.undo}>{toast.actionLabel || messages.toast.undo}</button>
     {/if}
   </div>
 {/if}
@@ -631,7 +639,7 @@
         <polyline points="7 10 12 15 17 10" />
         <line x1="12" y1="15" x2="12" y2="3" />
       </svg>
-      <span>{dragOverlay.count > 1 ? `释放以收纳 ${dragOverlay.count} 个文件` : '释放以收纳文件'}</span>
+      <span>{dragOverlay.count > 1 ? messages.toast.dragDropFiles.replace('{n}', String(dragOverlay.count)) : messages.toast.dragDropFile}</span>
     </div>
   </div>
 {/if}
