@@ -1,3 +1,6 @@
+use std::fs;
+use std::path::Path;
+
 use chrono::Utc;
 use rusqlite::{params, Connection, Row};
 
@@ -180,6 +183,19 @@ fn membership_count(conn: &Connection, entry_id: &str) -> StorageResult<i64> {
 
 fn delete_orphaned_entry_internal(conn: &Connection, entry_id: &str) -> StorageResult<bool> {
     if membership_count(conn, entry_id)? == 0 {
+        // Clean up associated file on disk before removing the DB row
+        let file_path: Option<String> = conn
+            .query_row(
+                "SELECT file_path FROM entries WHERE id = ?1",
+                params![entry_id],
+                |row| row.get(0),
+            )
+            .ok()
+            .flatten();
+        if let Some(ref path) = file_path {
+            let _ = fs::remove_file(Path::new(path));
+        }
+
         let rows = conn.execute("DELETE FROM entries WHERE id = ?1", params![entry_id])?;
         return Ok(rows > 0);
     }
@@ -897,5 +913,109 @@ mod repository_tests {
         let result = rename_entry(&mut conn, "missing-entry", Some("title"));
 
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn removing_last_view_deletes_associated_file_from_disk() {
+        let dir = std::env::temp_dir().join("scratchpad_test_file_cleanup");
+        std::fs::create_dir_all(&dir).unwrap();
+        let file_path = dir.join("test-image.png");
+        std::fs::write(&file_path, b"fake png content").unwrap();
+        assert!(file_path.exists());
+
+        let mut conn = Connection::open_in_memory().unwrap();
+        ensure_dock_schema(&mut conn).unwrap();
+
+        let path_str = file_path.to_string_lossy().to_string();
+        conn.execute(
+            "INSERT INTO entries (
+                id, kind, content, file_path, file_name, mime_type,
+                width, height, size_bytes, collapsed, source, created_at, updated_at
+            ) VALUES ('de-file-1', 'image', NULL, ?1, 'test-image.png', 'image/png',
+                       640, 480, 1024, 0, 'manual', '2026-04-26T00:00:00Z', '2026-04-26T00:00:00Z')",
+            params![path_str],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO home_entries (entry_id, created_at) VALUES ('de-file-1', '2026-04-26T00:00:00Z')",
+            [],
+        ).unwrap();
+
+        remove_from_view(&mut conn, EntryView::Home, "de-file-1").unwrap();
+
+        // Entry should be gone from DB
+        let rows: i64 = conn
+            .query_row("SELECT COUNT(*) FROM entries", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(rows, 0);
+
+        // File should be gone from disk
+        assert!(!file_path.exists(), "file should have been deleted from disk");
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn keeping_entry_in_another_view_preserves_file_on_disk() {
+        let dir = std::env::temp_dir().join("scratchpad_test_file_preserve");
+        std::fs::create_dir_all(&dir).unwrap();
+        let file_path = dir.join("shared-doc.pdf");
+        std::fs::write(&file_path, b"fake pdf content").unwrap();
+
+        let mut conn = Connection::open_in_memory().unwrap();
+        ensure_dock_schema(&mut conn).unwrap();
+
+        let path_str = file_path.to_string_lossy().to_string();
+        conn.execute(
+            "INSERT INTO entries (
+                id, kind, content, file_path, file_name, mime_type,
+                width, height, size_bytes, collapsed, source, created_at, updated_at
+            ) VALUES ('de-file-2', 'file', NULL, ?1, 'shared-doc.pdf', 'application/pdf',
+                       NULL, NULL, 2048, 0, 'manual', '2026-04-26T00:00:00Z', '2026-04-26T00:00:00Z')",
+            params![path_str],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO home_entries (entry_id, created_at) VALUES ('de-file-2', '2026-04-26T00:00:00Z')",
+            [],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO note_entries (entry_id, created_at) VALUES ('de-file-2', '2026-04-26T00:00:00Z')",
+            [],
+        ).unwrap();
+
+        // Remove from home only — entry still in note, file must survive
+        remove_from_view(&mut conn, EntryView::Home, "de-file-2").unwrap();
+
+        let rows: i64 = conn
+            .query_row("SELECT COUNT(*) FROM entries", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(rows, 1, "entry should still exist in DB");
+
+        assert!(file_path.exists(), "file should still exist on disk");
+
+        // Now remove from note too — file should be cleaned up
+        remove_from_view(&mut conn, EntryView::Note, "de-file-2").unwrap();
+
+        let rows: i64 = conn
+            .query_row("SELECT COUNT(*) FROM entries", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(rows, 0, "entry should be fully removed");
+
+        assert!(!file_path.exists(), "file should be deleted after last view removed");
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn text_entry_deletion_works_without_file() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        ensure_dock_schema(&mut conn).unwrap();
+
+        let entry = create_text_entry(&mut conn, EntryView::Home, "hello", "manual").unwrap();
+        remove_from_view(&mut conn, EntryView::Home, &entry.id).unwrap();
+
+        let rows: i64 = conn
+            .query_row("SELECT COUNT(*) FROM entries", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(rows, 0, "text entry should be removed without error");
     }
 }
