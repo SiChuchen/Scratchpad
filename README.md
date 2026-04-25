@@ -1,93 +1,97 @@
 # Soma Scratchpad
 
-一个轻量级的 Windows 桌面悬浮暂存坞，用于快速收集和管理文本片段、图片和文件。
+**[中文文档](README_ZH.md)**
 
-## 功能
+A lightweight floating dock for Windows that lets you quickly collect and manage text snippets, images, and files.
 
-### 数据收集
+## Features
 
-- **文本粘贴** — 复制文字后在 dock 窗口中 Ctrl+V 直接创建条目
-- **截图粘贴** — 截图后 Ctrl+V 自动保存为图片条目
-- **文件粘贴** — 在资源管理器中 Ctrl+C 复制文件后 Ctrl+V 导入（doc、xlsx、pdf 等）
-- **文件拖入** — 从资源管理器直接拖拽文件到 dock 窗口导入
+### Data Collection
 
-### 内容管理
+- **Text Paste** — Copy text and Ctrl+V in the dock to create an entry instantly
+- **Screenshot Paste** — Take a screenshot and Ctrl+V to save it as an image entry
+- **File Paste** — Ctrl+C a file in Explorer, then Ctrl+V to import (doc, xlsx, pdf, etc.)
+- **File Drag & Drop** — Drag files from Explorer directly into the dock window
 
-- **收纳** — 日常收集的所有条目，支持展开/折叠、重命名
-- **全部** — 按时间排序浏览所有条目
-- **收藏** — 收藏重要条目，独立管理
-- **自动标题** — 文本条目自动生成摘要标题，自动检测代码内容
-- **快速操作** — 复制内容、复制路径、收藏、删除
+### Content Management
 
-### 最小化标签
+- **Dock** — All collected entries, with expand/collapse and rename support
+- **All** — Browse all entries sorted by time
+- **Favorites** — Star important entries for separate management
+- **Auto Titles** — Text entries get auto-generated summary titles; code content is auto-detected
+- **Quick Actions** — Copy content, copy path, favorite, delete
 
-- **圆形标签** — 最小化后变为 48x48 圆形悬浮图标，贴近屏幕边缘
-- **拖拽吸附** — 长按拖动到任意边缘松手自动吸附
-- **完整露出** — 标签完整显示在屏幕工作区内，不会被遮挡
-- **多显示器** — 基于当前显示器工作区计算位置
+### Minimized Tab
 
-### 窗口控制
+- **Circular Tab** — Minimizes to a 48x48 floating circle that snaps to screen edges
+- **Drag & Snap** — Long-press and drag to reposition; snaps to nearest edge on release
+- **Full Visibility** — Tab stays entirely within the screen work area
+- **Multi-Monitor** — Position calculated based on the current monitor's work area
 
-- **透明悬浮** — 无边框、始终置顶的半透明窗口
-- **Ctrl+拖动** — 按住 Ctrl 键拖动窗口位置
-- **全局快捷键** — Alt+Shift+V 快速切换窗口显示
-- **系统托盘** — 后台运行，通过托盘图标控制显示
+### Window Controls
 
-### 个性化设置
+- **Transparent Floating** — Borderless, always-on-top semi-transparent window
+- **Ctrl+Drag** — Hold Ctrl and drag to move the window
+- **Global Hotkey** — Alt+Shift+V to toggle window visibility
+- **System Tray** — Runs in background with tray icon control
 
-- **主题** — 内置 3 套主题预设，支持跟随系统
-- **字体** — 中/英文字体分别设置
-- **窗口** — 大小、位置、背景颜色和透明度
-- **开机自启** — 支持开机自动启动
-- **自动更新** — 支持检查和安装新版本
+### Personalization
 
-## 技术栈
+- **Themes** — 3 built-in presets, plus follow-system mode
+- **Fonts** — Separate Chinese/English font settings
+- **Window** — Size, position, background color, and transparency
+- **Bilingual** — UI language switchable between Chinese and English
+- **Auto-Start** — Launch on system startup
+- **Auto-Update** — Check for and install new versions
 
-- **前端**: Svelte 5 + TypeScript + Vite
-- **后端**: Tauri 2 (Rust)，SQLite (rusqlite)
-- **平台**: Windows 10+
+## Tech Stack
 
-## 开发
+- **Frontend**: Svelte 5 + TypeScript + Vite
+- **Backend**: Tauri 2 (Rust), SQLite (rusqlite)
+- **Platform**: Windows 10+
+
+## Development
 
 ```bash
 pnpm install
 pnpm tauri dev
 ```
 
-## 构建
+## Build
 
 ```bash
 pnpm tauri build
 ```
 
-## 数据存储
+## Data Storage
 
-数据保存在应用程序 exe 同级的 `data/` 目录中，不写入系统盘。
+Data is stored in a `data/` directory next to the application executable, not on the system drive.
 
-| 路径 | 内容 |
-|------|------|
-| `<exe所在目录>/data/scratchpad.sqlite3` | 条目元数据（文本内容、折叠状态、视图归属等） |
-| `<exe所在目录>/data/assets/YYYY-MM-DD/` | 图片和文件附件（按日期分目录） |
+| Path | Content |
+|------|---------|
+| `<exe_dir>/data/scratchpad.sqlite3` | Entry metadata (text content, collapse state, view membership, etc.) |
+| `<exe_dir>/data/assets/YYYY-MM-DD/` | Image and file attachments (organized by date) |
 
-如需清理，直接删除 `data/` 目录即可。
+To reset, simply delete the `data/` directory.
 
-## 项目结构
+## Project Structure
 
 ```
-src/                          # Svelte 前端
-  lib/api/dock.ts             # Tauri IPC 调用层
-  lib/components/             # UI 组件
-    entry/                    # 条目卡片（文本、图片、文件）
-    views/                    # 视图（收纳、全部、收藏、设置）
-  lib/state/                  # 前端状态管理
-  lib/types/                  # TypeScript 类型定义
-  App.svelte                  # 应用主入口，处理全局粘贴和拖放
-  MinimizedApp.svelte         # 最小化标签入口
+src/                          # Svelte frontend
+  lib/api/dock.ts             # Tauri IPC call layer
+  lib/components/             # UI components
+    entry/                    # Entry cards (text, image, file)
+    views/                    # Views (dock, all, favorites, settings)
+  lib/i18n/                   # Internationalization (locales, types)
+  lib/state/                  # Frontend state management
+  lib/types/                  # TypeScript type definitions
+  App.svelte                  # Main app entry; handles global paste and drag-drop
+  MinimizedApp.svelte         # Minimized tab entry
 
-src-tauri/src/                # Rust 后端
-  models/                     # 数据模型（entry, preferences）
-  scratchpad/                 # 业务逻辑（storage, assets, preferences, clipboard）
-  storage/                    # SQLite 连接和迁移
-  system/                     # 系统功能（tab_controller, window, fonts）
-  lib.rs                      # Tauri 命令注册
+src-tauri/src/                # Rust backend
+  models/                     # Data models (entry, preferences)
+  scratchpad/                 # Business logic (storage, assets, preferences, clipboard)
+  storage/                    # SQLite connection and migrations
+  system/                     # System features (tab_controller, window, fonts)
+  lib.rs                      # Tauri command registration
 ```
