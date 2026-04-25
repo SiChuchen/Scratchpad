@@ -167,6 +167,11 @@ const zhCN: LocaleMessages = {
     '--radius-md': '圆角-中',
     '--radius-lg': '圆角-大',
   },
+  themeNames: {
+    'dark-glass': '深色玻璃',
+    'light-matte': '磨砂白底',
+    'light-frosted': '半透明奶油',
+  },
 }
 
 export default zhCN

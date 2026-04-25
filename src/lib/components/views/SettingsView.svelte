@@ -299,7 +299,7 @@
                   onclick={() => selectPreset(preset.id)}
                 >
                   <div class="swatch" style="background:{preset.tokens['--surface-0']}"></div>
-                  <span class="card-name">{preset.name}</span>
+                  <span class="card-name">{messages.themeNames[preset.id as keyof typeof messages.themeNames] || preset.name}</span>
                 </button>
               {/each}
             </div>

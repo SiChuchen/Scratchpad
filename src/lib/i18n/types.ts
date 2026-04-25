@@ -140,4 +140,9 @@ export interface LocaleMessages {
     invalidShadow: string
   }
   expert: Record<string, string>
+  themeNames: {
+    'dark-glass': string
+    'light-matte': string
+    'light-frosted': string
+  }
 }

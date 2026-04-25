@@ -167,6 +167,11 @@ const en: LocaleMessages = {
     '--radius-md': 'Radius-M',
     '--radius-lg': 'Radius-L',
   },
+  themeNames: {
+    'dark-glass': 'Dark Glass',
+    'light-matte': 'Light Matte',
+    'light-frosted': 'Light Frosted',
+  },
 }
 
 export default en
