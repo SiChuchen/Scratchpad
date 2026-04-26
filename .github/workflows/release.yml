@@ -147,3 +147,75 @@ jobs:
           }
 
           Write-Host "Done. Release assets updated."
+
+      - name: Smoke check
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $tag = "${{ github.ref_name }}"
+          $version = $tag.TrimStart('v')
+          $expectedPrefix = "Soma_Scratchpad_${version}_Windows"
+
+          Write-Host "=== Smoke Check ==="
+
+          # 1. Download latest.json
+          $latestJsonPath = "${{ runner.temp }}/smoke-latest.json"
+          gh release download $tag --pattern latest.json --dir "${{ runner.temp }}" --clobber
+          if (-not (Test-Path $latestJsonPath)) {
+            Write-Error "latest.json not found in release assets"
+            exit 1
+          }
+          $latestJson = Get-Content $latestJsonPath -Raw | ConvertFrom-Json
+          Write-Host "1. latest.json downloaded"
+
+          # 2. Verify version == tag.version
+          if ($latestJson.version -ne $version) {
+            Write-Error "Version mismatch: latest.json=$($latestJson.version) vs tag=$version"
+            exit 1
+          }
+          Write-Host "2. version matches: $version"
+
+          # 3. Verify platforms.windows-x86_64.url is accessible
+          $url = $latestJson.platforms.'windows-x86_64'.url
+          if (-not $url) {
+            Write-Error "platforms.windows-x86_64.url is missing in latest.json"
+            exit 1
+          }
+          try {
+            $response = Invoke-WebRequest -Uri $url -Method Head -UseBasicParsing -TimeoutSec 30
+            if ($response.StatusCode -ne 200) {
+              Write-Error "Asset URL returned HTTP $($response.StatusCode): $url"
+              exit 1
+            }
+            Write-Host "3. asset URL accessible (HTTP 200): $url"
+          } catch {
+            Write-Error "Asset URL not reachable: $url`n$($_.Exception.Message)"
+            exit 1
+          }
+
+          # 4. Verify signature field exists
+          if (-not $latestJson.signature) {
+            Write-Error "signature field missing or empty in latest.json"
+            exit 1
+          }
+          Write-Host "4. signature present ($($latestJson.signature.Length) chars)"
+
+          # 5. Verify release asset names match convention
+          $assets = gh release view $tag --json assets --jq '.assets[].name'
+          $badAssets = @()
+          foreach ($asset in $assets) {
+            if ($asset -eq 'latest.json' -or $asset -match '\.tar\.gz(\.sig)?$') { continue }
+            if ($asset -notmatch [regex]::Escape($expectedPrefix)) {
+              $badAssets += $asset
+              Write-Warning "   MISMATCH: '$asset' does not match prefix '$expectedPrefix'"
+            }
+          }
+          if ($badAssets.Count -gt 0) {
+            Write-Error "Found $($badAssets.Count) asset(s) not following naming convention: $($badAssets -join ', ')"
+            exit 1
+          }
+          Write-Host "5. all asset names follow convention: $expectedPrefix"
+
+          Write-Host "=== Smoke Check PASSED ==="

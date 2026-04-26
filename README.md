@@ -118,9 +118,11 @@ Grab the latest release from [GitHub Releases](https://github.com/SiChuchen/Scra
 
 | File | Description |
 |------|-------------|
-| `Soma Scratchpad_x.x.x_Windows.exe` | NSIS installer — recommended for most users |
-| `Soma Scratchpad_x.x.x_Windows.msi` | MSI installer |
-| `Soma Scratchpad_x.x.x_Windows_Portable.zip` | Portable version — unzip and run |
+| `Soma_Scratchpad_x.x.x_Windows.exe` | NSIS installer — recommended for most users |
+| `Soma_Scratchpad_x.x.x_Windows.msi` | MSI installer |
+| `Soma_Scratchpad_x.x.x_Windows_Portable.zip` | Portable version — unzip and run |
+
+> **Note:** When running the installer for the first time, Windows SmartScreen may show a warning because the application is not yet Authenticode-signed. Click **More info** → **Run anyway** to continue.
 
 The app checks for updates automatically. If you're behind a proxy, configure it in Settings.
 
