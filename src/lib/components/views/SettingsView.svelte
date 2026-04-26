@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte'
-  import type { DockPreferences } from '$lib/types/dock'
+  import type { DataDirInfo, DockPreferences } from '$lib/types/dock'
   import { dockApi } from '$lib/api/dock'
   import { THEME_PRESETS } from '$lib/themes/presets'
   import { TOKEN_SCHEMA, validateToken } from '$lib/themes/token-schema'
@@ -30,6 +30,28 @@
   let updateStatus = $state<'idle' | 'checking' | 'up-to-date' | 'available' | 'downloading' | 'error'>('idle')
   let updateErrorMsg = $state('')
   let pendingUpdate: any = $state(null)
+
+  // Data directory state
+  let dataDirOpen = $state(true)
+  let dataDirInfo = $state<DataDirInfo | null>(null)
+  let dataDirInput = $state('')
+  let dataDirChanged = $state(false)
+
+  async function loadDataDirInfo() {
+    try { dataDirInfo = await dockApi.getDataDirInfo() } catch {}
+  }
+
+  async function changeDataDir() {
+    const path = dataDirInput.trim()
+    if (!path) return
+    try {
+      const info = await dockApi.setDataDir(path)
+      dataDirInfo = info
+      dataDirChanged = true
+    } catch (e) {
+      alert(String(e))
+    }
+  }
 
   // Shortcut state
   let shortcutOpen = $state(true)
@@ -127,6 +149,7 @@
     parseProxy(preferences.updateProxy)
     // Sync shortcut status
     shortcutStatus = preferences.shortcutRegistered ? 'ok' : 'failed'
+    loadDataDirInfo()
   })
 
   onMount(() => {
@@ -310,6 +333,39 @@
   </div>
 
   <div class="settings-body">
+    <!-- Data directory section -->
+    <div class="section">
+      <div class="section-header" onclick={() => dataDirOpen = !dataDirOpen}>
+        <span class="section-label">{messages.settings.dataDir}</span>
+        <span class="chevron" class:open={dataDirOpen}>▾</span>
+      </div>
+      {#if dataDirOpen}
+        <div class="section-body">
+          {#if dataDirInfo}
+            <div class="row">
+              <span class="label">{messages.settings.dataDirLabel}</span>
+              <span class="datadir-path">{dataDirInfo.path}</span>
+            </div>
+            <div class="row">
+              <input
+                type="text"
+                class="proxy-input"
+                placeholder={dataDirInfo.path}
+                bind:value={dataDirInput}
+                onkeydown={(e) => { if (e.key === 'Enter') changeDataDir() }}
+              />
+              <button class="record-btn" onclick={changeDataDir}>{messages.settings.dataDirChange}</button>
+            </div>
+            {#if dataDirChanged}
+              <p class="section-subtitle datadir-hint">{messages.settings.dataDirRestartHint}</p>
+            {/if}
+          {:else}
+            <p class="section-subtitle">加载中...</p>
+          {/if}
+        </div>
+      {/if}
+    </div>
+
     <!-- Language section -->
     <div class="section">
       <div class="section-header">
@@ -972,6 +1028,17 @@
     color: var(--color-danger);
   }
 
+  .datadir-path {
+    font-size: var(--font-sm, 0.6rem);
+    color: var(--text-muted);
+    word-break: break-all;
+    background: var(--surface-2);
+    padding: 0.15rem 0.4rem;
+    border-radius: var(--radius-sm, 0.25rem);
+    flex: 1;
+    min-width: 0;
+  }
+
   .shortcut-status {
     font-size: var(--font-sm, 0.65rem);
     padding: 0.15rem 0.4rem;
@@ -1011,6 +1078,10 @@
   .record-btn:disabled {
     opacity: 0.5;
     cursor: not-allowed;
+  }
+
+  .datadir-hint {
+    color: var(--color-info);
   }
 
   .section-subtitle {

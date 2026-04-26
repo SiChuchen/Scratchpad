@@ -1,5 +1,5 @@
 import { convertFileSrc, invoke } from '@tauri-apps/api/core'
-import type { DockEntry, DockPreferences, EntryKind, EntryMembershipView, ShortcutStatus } from '$lib/types/dock'
+import type { DataDirInfo, DockEntry, DockPreferences, EntryKind, EntryMembershipView, ShortcutStatus } from '$lib/types/dock'
 
 export const dockApi = {
   createText(view: EntryMembershipView, content: string, source = 'manual') {
@@ -86,6 +86,14 @@ export const dockApi = {
 
   copyImage(path: string) {
     return invoke<void>('ipc_clipboard_copy_image', { path })
+  },
+
+  getDataDirInfo() {
+    return invoke<DataDirInfo>('ipc_data_dir_info')
+  },
+
+  setDataDir(path: string) {
+    return invoke<DataDirInfo>('ipc_data_dir_set', { path })
   },
 
   getShortcutStatus() {

@@ -93,6 +93,10 @@ export interface LocaleMessages {
     usePreset: string
     dangerZone: string
     resetAll: string
+    dataDir: string
+    dataDirLabel: string
+    dataDirChange: string
+    dataDirRestartHint: string
     shortcut: string
     shortcutStatus: string
     shortcutRegistered: string

@@ -350,6 +350,41 @@ fn ipc_clipboard_read_file_paths() -> Result<Vec<String>, String> {
     scratchpad::clipboard::read_file_paths()
 }
 
+// --- Data directory IPC ---
+
+#[derive(serde::Serialize)]
+struct DataDirInfo {
+    path: String,
+    mode: String, // "portable" | "installed" | "custom"
+}
+
+#[tauri::command]
+fn ipc_data_dir_info() -> Result<DataDirInfo, String> {
+    let path = storage::connection::data_dir().map_err(|e| e.to_string())?;
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let exe_dir = exe.parent().unwrap_or(exe.as_path());
+    let mode = if path.starts_with(exe_dir) {
+        "portable"
+    } else {
+        "installed"
+    };
+    Ok(DataDirInfo {
+        path: path.to_string_lossy().to_string(),
+        mode: mode.to_string(),
+    })
+}
+
+#[tauri::command]
+fn ipc_data_dir_set(path: String) -> Result<DataDirInfo, String> {
+    let new_dir = std::path::PathBuf::from(&path);
+    std::fs::create_dir_all(&new_dir).map_err(|e| format!("无法创建目录: {e}"))?;
+    storage::connection::save_data_dir_override(&path).map_err(|e| e.to_string())?;
+    Ok(DataDirInfo {
+        path,
+        mode: "custom".to_string(),
+    })
+}
+
 // --- System IPC commands ---
 
 #[tauri::command]
@@ -526,6 +561,8 @@ pub fn run() {
             ipc_clipboard_copy_file,
             ipc_clipboard_copy_image,
             ipc_clipboard_read_file_paths,
+            ipc_data_dir_info,
+            ipc_data_dir_set,
             ipc_preferences_get,
             ipc_preferences_set,
             ipc_preferences_list_fonts,

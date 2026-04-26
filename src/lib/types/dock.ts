@@ -67,3 +67,8 @@ export interface ShortcutStatus {
   key: string
   registered: boolean
 }
+
+export interface DataDirInfo {
+  path: string
+  mode: 'portable' | 'installed' | 'custom'
+}
