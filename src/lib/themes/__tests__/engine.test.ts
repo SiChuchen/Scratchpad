@@ -25,6 +25,9 @@ function makePrefs(overrides: Partial<DockPreferences> = {}): DockPreferences {
     launchOnStartup: false,
     updateProxy: '',
     language: 'zh-CN',
+    shortcutModifiers: 'Alt+Shift',
+    shortcutKey: 'V',
+    shortcutRegistered: true,
     autoCleanupDays: 0,
     ...overrides,
   }

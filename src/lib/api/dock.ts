@@ -1,5 +1,5 @@
 import { convertFileSrc, invoke } from '@tauri-apps/api/core'
-import type { DockEntry, DockPreferences, EntryKind, EntryMembershipView } from '$lib/types/dock'
+import type { DockEntry, DockPreferences, EntryKind, EntryMembershipView, ShortcutStatus } from '$lib/types/dock'
 
 export const dockApi = {
   createText(view: EntryMembershipView, content: string, source = 'manual') {
@@ -82,6 +82,14 @@ export const dockApi = {
 
   copyImage(path: string) {
     return invoke<void>('ipc_clipboard_copy_image', { path })
+  },
+
+  getShortcutStatus() {
+    return invoke<ShortcutStatus>('ipc_shortcut_status')
+  },
+
+  updateShortcut(modifiers: string, key: string) {
+    return invoke<ShortcutStatus>('ipc_shortcut_update', { modifiers, key })
   },
 
   async toggleAlwaysOnTop(): Promise<boolean> {

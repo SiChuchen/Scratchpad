@@ -6,10 +6,65 @@ pub mod system;
 use std::sync::Mutex;
 use rusqlite::Connection;
 use tauri::Manager;
+use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut};
 
 pub struct AppState {
     pub db: Mutex<Connection>,
     pub main_geometry: Mutex<Option<system::tab_controller::MainWindowGeometry>>,
+    pub current_shortcut: Mutex<Option<Shortcut>>,
+}
+
+// --- Shortcut helpers ---
+
+fn parse_modifiers(s: &str) -> Option<Modifiers> {
+    let mut mods = Modifiers::empty();
+    for part in s.split('+') {
+        match part.trim() {
+            "Alt" => mods |= Modifiers::ALT,
+            "Shift" => mods |= Modifiers::SHIFT,
+            "Ctrl" | "Control" => mods |= Modifiers::CONTROL,
+            "Meta" | "Win" | "Super" => mods |= Modifiers::META,
+            "" => {}
+            _ => return None,
+        }
+    }
+    if mods.is_empty() { None } else { Some(mods) }
+}
+
+fn parse_key_code(s: &str) -> Option<Code> {
+    let upper = s.to_uppercase();
+    if let Some(num) = upper.strip_prefix('F').and_then(|n| n.parse::<u8>().ok()) {
+        return match num {
+            1 => Some(Code::F1), 2 => Some(Code::F2), 3 => Some(Code::F3),
+            4 => Some(Code::F4), 5 => Some(Code::F5), 6 => Some(Code::F6),
+            7 => Some(Code::F7), 8 => Some(Code::F8), 9 => Some(Code::F9),
+            10 => Some(Code::F10), 11 => Some(Code::F11), 12 => Some(Code::F12),
+            _ => None,
+        };
+    }
+    if upper.len() == 1 {
+        let ch = upper.chars().next().unwrap();
+        if ch.is_ascii_alphabetic() {
+            let idx = (ch as u8 - b'A') as usize;
+            let codes: [Code; 26] = [
+                Code::KeyA, Code::KeyB, Code::KeyC, Code::KeyD, Code::KeyE,
+                Code::KeyF, Code::KeyG, Code::KeyH, Code::KeyI, Code::KeyJ,
+                Code::KeyK, Code::KeyL, Code::KeyM, Code::KeyN, Code::KeyO,
+                Code::KeyP, Code::KeyQ, Code::KeyR, Code::KeyS, Code::KeyT,
+                Code::KeyU, Code::KeyV, Code::KeyW, Code::KeyX, Code::KeyY,
+                Code::KeyZ,
+            ];
+            return Some(codes[idx]);
+        }
+        if ch.is_ascii_digit() {
+            let codes: [Code; 10] = [
+                Code::Digit0, Code::Digit1, Code::Digit2, Code::Digit3, Code::Digit4,
+                Code::Digit5, Code::Digit6, Code::Digit7, Code::Digit8, Code::Digit9,
+            ];
+            return Some(codes[(ch as u8 - b'0') as usize]);
+        }
+    }
+    None
 }
 
 // --- Dock entry IPC commands ---
@@ -112,6 +167,89 @@ fn ipc_preferences_set(
 ) -> Result<(), String> {
     let mut conn = state.db.lock().map_err(|e| e.to_string())?;
     scratchpad::preferences::save_preferences(&mut conn, &prefs).map_err(|e| e.to_string())
+}
+
+// --- Shortcut IPC commands ---
+
+#[derive(serde::Serialize)]
+struct ShortcutStatus {
+    modifiers: String,
+    key: String,
+    registered: bool,
+}
+
+#[tauri::command]
+fn ipc_shortcut_status(
+    state: tauri::State<AppState>,
+    app: tauri::AppHandle,
+) -> Result<ShortcutStatus, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let prefs = scratchpad::preferences::load_preferences(&conn).map_err(|e| e.to_string())?;
+    drop(conn);
+    let guard = state.current_shortcut.lock().map_err(|e| e.to_string())?;
+    let registered = guard
+        .as_ref()
+        .map_or(false, |s| app.global_shortcut().is_registered(s.clone()));
+    Ok(ShortcutStatus {
+        modifiers: prefs.shortcut_modifiers,
+        key: prefs.shortcut_key,
+        registered,
+    })
+}
+
+#[tauri::command]
+fn ipc_shortcut_update(
+    state: tauri::State<AppState>,
+    app: tauri::AppHandle,
+    modifiers: String,
+    key: String,
+) -> Result<ShortcutStatus, String> {
+    let mods = parse_modifiers(&modifiers).ok_or_else(|| format!("invalid modifiers: {modifiers}"))?;
+    let code = parse_key_code(&key).ok_or_else(|| format!("invalid key: {key}"))?;
+    let new_shortcut = Shortcut::new(Some(mods), code);
+
+    // Unregister old shortcut
+    let mut guard = state.current_shortcut.lock().map_err(|e| e.to_string())?;
+    if let Some(ref old) = *guard {
+        let _ = app.global_shortcut().unregister(old.clone());
+    }
+
+    // Register new shortcut with same toggle handler
+    let app_handle = app.clone();
+    app.global_shortcut()
+        .on_shortcut(new_shortcut.clone(), move |_app, _sc, event| {
+            use tauri_plugin_global_shortcut::ShortcutState;
+            if event.state == ShortcutState::Pressed {
+                if let Some(w) = app_handle.get_webview_window("main") {
+                    if w.is_visible().unwrap_or(false) {
+                        let _ = w.hide();
+                    } else {
+                        let _ = w.show();
+                        let _ = w.set_focus();
+                    }
+                }
+            }
+        })
+        .map_err(|e| format!("failed to register shortcut: {e}"))?;
+
+    let registered = app.global_shortcut().is_registered(new_shortcut.clone());
+    *guard = Some(new_shortcut);
+
+    // Persist to preferences
+    {
+        let mut conn = state.db.lock().map_err(|e| e.to_string())?;
+        let mut prefs = scratchpad::preferences::load_preferences(&conn).map_err(|e| e.to_string())?;
+        prefs.shortcut_modifiers = modifiers.clone();
+        prefs.shortcut_key = key.clone();
+        prefs.shortcut_registered = registered;
+        scratchpad::preferences::save_preferences(&mut conn, &prefs).map_err(|e| e.to_string())?;
+    }
+
+    Ok(ShortcutStatus {
+        modifiers,
+        key,
+        registered,
+    })
 }
 
 // --- Asset import IPC commands ---
@@ -337,6 +475,7 @@ pub fn run() {
         .manage(AppState {
             db: Mutex::new(init_db()),
             main_geometry: Mutex::new(None),
+            current_shortcut: Mutex::new(None),
         })
         .invoke_handler(tauri::generate_handler![
             ipc_entries_create_text,
@@ -355,6 +494,8 @@ pub fn run() {
             ipc_preferences_get,
             ipc_preferences_set,
             ipc_preferences_list_fonts,
+            ipc_shortcut_status,
+            ipc_shortcut_update,
             ipc_toggle_always_on_top,
             ipc_window_apply_circle_region,
             ipc_window_clear_region,
@@ -394,28 +535,51 @@ pub fn run() {
                 _ => {}
             });
 
-            // Global shortcut: Alt+Shift+V (toggle show/hide)
-            use tauri_plugin_global_shortcut::{
-                Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState,
-            };
-            let shortcut =
-                Shortcut::new(Some(Modifiers::ALT | Modifiers::SHIFT), Code::KeyV);
-            let app_handle = app.handle().clone();
-            let _ = app.global_shortcut().on_shortcut(
-                shortcut,
-                move |_app, _shortcut, event| {
-                    if event.state == ShortcutState::Pressed {
-                        if let Some(w) = app_handle.get_webview_window("main") {
-                            if w.is_visible().unwrap_or(false) {
-                                let _ = w.hide();
-                            } else {
-                                let _ = w.show();
-                                let _ = w.set_focus();
+            // Global shortcut: load from preferences, register, report status
+            {
+                let state = app.state::<AppState>();
+                let conn = state.db.lock().unwrap();
+                let prefs = scratchpad::preferences::load_preferences(&conn).unwrap_or_default();
+                drop(conn);
+
+                let mods = parse_modifiers(&prefs.shortcut_modifiers)
+                    .unwrap_or(Modifiers::ALT | Modifiers::SHIFT);
+                let code = parse_key_code(&prefs.shortcut_key)
+                    .unwrap_or(Code::KeyV);
+                let shortcut = Shortcut::new(Some(mods), code);
+
+                let app_handle = app.handle().clone();
+                let reg_result = app.global_shortcut().on_shortcut(
+                    shortcut.clone(),
+                    move |_app, _sc, event| {
+                        use tauri_plugin_global_shortcut::ShortcutState;
+                        if event.state == ShortcutState::Pressed {
+                            if let Some(w) = app_handle.get_webview_window("main") {
+                                if w.is_visible().unwrap_or(false) {
+                                    let _ = w.hide();
+                                } else {
+                                    let _ = w.show();
+                                    let _ = w.set_focus();
+                                }
                             }
                         }
-                    }
-                },
-            );
+                    },
+                );
+
+                let registered = reg_result.is_ok()
+                    && app.global_shortcut().is_registered(shortcut.clone());
+
+                // Persist registration status
+                {
+                    let mut conn = state.db.lock().unwrap();
+                    let mut prefs = scratchpad::preferences::load_preferences(&conn).unwrap_or_default();
+                    prefs.shortcut_registered = registered;
+                    let _ = scratchpad::preferences::save_preferences(&mut conn, &prefs);
+                }
+
+                let mut guard = state.current_shortcut.lock().unwrap();
+                *guard = Some(shortcut);
+            }
 
             // Ensure window is focused on startup so keyboard/paste events work
             if let Some(w) = app.get_webview_window("main") {

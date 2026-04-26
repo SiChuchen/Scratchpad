@@ -31,6 +31,9 @@ pub fn save_preferences(conn: &mut Connection, prefs: &DockPreferences) -> Stora
         ("launch_on_startup", prefs.launch_on_startup.to_string()),
         ("update_proxy", prefs.update_proxy.clone()),
         ("language", prefs.language.clone()),
+        ("shortcut_modifiers", prefs.shortcut_modifiers.clone()),
+        ("shortcut_key", prefs.shortcut_key.clone()),
+        ("shortcut_registered", prefs.shortcut_registered.to_string()),
         ("auto_cleanup_days", prefs.auto_cleanup_days.to_string()),
     ] {
         tx.execute(
@@ -109,6 +112,13 @@ pub fn load_preferences(conn: &Connection) -> StorageResult<DockPreferences> {
     if let Some(v) = map.get("language") {
         prefs.language = v.clone();
     }
+    if let Some(v) = map.get("shortcut_modifiers") {
+        prefs.shortcut_modifiers = v.clone();
+    }
+    if let Some(v) = map.get("shortcut_key") {
+        prefs.shortcut_key = v.clone();
+    }
+    // shortcut_registered is runtime-only, always loaded as false
     if let Some(v) = map.get("auto_cleanup_days") {
         prefs.auto_cleanup_days = v.parse().unwrap_or(0);
     }
@@ -173,6 +183,9 @@ mod preference_tests {
         assert_eq!(loaded.theme_overrides.get("--color-primary"), Some(&"#ff0000".to_string()));
         assert_eq!(loaded.ui_text_size_px, 14.0);
         assert_eq!(loaded.spacing_preset, "compact");
+        assert_eq!(loaded.shortcut_modifiers, "Alt+Shift");
+        assert_eq!(loaded.shortcut_key, "V");
+        assert!(!loaded.shortcut_registered); // always false on load
     }
 
     #[test]

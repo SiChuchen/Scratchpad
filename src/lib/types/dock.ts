@@ -53,6 +53,17 @@ export interface DockPreferences {
   // Language
   language: string
 
+  // Shortcut
+  shortcutModifiers: string
+  shortcutKey: string
+  shortcutRegistered: boolean
+
   // Cleanup
   autoCleanupDays: number
+}
+
+export interface ShortcutStatus {
+  modifiers: string
+  key: string
+  registered: boolean
 }

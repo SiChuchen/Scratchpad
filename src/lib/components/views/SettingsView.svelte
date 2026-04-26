@@ -31,6 +31,49 @@
   let updateErrorMsg = $state('')
   let pendingUpdate: any = $state(null)
 
+  // Shortcut state
+  let shortcutOpen = $state(true)
+  let recording = $state(false)
+  let shortcutStatus = $state<'idle' | 'ok' | 'failed'>('idle')
+
+  function modifiersToString(mods: { alt: boolean; ctrl: boolean; shift: boolean; meta: boolean }): string {
+    const parts: string[] = []
+    if (mods.ctrl) parts.push('Ctrl')
+    if (mods.alt) parts.push('Alt')
+    if (mods.shift) parts.push('Shift')
+    if (mods.meta) parts.push('Meta')
+    return parts.join('+')
+  }
+
+  function startRecording() {
+    recording = true
+  }
+
+  function handleKeyCapture(e: KeyboardEvent) {
+    if (!recording) return
+    e.preventDefault()
+    e.stopPropagation()
+
+    const mods = { alt: e.altKey, ctrl: e.ctrlKey, shift: e.shiftKey, meta: e.metaKey }
+    const hasMod = mods.alt || mods.ctrl || mods.shift || mods.meta
+    // Ignore standalone modifiers or unknown keys
+    if (!hasMod || e.key === 'Alt' || e.key === 'Control' || e.key === 'Shift' || e.key === 'Meta' || e.key.length > 1 && !e.key.startsWith('F')) {
+      return
+    }
+    recording = false
+
+    const key = e.key.length === 1 ? e.key.toUpperCase() : e.key
+    const modifiers = modifiersToString(mods)
+    dockApi.updateShortcut(modifiers, key).then((status) => {
+      shortcutStatus = status.registered ? 'ok' : 'failed'
+      onChange({ ...preferences, shortcutModifiers: status.modifiers, shortcutKey: status.key, shortcutRegistered: status.registered })
+    }).catch(() => {
+      shortcutStatus = 'failed'
+    })
+  }
+
+  const shortcutLabel = $derived(`${preferences.shortcutModifiers}+${preferences.shortcutKey}`)
+
   // Section open/close state
   let themeOpen = $state(true)
   let fontOpen = $state(true)
@@ -82,6 +125,15 @@
     } catch {}
     // Parse proxy into IP + port
     parseProxy(preferences.updateProxy)
+    // Sync shortcut status
+    shortcutStatus = preferences.shortcutRegistered ? 'ok' : 'failed'
+  })
+
+  onMount(() => {
+    window.addEventListener('keydown', handleKeyCapture as unknown as EventListener)
+    return () => {
+      window.removeEventListener('keydown', handleKeyCapture as unknown as EventListener)
+    }
   })
 
   function parseProxy(proxy: string) {
@@ -205,6 +257,9 @@
       fontFamilyZh: defaultZh,
       fontFamilyEn: defaultEn,
       launchOnStartup: false,
+      shortcutModifiers: 'Alt+Shift',
+      shortcutKey: 'V',
+      shortcutRegistered: false,
       updateProxy: '',
       language: preferences.language,
       autoCleanupDays: 0,
@@ -445,6 +500,34 @@
               {/if}
             </div>
           </div>
+        </div>
+      {/if}
+    </div>
+
+    <!-- Shortcut section -->
+    <div class="section">
+      <div class="section-header" onclick={() => shortcutOpen = !shortcutOpen}>
+        <span class="section-label">{messages.settings.shortcut}</span>
+        <span class="chevron" class:open={shortcutOpen}>▾</span>
+      </div>
+      {#if shortcutOpen}
+        <div class="section-body">
+          <div class="row">
+            <span class="label">{messages.settings.shortcutStatus}</span>
+            <span class="shortcut-status" class:ok={preferences.shortcutRegistered} class:failed={!preferences.shortcutRegistered}>
+              {preferences.shortcutRegistered ? messages.settings.shortcutRegistered : messages.settings.shortcutFailed}
+            </span>
+          </div>
+          <div class="row">
+            <span class="label">快捷键</span>
+            <span class="shortcut-key">{shortcutLabel}</span>
+          </div>
+          <div class="row">
+            <button class="record-btn" onclick={startRecording} disabled={recording}>
+              {recording ? messages.settings.shortcutRecording : messages.settings.shortcutRecord}
+            </button>
+          </div>
+          <p class="section-subtitle">{messages.settings.shortcutHint}</p>
         </div>
       {/if}
     </div>
@@ -887,6 +970,47 @@
   .proxy-error {
     font-size: var(--font-xs, 0.55rem);
     color: var(--color-danger);
+  }
+
+  .shortcut-status {
+    font-size: var(--font-sm, 0.65rem);
+    padding: 0.15rem 0.4rem;
+    border-radius: var(--radius-sm, 0.25rem);
+  }
+  .shortcut-status.ok {
+    color: var(--color-success);
+    background: color-mix(in srgb, var(--color-success) 12%, transparent);
+  }
+  .shortcut-status.failed {
+    color: var(--color-danger);
+    background: color-mix(in srgb, var(--color-danger) 12%, transparent);
+  }
+  .shortcut-key {
+    font-family: monospace;
+    font-size: var(--font-base, 0.75rem);
+    color: var(--text-primary);
+    background: var(--surface-2);
+    padding: 0.2rem 0.5rem;
+    border-radius: var(--radius-sm, 0.25rem);
+  }
+  .record-btn {
+    padding: 0.35rem 0.8rem;
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md, 0.35rem);
+    background: var(--surface-1);
+    color: var(--text-primary);
+    font-size: var(--font-sm, 0.65rem);
+    cursor: pointer;
+    font-family: inherit;
+    transition: background 0.15s, border-color 0.15s;
+  }
+  .record-btn:hover:not(:disabled) {
+    background: var(--surface-2);
+    border-color: var(--border-emphasis);
+  }
+  .record-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
   }
 
   .section-subtitle {

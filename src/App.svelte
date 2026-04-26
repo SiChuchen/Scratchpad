@@ -40,6 +40,10 @@
       }
       loadLocale(preferences.language)
       langKey++
+      // Warn if global shortcut is not registered
+      if (preferences && !preferences.shortcutRegistered) {
+        showToast(messages.settings.shortcutFailed, 'error')
+      }
     } catch (e) {
       showToast(`${messages.toast.loadFailed}: ${formatError(e)}`, 'error')
     }

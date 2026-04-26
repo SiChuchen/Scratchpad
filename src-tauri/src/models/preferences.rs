@@ -37,6 +37,11 @@ pub struct DockPreferences {
     // Language
     pub language: String,                          // "zh-CN" | "en", default "" (auto-detect)
 
+    // Shortcut
+    pub shortcut_modifiers: String,
+    pub shortcut_key: String,
+    pub shortcut_registered: bool,
+
     // Cleanup
     pub auto_cleanup_days: i64,                    // 0 = clean all unstarred on startup, N = keep N days
 }
@@ -64,6 +69,9 @@ impl Default for DockPreferences {
             launch_on_startup: false,
             update_proxy: String::new(),
             language: String::new(),
+            shortcut_modifiers: "Alt+Shift".to_string(),
+            shortcut_key: "V".to_string(),
+            shortcut_registered: false,
             auto_cleanup_days: 0,
         }
     }
