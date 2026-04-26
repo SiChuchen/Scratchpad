@@ -41,6 +41,7 @@ jobs:
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
         run: |
           $tag = "${{ github.ref_name }}"
           $version = $tag.TrimStart('v')
@@ -97,8 +98,16 @@ jobs:
                 }
               }
             }
-            $latestJson | ConvertTo-Json -Depth 10 | Set-Content $latestJsonPath -Encoding UTF8
             Write-Host "Updated latest.json with renamed asset URLs"
+            # Re-sign updated latest.json (URL changes invalidate original signature)
+            $newSig = npx tauri signer sign --private-key $env:TAURI_SIGNING_PRIVATE_KEY $latestJsonPath
+            if ($LASTEXITCODE -eq 0 -and $newSig) {
+              $latestJson | Add-Member -NotePropertyValue $newSig.Trim() -Name 'signature' -Force
+              Write-Host "Re-signed updated latest.json"
+            } else {
+              Write-Warning "Failed to re-sign latest.json, updater may not work"
+            }
+            $latestJson | ConvertTo-Json -Depth 10 | Set-Content $latestJsonPath -Encoding UTF8
             # Re-upload updated latest.json
             gh release upload $tag $latestJsonPath --clobber
             Write-Host "Re-uploaded updated latest.json"
