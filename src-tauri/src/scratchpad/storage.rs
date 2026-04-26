@@ -158,9 +158,7 @@ fn insert_membership_row(
 ) -> StorageResult<()> {
     let table = view.membership_table();
     let sql = if ignore_existing {
-        format!(
-            "INSERT OR IGNORE INTO {table} (entry_id, created_at) VALUES (?1, ?2)"
-        )
+        format!("INSERT OR IGNORE INTO {table} (entry_id, created_at) VALUES (?1, ?2)")
     } else {
         format!("INSERT INTO {table} (entry_id, created_at) VALUES (?1, ?2)")
     };
@@ -335,11 +333,8 @@ fn home_only_entry_ids(conn: &Connection, max_age_days: i64) -> StorageResult<Ve
     };
     let mut stmt = conn.prepare(sql)?;
     let ids = if max_age_days > 0 {
-        stmt.query_map(
-            params![format!("-{} days", max_age_days)],
-            |row| row.get(0),
-        )?
-        .collect::<Result<Vec<String>, _>>()?
+        stmt.query_map(params![format!("-{} days", max_age_days)], |row| row.get(0))?
+            .collect::<Result<Vec<String>, _>>()?
     } else {
         stmt.query_map([], |row| row.get(0))?
             .collect::<Result<Vec<String>, _>>()?
@@ -403,7 +398,11 @@ fn migrate_legacy_scratchpad_items(conn: &mut Connection) -> StorageResult<usize
 pub fn dock_migrations() -> Vec<Migration> {
     vec![
         Migration::new(1, "create dock schema", DOCK_SCHEMA_SQL),
-        Migration::new(2, "add title column", "ALTER TABLE entries ADD COLUMN title TEXT"),
+        Migration::new(
+            2,
+            "add title column",
+            "ALTER TABLE entries ADD COLUMN title TEXT",
+        ),
     ]
 }
 
@@ -552,7 +551,10 @@ pub fn create_text_item(
     content: &str,
     source: &str,
 ) -> StorageResult<ScratchpadItem> {
-    let id = format!("sp-{}", Utc::now().timestamp_nanos_opt().unwrap_or_default());
+    let id = format!(
+        "sp-{}",
+        Utc::now().timestamp_nanos_opt().unwrap_or_default()
+    );
     let now = Utc::now().to_rfc3339();
     let item = ScratchpadItem {
         id: id.clone(),
@@ -605,7 +607,10 @@ pub fn create_image_item(
     size_bytes: Option<i64>,
     source: &str,
 ) -> StorageResult<ScratchpadItem> {
-    let id = format!("sp-{}", Utc::now().timestamp_nanos_opt().unwrap_or_default());
+    let id = format!(
+        "sp-{}",
+        Utc::now().timestamp_nanos_opt().unwrap_or_default()
+    );
     let now = Utc::now().to_rfc3339();
     let item = ScratchpadItem {
         id: id.clone(),
@@ -649,9 +654,8 @@ pub fn create_image_item(
 }
 
 pub fn list_items(conn: &Connection) -> StorageResult<Vec<ScratchpadItem>> {
-    let mut stmt = conn.prepare(
-        "SELECT * FROM scratchpad_items ORDER BY pinned DESC, created_at DESC",
-    )?;
+    let mut stmt =
+        conn.prepare("SELECT * FROM scratchpad_items ORDER BY pinned DESC, created_at DESC")?;
     let items = stmt
         .query_map([], row_to_item)?
         .collect::<Result<Vec<_>, _>>()?;
@@ -770,12 +774,7 @@ mod repository_tests {
         .unwrap();
     }
 
-    fn insert_test_image_entry(
-        conn: &mut Connection,
-        id: &str,
-        view: EntryView,
-        created_at: &str,
-    ) {
+    fn insert_test_image_entry(conn: &mut Connection, id: &str, view: EntryView, created_at: &str) {
         conn.execute(
             "INSERT INTO entries (
                 id, kind, content, file_path, file_name, mime_type,
@@ -863,8 +862,8 @@ mod repository_tests {
         let mut conn = Connection::open_in_memory().unwrap();
         ensure_dock_schema(&mut conn, 0).unwrap();
 
-        let entry = create_text_entry(&mut conn, EntryView::Home, "shared note text", "manual")
-            .unwrap();
+        let entry =
+            create_text_entry(&mut conn, EntryView::Home, "shared note text", "manual").unwrap();
         add_to_note(&mut conn, &entry.id).unwrap();
         add_to_note(&mut conn, &entry.id).unwrap();
 
@@ -890,8 +889,8 @@ mod repository_tests {
         let mut conn = Connection::open_in_memory().unwrap();
         ensure_dock_schema(&mut conn, 0).unwrap();
 
-        let _home_only = create_text_entry(&mut conn, EntryView::Home, "remove me", "manual")
-            .unwrap();
+        let _home_only =
+            create_text_entry(&mut conn, EntryView::Home, "remove me", "manual").unwrap();
         let shared = create_text_entry(&mut conn, EntryView::Home, "keep me", "manual").unwrap();
         add_to_note(&mut conn, &shared.id).unwrap();
 
@@ -966,7 +965,10 @@ mod repository_tests {
         assert_eq!(rows, 0);
 
         // File should be gone from disk
-        assert!(!file_path.exists(), "file should have been deleted from disk");
+        assert!(
+            !file_path.exists(),
+            "file should have been deleted from disk"
+        );
 
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -1017,7 +1019,10 @@ mod repository_tests {
             .unwrap();
         assert_eq!(rows, 0, "entry should be fully removed");
 
-        assert!(!file_path.exists(), "file should be deleted after last view removed");
+        assert!(
+            !file_path.exists(),
+            "file should be deleted after last view removed"
+        );
 
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -1082,15 +1087,17 @@ mod repository_tests {
     /// End-to-end: simulate app startup with auto_cleanup_days from preferences
     #[test]
     fn e2e_cleanup_driven_by_preferences() {
-        use crate::scratchpad::preferences::{load_preferences, save_preferences};
         use crate::models::preferences::DockPreferences;
+        use crate::scratchpad::preferences::{load_preferences, save_preferences};
 
         let mut conn = Connection::open_in_memory().unwrap();
 
         // Phase 1: First startup with default prefs (auto_cleanup_days = 0)
         ensure_dock_schema(&mut conn, 0).unwrap();
-        let _home_only = create_text_entry(&mut conn, EntryView::Home, "will be cleaned", "manual").unwrap();
-        let starred = create_text_entry(&mut conn, EntryView::Home, "keep forever", "manual").unwrap();
+        let _home_only =
+            create_text_entry(&mut conn, EntryView::Home, "will be cleaned", "manual").unwrap();
+        let starred =
+            create_text_entry(&mut conn, EntryView::Home, "keep forever", "manual").unwrap();
         add_to_note(&mut conn, &starred.id).unwrap();
 
         // Simulate app reading prefs and running cleanup
@@ -1136,11 +1143,23 @@ mod repository_tests {
         assert_eq!(prefs2.auto_cleanup_days, 7);
 
         let deleted2 = cleanup_home_on_startup(&mut conn, prefs2.auto_cleanup_days).unwrap();
-        assert_eq!(deleted2, 1, "only the 10-day-old unstarred entry should be cleaned");
+        assert_eq!(
+            deleted2, 1,
+            "only the 10-day-old unstarred entry should be cleaned"
+        );
 
         let home2 = list_entries(&conn, EntryView::Home, None).unwrap();
-        assert!(home2.iter().any(|e| e.id == "de-1d"), "1-day-old entry survives");
-        assert!(home2.iter().any(|e| e.id == starred.id), "starred entry survives");
-        assert!(!home2.iter().any(|e| e.id == "de-10d"), "10-day-old entry was cleaned");
+        assert!(
+            home2.iter().any(|e| e.id == "de-1d"),
+            "1-day-old entry survives"
+        );
+        assert!(
+            home2.iter().any(|e| e.id == starred.id),
+            "starred entry survives"
+        );
+        assert!(
+            !home2.iter().any(|e| e.id == "de-10d"),
+            "10-day-old entry was cleaned"
+        );
     }
 }

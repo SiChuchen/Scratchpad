@@ -1,5 +1,5 @@
-use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 use crate::system::fonts::system_font_defaults;
 
@@ -7,16 +7,16 @@ use crate::system::fonts::system_font_defaults;
 #[serde(rename_all = "camelCase")]
 pub struct DockPreferences {
     // Theme
-    pub theme_mode: String,                          // "system" | "preset" | "custom"
-    pub theme_preset_id: String,                     // "dark-glass" | "light-matte" | "light-frosted"
+    pub theme_mode: String,      // "system" | "preset" | "custom"
+    pub theme_preset_id: String, // "dark-glass" | "light-matte" | "light-frosted"
     pub custom_base_preset_id: String,
     pub theme_overrides: HashMap<String, String>,
 
     // Layout
-    pub ui_text_size_px: f64,                        // default 12
-    pub content_text_size_px: f64,                   // default 14
-    pub spacing_preset: String,                      // "compact" | "normal" | "spacious"
-    pub radius_preset: String,                       // "sharp" | "normal" | "round"
+    pub ui_text_size_px: f64,      // default 12
+    pub content_text_size_px: f64, // default 14
+    pub spacing_preset: String,    // "compact" | "normal" | "spacious"
+    pub radius_preset: String,     // "sharp" | "normal" | "round"
 
     // Window geometry
     pub dock_position_x: f64,
@@ -35,7 +35,7 @@ pub struct DockPreferences {
     pub update_proxy: String,
 
     // Language
-    pub language: String,                          // "zh-CN" | "en", default "" (auto-detect)
+    pub language: String, // "zh-CN" | "en", default "" (auto-detect)
 
     // Shortcut
     pub shortcut_modifiers: String,
@@ -43,7 +43,7 @@ pub struct DockPreferences {
     pub shortcut_registered: bool,
 
     // Cleanup
-    pub auto_cleanup_days: i64,                    // 0 = clean all unstarred on startup, N = keep N days
+    pub auto_cleanup_days: i64, // 0 = clean all unstarred on startup, N = keep N days
 }
 
 impl Default for DockPreferences {

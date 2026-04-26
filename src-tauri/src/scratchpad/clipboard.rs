@@ -39,12 +39,16 @@ mod win32_clipboard {
             let mut paths: Vec<String> = Vec::with_capacity(count as usize);
             for i in 0..count {
                 let needed = DragQueryFileW(hdrop, i, std::ptr::null_mut(), 0) as usize;
-                if needed == 0 { continue; }
+                if needed == 0 {
+                    continue;
+                }
                 let mut buf: Vec<u16> = vec![0; needed + 1];
                 let written = DragQueryFileW(hdrop, i, buf.as_mut_ptr(), buf.len() as u32) as usize;
                 if written > 0 {
                     let s = String::from_utf16_lossy(&buf[..written]);
-                    if !s.is_empty() { paths.push(s); }
+                    if !s.is_empty() {
+                        paths.push(s);
+                    }
                 }
             }
             CloseClipboard();

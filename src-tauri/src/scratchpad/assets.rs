@@ -6,9 +6,9 @@ use mime_guess::from_path as guess_mime;
 use rusqlite::Connection;
 
 use crate::models::entry::{DockEntry, EntryKind, EntryView};
+use crate::scratchpad::storage::create_dock_entry_internal;
 use crate::storage::connection::data_dir;
 use crate::storage::error::StorageResult;
-use crate::scratchpad::storage::create_dock_entry_internal;
 
 fn unique_filename(original_name: &str) -> String {
     // Sanitize: extract basename to prevent path traversal (e.g. ../../../evil)

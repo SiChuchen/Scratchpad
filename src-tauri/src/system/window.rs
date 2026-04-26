@@ -1,19 +1,14 @@
 use tauri::Manager;
 
-pub fn disable_dwm_transitions(
-    app: &tauri::AppHandle,
-    label: &str,
-) -> Result<(), String> {
+pub fn disable_dwm_transitions(app: &tauri::AppHandle, label: &str) -> Result<(), String> {
     let window = app
         .get_webview_window(label)
         .ok_or_else(|| format!("window not found: {label}"))?;
 
     #[cfg(target_os = "windows")]
     {
-        let hwnd = window
-            .hwnd()
-            .map_err(|e| e.to_string())?
-            .0 as windows_sys::Win32::Foundation::HWND;
+        let hwnd =
+            window.hwnd().map_err(|e| e.to_string())?.0 as windows_sys::Win32::Foundation::HWND;
 
         use windows_sys::Win32::Graphics::Dwm::{
             DwmSetWindowAttribute, DWMWA_TRANSITIONS_FORCEDISABLED,
@@ -39,25 +34,20 @@ pub fn disable_dwm_transitions(
     Ok(())
 }
 
-pub fn apply_circle_region(
-    app: &tauri::AppHandle,
-    label: &str,
-) -> Result<(), String> {
+pub fn apply_circle_region(app: &tauri::AppHandle, label: &str) -> Result<(), String> {
     let window = app
         .get_webview_window(label)
         .ok_or_else(|| format!("window not found: {label}"))?;
 
     #[cfg(target_os = "windows")]
     {
-        let hwnd = window
-            .hwnd()
-            .map_err(|e| e.to_string())?
-            .0 as windows_sys::Win32::Foundation::HWND;
+        let hwnd =
+            window.hwnd().map_err(|e| e.to_string())?.0 as windows_sys::Win32::Foundation::HWND;
 
         use windows_sys::Win32::Foundation::RECT;
         use windows_sys::Win32::Graphics::Gdi::{
-            CreateEllipticRgn, DeleteObject, RDW_ERASE, RDW_FRAME, RDW_INVALIDATE,
-            RedrawWindow, SetWindowRgn,
+            CreateEllipticRgn, DeleteObject, RedrawWindow, SetWindowRgn, RDW_ERASE, RDW_FRAME,
+            RDW_INVALIDATE,
         };
         use windows_sys::Win32::UI::WindowsAndMessaging::GetWindowRect;
 
@@ -104,20 +94,15 @@ pub fn apply_circle_region(
     Ok(())
 }
 
-pub fn clear_region(
-    app: &tauri::AppHandle,
-    label: &str,
-) -> Result<(), String> {
+pub fn clear_region(app: &tauri::AppHandle, label: &str) -> Result<(), String> {
     let window = app
         .get_webview_window(label)
         .ok_or_else(|| format!("window not found: {label}"))?;
 
     #[cfg(target_os = "windows")]
     {
-        let hwnd = window
-            .hwnd()
-            .map_err(|e| e.to_string())?
-            .0 as windows_sys::Win32::Foundation::HWND;
+        let hwnd =
+            window.hwnd().map_err(|e| e.to_string())?.0 as windows_sys::Win32::Foundation::HWND;
 
         unsafe {
             windows_sys::Win32::Graphics::Gdi::SetWindowRgn(hwnd, std::ptr::null_mut(), 1);
@@ -127,9 +112,7 @@ pub fn clear_region(
     Ok(())
 }
 
-pub fn restore_from_tab(
-    app: &tauri::AppHandle,
-) -> Result<(), String> {
+pub fn restore_from_tab(app: &tauri::AppHandle) -> Result<(), String> {
     crate::system::tab_controller::restore_main_window(app);
     Ok(())
 }

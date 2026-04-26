@@ -8,8 +8,8 @@ pub fn save_preferences(conn: &mut Connection, prefs: &DockPreferences) -> Stora
     let tx = conn.transaction()?;
     tx.execute("DELETE FROM preferences", [])?;
 
-    let overrides_json = serde_json::to_string(&prefs.theme_overrides)
-        .unwrap_or_else(|_| "{}".to_string());
+    let overrides_json =
+        serde_json::to_string(&prefs.theme_overrides).unwrap_or_else(|_| "{}".to_string());
 
     for (key, value) in [
         ("theme_mode", prefs.theme_mode.clone()),
@@ -17,7 +17,10 @@ pub fn save_preferences(conn: &mut Connection, prefs: &DockPreferences) -> Stora
         ("custom_base_preset_id", prefs.custom_base_preset_id.clone()),
         ("theme_overrides", overrides_json),
         ("ui_text_size_px", prefs.ui_text_size_px.to_string()),
-        ("content_text_size_px", prefs.content_text_size_px.to_string()),
+        (
+            "content_text_size_px",
+            prefs.content_text_size_px.to_string(),
+        ),
         ("spacing_preset", prefs.spacing_preset.clone()),
         ("radius_preset", prefs.radius_preset.clone()),
         ("dock_position_x", prefs.dock_position_x.to_string()),
@@ -64,8 +67,7 @@ pub fn load_preferences(conn: &Connection) -> StorageResult<DockPreferences> {
         prefs.custom_base_preset_id = v.clone();
     }
     if let Some(v) = map.get("theme_overrides") {
-        prefs.theme_overrides = serde_json::from_str(v)
-            .unwrap_or_default();
+        prefs.theme_overrides = serde_json::from_str(v).unwrap_or_default();
     }
     if let Some(v) = map.get("ui_text_size_px") {
         prefs.ui_text_size_px = v.parse().unwrap_or(prefs.ui_text_size_px);
@@ -146,11 +148,7 @@ pub fn load_preferences_with_fonts(
             installed_fonts,
             "Microsoft YaHei",
         ),
-        font_family_en: resolve_font(
-            Some(&prefs.font_family_en),
-            installed_fonts,
-            "Segoe UI",
-        ),
+        font_family_en: resolve_font(Some(&prefs.font_family_en), installed_fonts, "Segoe UI"),
         ..prefs
     })
 }
@@ -160,7 +158,9 @@ mod preference_tests {
     use rusqlite::Connection;
 
     use crate::models::preferences::DockPreferences;
-    use crate::scratchpad::preferences::{load_preferences, load_preferences_with_fonts, resolve_font, save_preferences};
+    use crate::scratchpad::preferences::{
+        load_preferences, load_preferences_with_fonts, resolve_font, save_preferences,
+    };
     use crate::scratchpad::storage::ensure_dock_schema;
 
     #[test]
@@ -171,7 +171,9 @@ mod preference_tests {
         let mut prefs = DockPreferences::default();
         prefs.theme_mode = "custom".to_string();
         prefs.custom_base_preset_id = "dark-glass".to_string();
-        prefs.theme_overrides.insert("--color-primary".to_string(), "#ff0000".to_string());
+        prefs
+            .theme_overrides
+            .insert("--color-primary".to_string(), "#ff0000".to_string());
         prefs.ui_text_size_px = 14.0;
         prefs.spacing_preset = "compact".to_string();
 
@@ -180,7 +182,10 @@ mod preference_tests {
 
         assert_eq!(loaded.theme_mode, "custom");
         assert_eq!(loaded.custom_base_preset_id, "dark-glass");
-        assert_eq!(loaded.theme_overrides.get("--color-primary"), Some(&"#ff0000".to_string()));
+        assert_eq!(
+            loaded.theme_overrides.get("--color-primary"),
+            Some(&"#ff0000".to_string())
+        );
         assert_eq!(loaded.ui_text_size_px, 14.0);
         assert_eq!(loaded.spacing_preset, "compact");
         assert_eq!(loaded.shortcut_modifiers, "Alt+Shift");

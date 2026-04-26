@@ -1,16 +1,19 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::Manager;
-use windows_sys::Win32::Foundation::{HWND, LRESULT, RECT, POINT};
-use windows_sys::Win32::Graphics::Gdi::{MonitorFromWindow, GetMonitorInfoW, MONITORINFO, MONITOR_DEFAULTTONEAREST};
+use windows_sys::Win32::Foundation::{HWND, LRESULT, POINT, RECT};
+use windows_sys::Win32::Graphics::Gdi::{
+    GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+};
 use windows_sys::Win32::UI::HiDpi::GetDpiForWindow;
-use windows_sys::Win32::UI::Input::KeyboardAndMouse::{SetCapture, ReleaseCapture, GetAsyncKeyState, VK_LBUTTON};
-use windows_sys::Win32::UI::Shell::{SetWindowSubclass, DefSubclassProc, RemoveWindowSubclass};
+use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
+    GetAsyncKeyState, ReleaseCapture, SetCapture, VK_LBUTTON,
+};
+use windows_sys::Win32::UI::Shell::{DefSubclassProc, RemoveWindowSubclass, SetWindowSubclass};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    GetWindow, GetWindowRect, SetTimer, KillTimer, GetCursorPos, SetWindowPos,
-    SetForegroundWindow, GW_CHILD,
-    SWP_HIDEWINDOW, SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER,
-    WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_TIMER,
-    WM_CAPTURECHANGED, WM_CANCELMODE, WM_NCDESTROY, WM_ACTIVATE, WM_MOUSEACTIVATE,
+    GetCursorPos, GetWindow, GetWindowRect, KillTimer, SetForegroundWindow, SetTimer, SetWindowPos,
+    GW_CHILD, SWP_HIDEWINDOW, SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER, WM_ACTIVATE, WM_CANCELMODE,
+    WM_CAPTURECHANGED, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE, WM_NCDESTROY,
+    WM_TIMER,
 };
 
 // EnableWindow is not exported by windows-sys 0.59 under Win32_UI_WindowsAndMessaging.
@@ -33,6 +36,7 @@ const TAB_OFFSCREEN_HIDE_COORD: i32 = -32000;
 /// Calculate the tab window's physical pixel size from its DPI.
 /// Uses integer arithmetic to avoid floating-point drift: (logical * dpi + 48) / 96
 /// This is the single source of truth for tab size — used by region, snap, and SetWindowPos.
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub fn tab_physical_size(hwnd: HWND) -> i32 {
     let dpi = unsafe { windows_sys::Win32::UI::HiDpi::GetDpiForWindow(hwnd) };
     (TAB_LOGICAL_SIZE * dpi as i32 + 48) / 96
@@ -42,23 +46,39 @@ pub fn tab_physical_size(hwnd: HWND) -> i32 {
 /// Called from the subclass proc on WM_ACTIVATE to repair region lost by focus changes.
 fn reapply_circle_region(hwnd: HWND) {
     use windows_sys::Win32::Graphics::Gdi::{
-        CreateEllipticRgn, DeleteObject, SetWindowRgn,
-        RDW_ERASE, RDW_FRAME, RDW_INVALIDATE, RedrawWindow,
+        CreateEllipticRgn, DeleteObject, RedrawWindow, SetWindowRgn, RDW_ERASE, RDW_FRAME,
+        RDW_INVALIDATE,
     };
 
     unsafe {
-        let mut rect = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+        let mut rect = RECT {
+            left: 0,
+            top: 0,
+            right: 0,
+            bottom: 0,
+        };
         GetWindowRect(hwnd, &mut rect);
         let w = rect.right - rect.left;
         let h = rect.bottom - rect.top;
-        let size = if w > 0 && h > 0 { w.min(h) } else { tab_physical_size(hwnd) };
+        let size = if w > 0 && h > 0 {
+            w.min(h)
+        } else {
+            tab_physical_size(hwnd)
+        };
 
         let region = CreateEllipticRgn(0, 0, size, size);
-        if region.is_null() { return; }
+        if region.is_null() {
+            return;
+        }
         if SetWindowRgn(hwnd, region, 1) == 0 {
             DeleteObject(region);
         } else {
-            RedrawWindow(hwnd, std::ptr::null(), std::ptr::null_mut(), RDW_ERASE | RDW_FRAME | RDW_INVALIDATE);
+            RedrawWindow(
+                hwnd,
+                std::ptr::null(),
+                std::ptr::null_mut(),
+                RDW_ERASE | RDW_FRAME | RDW_INVALIDATE,
+            );
         }
     }
 }
@@ -103,17 +123,27 @@ fn disable_child_input(host_hwnd: HWND) {
     let mut depth = 0u32;
     while !current.is_null() {
         depth += 1;
-        eprintln!("[tab_controller] disabling child level {depth}: hwnd={:#x}", current as usize);
+        eprintln!(
+            "[tab_controller] disabling child level {depth}: hwnd={:#x}",
+            current as usize
+        );
         unsafe { EnableWindow(current, 0) };
         current = unsafe { GetWindow(current, GW_CHILD) };
     }
     if depth == 0 {
-        eprintln!("[tab_controller] WARNING: no child windows found on host={:#x}", host_hwnd as usize);
+        eprintln!(
+            "[tab_controller] WARNING: no child windows found on host={:#x}",
+            host_hwnd as usize
+        );
     } else {
-        eprintln!("[tab_controller] disabled {depth} levels of child input on host={:#x}", host_hwnd as usize);
+        eprintln!(
+            "[tab_controller] disabled {depth} levels of child input on host={:#x}",
+            host_hwnd as usize
+        );
     }
 }
 
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub fn install(app: &tauri::AppHandle, host_hwnd: HWND) {
     if SUBCLASS_INSTALLED.load(Ordering::SeqCst) {
         return;
@@ -165,9 +195,14 @@ unsafe extern "system" fn subclass_proc(
             hwnd as usize, controller.state
         ),
         WM_TIMER if wparam == TAB_LONG_PRESS_TIMER_ID => {
-            eprintln!("[tab_subclass] WM_TIMER (long-press) hwnd={:#x}", hwnd as usize)
+            eprintln!(
+                "[tab_subclass] WM_TIMER (long-press) hwnd={:#x}",
+                hwnd as usize
+            )
         }
-        WM_CAPTURECHANGED => eprintln!("[tab_subclass] WM_CAPTURECHANGED hwnd={:#x}", hwnd as usize),
+        WM_CAPTURECHANGED => {
+            eprintln!("[tab_subclass] WM_CAPTURECHANGED hwnd={:#x}", hwnd as usize)
+        }
         WM_NCDESTROY => eprintln!("[tab_subclass] WM_NCDESTROY hwnd={:#x}", hwnd as usize),
         _ => {}
     }
@@ -207,10 +242,20 @@ unsafe extern "system" fn subclass_proc(
 
 // --- Message handlers ---
 
-fn handle_lbuttondown(hwnd: HWND, ctrl: &mut TabController, _wparam: usize, _lparam: isize) -> bool {
+fn handle_lbuttondown(
+    hwnd: HWND,
+    ctrl: &mut TabController,
+    _wparam: usize,
+    _lparam: isize,
+) -> bool {
     let mut pt = POINT { x: 0, y: 0 };
     unsafe { GetCursorPos(&mut pt) };
-    let mut rect = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+    let mut rect = RECT {
+        left: 0,
+        top: 0,
+        right: 0,
+        bottom: 0,
+    };
     unsafe { GetWindowRect(hwnd, &mut rect) };
 
     ctrl.press_origin_screen = (pt.x, pt.y);
@@ -225,7 +270,9 @@ fn handle_lbuttondown(hwnd: HWND, ctrl: &mut TabController, _wparam: usize, _lpa
 }
 
 fn handle_timer(hwnd: HWND, ctrl: &mut TabController, wparam: usize) -> bool {
-    if wparam != TAB_LONG_PRESS_TIMER_ID { return false; }
+    if wparam != TAB_LONG_PRESS_TIMER_ID {
+        return false;
+    }
     match ctrl.state {
         TabState::Pressed => {
             unsafe { KillTimer(hwnd, TAB_LONG_PRESS_TIMER_ID) };
@@ -254,7 +301,15 @@ fn handle_mousemove(hwnd: HWND, ctrl: &mut TabController, _lparam: isize) -> boo
             let new_x = ctrl.win_origin.0 + dx;
             let new_y = ctrl.win_origin.1 + dy;
             unsafe {
-                SetWindowPos(hwnd, std::ptr::null_mut(), new_x, new_y, 0, 0, SWP_NOSIZE | SWP_NOZORDER);
+                SetWindowPos(
+                    hwnd,
+                    std::ptr::null_mut(),
+                    new_x,
+                    new_y,
+                    0,
+                    0,
+                    SWP_NOSIZE | SWP_NOZORDER,
+                );
             }
             true
         }
@@ -309,7 +364,12 @@ fn cleanup(hwnd: HWND, ctrl: &mut TabController) {
 // --- Helpers ---
 
 fn snap_to_edge(hwnd: HWND) {
-    let mut win_rect = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+    let mut win_rect = RECT {
+        left: 0,
+        top: 0,
+        right: 0,
+        bottom: 0,
+    };
     unsafe { GetWindowRect(hwnd, &mut win_rect) };
 
     let monitor = unsafe { MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST) };
@@ -323,7 +383,15 @@ fn snap_to_edge(hwnd: HWND) {
     let tab_h = win_rect.bottom - win_rect.top;
     let (snap_x, snap_y) = calc_snap_position(&win_rect, &mi.rcWork, (tab_w, tab_h), 0.0);
     unsafe {
-        SetWindowPos(hwnd, std::ptr::null_mut(), snap_x, snap_y, 0, 0, SWP_NOSIZE | SWP_NOZORDER);
+        SetWindowPos(
+            hwnd,
+            std::ptr::null_mut(),
+            snap_x,
+            snap_y,
+            0,
+            0,
+            SWP_NOSIZE | SWP_NOZORDER,
+        );
     }
     reapply_circle_region(hwnd);
 }
@@ -386,7 +454,15 @@ pub(crate) fn restore_main_window(app: &tauri::AppHandle) {
         if let Ok(hwnd) = main.hwnd() {
             let hwnd = hwnd.0 as HWND;
             unsafe {
-                SetWindowPos(hwnd, std::ptr::null_mut(), geo.x, geo.y, geo.width, geo.height, SWP_NOZORDER);
+                SetWindowPos(
+                    hwnd,
+                    std::ptr::null_mut(),
+                    geo.x,
+                    geo.y,
+                    geo.width,
+                    geo.height,
+                    SWP_NOZORDER,
+                );
             }
         }
     } else {
@@ -485,7 +561,12 @@ mod tests {
     use super::*;
 
     fn make_work_rect() -> RECT {
-        RECT { left: 0, top: 0, right: 1920, bottom: 1080 }
+        RECT {
+            left: 0,
+            top: 0,
+            right: 1920,
+            bottom: 1080,
+        }
     }
 
     fn make_tab_size() -> (i32, i32) {
@@ -494,7 +575,12 @@ mod tests {
 
     #[test]
     fn snap_to_right_edge_full_visibility() {
-        let win = RECT { left: 1800, top: 500, right: 1848, bottom: 548 };
+        let win = RECT {
+            left: 1800,
+            top: 500,
+            right: 1848,
+            bottom: 548,
+        };
         let work = make_work_rect();
         let (x, y) = calc_snap_position(&win, &work, make_tab_size(), DEFAULT_HIDDEN_RATIO);
         assert_eq!(x, work.right - 48 - TAB_EDGE_MARGIN);
@@ -503,7 +589,12 @@ mod tests {
 
     #[test]
     fn snap_to_left_edge_full_visibility() {
-        let win = RECT { left: 10, top: 500, right: 58, bottom: 548 };
+        let win = RECT {
+            left: 10,
+            top: 500,
+            right: 58,
+            bottom: 548,
+        };
         let work = make_work_rect();
         let (x, y) = calc_snap_position(&win, &work, make_tab_size(), DEFAULT_HIDDEN_RATIO);
         assert_eq!(x, work.left + TAB_EDGE_MARGIN);
@@ -512,7 +603,12 @@ mod tests {
 
     #[test]
     fn snap_to_top_edge_full_visibility() {
-        let win = RECT { left: 900, top: 20, right: 948, bottom: 68 };
+        let win = RECT {
+            left: 900,
+            top: 20,
+            right: 948,
+            bottom: 68,
+        };
         let work = make_work_rect();
         let (x, y) = calc_snap_position(&win, &work, make_tab_size(), DEFAULT_HIDDEN_RATIO);
         assert_eq!(y, work.top + TAB_EDGE_MARGIN);
@@ -521,7 +617,12 @@ mod tests {
 
     #[test]
     fn snap_to_bottom_edge_full_visibility() {
-        let win = RECT { left: 900, top: 1020, right: 948, bottom: 1068 };
+        let win = RECT {
+            left: 900,
+            top: 1020,
+            right: 948,
+            bottom: 1068,
+        };
         let work = make_work_rect();
         let (x, y) = calc_snap_position(&win, &work, make_tab_size(), DEFAULT_HIDDEN_RATIO);
         assert_eq!(y, work.bottom - 48 - TAB_EDGE_MARGIN);
@@ -530,7 +631,12 @@ mod tests {
 
     #[test]
     fn hidden_ratio_ignored_in_full_visibility_mode() {
-        let win = RECT { left: 1800, top: 500, right: 1848, bottom: 548 };
+        let win = RECT {
+            left: 1800,
+            top: 500,
+            right: 1848,
+            bottom: 548,
+        };
         let work = make_work_rect();
         let (x1, y1) = calc_snap_position(&win, &work, make_tab_size(), 0.0);
         let (x2, y2) = calc_snap_position(&win, &work, make_tab_size(), 0.5);
@@ -540,8 +646,18 @@ mod tests {
 
     #[test]
     fn multi_monitor_offset_work_rect() {
-        let win = RECT { left: 3700, top: 500, right: 3748, bottom: 548 };
-        let work = RECT { left: 1920, top: 0, right: 3840, bottom: 1080 };
+        let win = RECT {
+            left: 3700,
+            top: 500,
+            right: 3748,
+            bottom: 548,
+        };
+        let work = RECT {
+            left: 1920,
+            top: 0,
+            right: 3840,
+            bottom: 1080,
+        };
         let (x, y) = calc_snap_position(&win, &work, make_tab_size(), DEFAULT_HIDDEN_RATIO);
         assert_eq!(x, work.right - 48 - TAB_EDGE_MARGIN);
         assert!(y >= work.top + TAB_EDGE_MARGIN && y + 48 <= work.bottom - TAB_EDGE_MARGIN);
@@ -549,7 +665,12 @@ mod tests {
 
     #[test]
     fn center_y_clamped_to_work_area() {
-        let win = RECT { left: 1800, top: -524, right: 1848, bottom: -476 };
+        let win = RECT {
+            left: 1800,
+            top: -524,
+            right: 1848,
+            bottom: -476,
+        };
         let work = make_work_rect();
         let (_, y) = calc_snap_position(&win, &work, make_tab_size(), DEFAULT_HIDDEN_RATIO);
         assert!(y >= work.top + TAB_EDGE_MARGIN);
@@ -560,17 +681,47 @@ mod tests {
     fn window_fully_within_work_area() {
         let work = make_work_rect();
         let positions = [
-            RECT { left: 10, top: 500, right: 58, bottom: 548 },
-            RECT { left: 1800, top: 500, right: 1848, bottom: 548 },
-            RECT { left: 900, top: 20, right: 948, bottom: 68 },
-            RECT { left: 900, top: 1020, right: 948, bottom: 1068 },
+            RECT {
+                left: 10,
+                top: 500,
+                right: 58,
+                bottom: 548,
+            },
+            RECT {
+                left: 1800,
+                top: 500,
+                right: 1848,
+                bottom: 548,
+            },
+            RECT {
+                left: 900,
+                top: 20,
+                right: 948,
+                bottom: 68,
+            },
+            RECT {
+                left: 900,
+                top: 1020,
+                right: 948,
+                bottom: 1068,
+            },
         ];
         for win in &positions {
             let (x, y) = calc_snap_position(win, &work, make_tab_size(), DEFAULT_HIDDEN_RATIO);
             assert!(x >= work.left, "x {} >= work.left {}", x, work.left);
             assert!(y >= work.top, "y {} >= work.top {}", y, work.top);
-            assert!(x + 48 <= work.right, "x+48 {} <= work.right {}", x + 48, work.right);
-            assert!(y + 48 <= work.bottom, "y+48 {} <= work.bottom {}", y + 48, work.bottom);
+            assert!(
+                x + 48 <= work.right,
+                "x+48 {} <= work.right {}",
+                x + 48,
+                work.right
+            );
+            assert!(
+                y + 48 <= work.bottom,
+                "y+48 {} <= work.bottom {}",
+                y + 48,
+                work.bottom
+            );
         }
     }
 }

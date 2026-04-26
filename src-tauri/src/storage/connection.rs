@@ -1,6 +1,6 @@
-use std::{fs, io, path::PathBuf};
-use rusqlite::Connection;
 use super::error::{StorageError, StorageResult};
+use rusqlite::Connection;
+use std::{fs, io, path::PathBuf};
 
 /// Returns the data directory next to the application executable.
 ///

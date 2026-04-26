@@ -3,8 +3,8 @@ pub mod scratchpad;
 pub mod storage;
 pub mod system;
 
-use std::sync::Mutex;
 use rusqlite::Connection;
+use std::sync::Mutex;
 use tauri::Manager;
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut};
 
@@ -28,17 +28,29 @@ fn parse_modifiers(s: &str) -> Option<Modifiers> {
             _ => return None,
         }
     }
-    if mods.is_empty() { None } else { Some(mods) }
+    if mods.is_empty() {
+        None
+    } else {
+        Some(mods)
+    }
 }
 
 fn parse_key_code(s: &str) -> Option<Code> {
     let upper = s.to_uppercase();
     if let Some(num) = upper.strip_prefix('F').and_then(|n| n.parse::<u8>().ok()) {
         return match num {
-            1 => Some(Code::F1), 2 => Some(Code::F2), 3 => Some(Code::F3),
-            4 => Some(Code::F4), 5 => Some(Code::F5), 6 => Some(Code::F6),
-            7 => Some(Code::F7), 8 => Some(Code::F8), 9 => Some(Code::F9),
-            10 => Some(Code::F10), 11 => Some(Code::F11), 12 => Some(Code::F12),
+            1 => Some(Code::F1),
+            2 => Some(Code::F2),
+            3 => Some(Code::F3),
+            4 => Some(Code::F4),
+            5 => Some(Code::F5),
+            6 => Some(Code::F6),
+            7 => Some(Code::F7),
+            8 => Some(Code::F8),
+            9 => Some(Code::F9),
+            10 => Some(Code::F10),
+            11 => Some(Code::F11),
+            12 => Some(Code::F12),
             _ => None,
         };
     }
@@ -47,19 +59,47 @@ fn parse_key_code(s: &str) -> Option<Code> {
         if ch.is_ascii_alphabetic() {
             let idx = (ch as u8 - b'A') as usize;
             let codes: [Code; 26] = [
-                Code::KeyA, Code::KeyB, Code::KeyC, Code::KeyD, Code::KeyE,
-                Code::KeyF, Code::KeyG, Code::KeyH, Code::KeyI, Code::KeyJ,
-                Code::KeyK, Code::KeyL, Code::KeyM, Code::KeyN, Code::KeyO,
-                Code::KeyP, Code::KeyQ, Code::KeyR, Code::KeyS, Code::KeyT,
-                Code::KeyU, Code::KeyV, Code::KeyW, Code::KeyX, Code::KeyY,
+                Code::KeyA,
+                Code::KeyB,
+                Code::KeyC,
+                Code::KeyD,
+                Code::KeyE,
+                Code::KeyF,
+                Code::KeyG,
+                Code::KeyH,
+                Code::KeyI,
+                Code::KeyJ,
+                Code::KeyK,
+                Code::KeyL,
+                Code::KeyM,
+                Code::KeyN,
+                Code::KeyO,
+                Code::KeyP,
+                Code::KeyQ,
+                Code::KeyR,
+                Code::KeyS,
+                Code::KeyT,
+                Code::KeyU,
+                Code::KeyV,
+                Code::KeyW,
+                Code::KeyX,
+                Code::KeyY,
                 Code::KeyZ,
             ];
             return Some(codes[idx]);
         }
         if ch.is_ascii_digit() {
             let codes: [Code; 10] = [
-                Code::Digit0, Code::Digit1, Code::Digit2, Code::Digit3, Code::Digit4,
-                Code::Digit5, Code::Digit6, Code::Digit7, Code::Digit8, Code::Digit9,
+                Code::Digit0,
+                Code::Digit1,
+                Code::Digit2,
+                Code::Digit3,
+                Code::Digit4,
+                Code::Digit5,
+                Code::Digit6,
+                Code::Digit7,
+                Code::Digit8,
+                Code::Digit9,
             ];
             return Some(codes[(ch as u8 - b'0') as usize]);
         }
@@ -92,10 +132,7 @@ fn ipc_entries_list(
 }
 
 #[tauri::command]
-fn ipc_entries_add_to_note(
-    state: tauri::State<AppState>,
-    entry_id: String,
-) -> Result<(), String> {
+fn ipc_entries_add_to_note(state: tauri::State<AppState>, entry_id: String) -> Result<(), String> {
     let mut conn = state.db.lock().map_err(|e| e.to_string())?;
     scratchpad::storage::add_to_note(&mut conn, &entry_id).map_err(|e| e.to_string())
 }
@@ -189,7 +226,7 @@ fn ipc_shortcut_status(
     let guard = state.current_shortcut.lock().map_err(|e| e.to_string())?;
     let registered = guard
         .as_ref()
-        .map_or(false, |s| app.global_shortcut().is_registered(s.clone()));
+        .map_or(false, |s| app.global_shortcut().is_registered(*s));
     Ok(ShortcutStatus {
         modifiers: prefs.shortcut_modifiers,
         key: prefs.shortcut_key,
@@ -204,7 +241,8 @@ fn ipc_shortcut_update(
     modifiers: String,
     key: String,
 ) -> Result<ShortcutStatus, String> {
-    let mods = parse_modifiers(&modifiers).ok_or_else(|| format!("invalid modifiers: {modifiers}"))?;
+    let mods =
+        parse_modifiers(&modifiers).ok_or_else(|| format!("invalid modifiers: {modifiers}"))?;
     let code = parse_key_code(&key).ok_or_else(|| format!("invalid key: {key}"))?;
     let new_shortcut = Shortcut::new(Some(mods), code);
 
@@ -217,7 +255,7 @@ fn ipc_shortcut_update(
     // Register new shortcut with same toggle handler
     let app_handle = app.clone();
     app.global_shortcut()
-        .on_shortcut(new_shortcut.clone(), move |_app, _sc, event| {
+        .on_shortcut(new_shortcut, move |_app, _sc, event| {
             use tauri_plugin_global_shortcut::ShortcutState;
             if event.state == ShortcutState::Pressed {
                 if let Some(w) = app_handle.get_webview_window("main") {
@@ -232,13 +270,14 @@ fn ipc_shortcut_update(
         })
         .map_err(|e| format!("failed to register shortcut: {e}"))?;
 
-    let registered = app.global_shortcut().is_registered(new_shortcut.clone());
+    let registered = app.global_shortcut().is_registered(new_shortcut);
     *guard = Some(new_shortcut);
 
     // Persist to preferences
     {
         let mut conn = state.db.lock().map_err(|e| e.to_string())?;
-        let mut prefs = scratchpad::preferences::load_preferences(&conn).map_err(|e| e.to_string())?;
+        let mut prefs =
+            scratchpad::preferences::load_preferences(&conn).map_err(|e| e.to_string())?;
         prefs.shortcut_modifiers = modifiers.clone();
         prefs.shortcut_key = key.clone();
         prefs.shortcut_registered = registered;
@@ -276,13 +315,7 @@ fn ipc_entries_import_image_bytes(
 ) -> Result<models::entry::DockEntry, String> {
     let mut conn = state.db.lock().map_err(|e| e.to_string())?;
     scratchpad::assets::import_image_bytes(
-        &mut conn,
-        &bytes,
-        &file_name,
-        &mime_type,
-        width,
-        height,
-        view,
+        &mut conn, &bytes, &file_name, &mime_type, width, height, view,
     )
     .map_err(|e| e.to_string())
 }
@@ -296,14 +329,8 @@ fn ipc_entries_import_file_bytes(
     view: models::entry::EntryView,
 ) -> Result<models::entry::DockEntry, String> {
     let mut conn = state.db.lock().map_err(|e| e.to_string())?;
-    scratchpad::assets::import_file_bytes(
-        &mut conn,
-        &bytes,
-        &file_name,
-        mime_type.as_deref(),
-        view,
-    )
-    .map_err(|e| e.to_string())
+    scratchpad::assets::import_file_bytes(&mut conn, &bytes, &file_name, mime_type.as_deref(), view)
+        .map_err(|e| e.to_string())
 }
 
 // --- Clipboard IPC commands ---
@@ -334,9 +361,7 @@ fn ipc_preferences_list_fonts() -> Result<Vec<String>, String> {
 
 #[tauri::command]
 async fn ipc_toggle_always_on_top(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
-    let window = app
-        .get_webview_window("main")
-        .ok_or("No main window")?;
+    let window = app.get_webview_window("main").ok_or("No main window")?;
     let current = window.is_always_on_top().map_err(|e| e.to_string())?;
     window
         .set_always_on_top(!current)
@@ -347,25 +372,17 @@ async fn ipc_toggle_always_on_top(app: tauri::AppHandle) -> Result<serde_json::V
 // --- Native window region ---
 
 #[tauri::command]
-fn ipc_window_apply_circle_region(
-    app: tauri::AppHandle,
-    label: String,
-) -> Result<(), String> {
+fn ipc_window_apply_circle_region(app: tauri::AppHandle, label: String) -> Result<(), String> {
     system::window::apply_circle_region(&app, &label)
 }
 
 #[tauri::command]
-fn ipc_window_clear_region(
-    app: tauri::AppHandle,
-    label: String,
-) -> Result<(), String> {
+fn ipc_window_clear_region(app: tauri::AppHandle, label: String) -> Result<(), String> {
     system::window::clear_region(&app, &label)
 }
 
 #[tauri::command]
-fn ipc_dock_restore_from_tab(
-    app: tauri::AppHandle,
-) -> Result<(), String> {
+fn ipc_dock_restore_from_tab(app: tauri::AppHandle) -> Result<(), String> {
     system::window::restore_from_tab(&app)
 }
 
@@ -379,18 +396,25 @@ fn ipc_dock_minimize_to_tab(
         GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST,
     };
     use windows_sys::Win32::UI::HiDpi::GetDpiForWindow;
-    use windows_sys::Win32::UI::WindowsAndMessaging::{
-        GetWindowRect, SetWindowPos, SWP_NOZORDER,
-    };
+    use windows_sys::Win32::UI::WindowsAndMessaging::{GetWindowRect, SetWindowPos, SWP_NOZORDER};
 
-    let main_w = app.get_webview_window("main").ok_or("main window not found")?;
-    let tab_w = app.get_webview_window("minimized-tab").ok_or("minimized-tab window not found")?;
+    let main_w = app
+        .get_webview_window("main")
+        .ok_or("main window not found")?;
+    let tab_w = app
+        .get_webview_window("minimized-tab")
+        .ok_or("minimized-tab window not found")?;
 
     let main_hwnd = main_w.hwnd().map_err(|e| e.to_string())?.0 as HWND;
     let tab_hwnd = tab_w.hwnd().map_err(|e| e.to_string())?.0 as HWND;
 
     // 1. Save main window geometry (physical coordinates)
-    let mut main_rect = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+    let mut main_rect = RECT {
+        left: 0,
+        top: 0,
+        right: 0,
+        bottom: 0,
+    };
     unsafe { GetWindowRect(main_hwnd, &mut main_rect) };
     let geo = system::tab_controller::MainWindowGeometry {
         x: main_rect.left,
@@ -405,14 +429,13 @@ fn ipc_dock_minimize_to_tab(
         let dpi = unsafe { GetDpiForWindow(main_hwnd) };
         let scale = dpi as f64 / 96.0;
         let mut db = state.db.lock().unwrap();
-        let mut prefs = scratchpad::preferences::load_preferences(&db)
-            .map_err(|e| e.to_string())?;
+        let mut prefs =
+            scratchpad::preferences::load_preferences(&db).map_err(|e| e.to_string())?;
         prefs.dock_position_x = geo.x as f64 / scale;
         prefs.dock_position_y = geo.y as f64 / scale;
         prefs.dock_width = geo.width as f64 / scale;
         prefs.dock_height = geo.height as f64 / scale;
-        scratchpad::preferences::save_preferences(&mut db, &prefs)
-            .map_err(|e| e.to_string())?;
+        scratchpad::preferences::save_preferences(&mut db, &prefs).map_err(|e| e.to_string())?;
         drop(db);
     }
 
@@ -428,9 +451,7 @@ fn ipc_dock_minimize_to_tab(
     let tab_size = (tab_px, tab_px);
 
     let (snap_x, snap_y) = system::tab_controller::calc_snap_position(
-        &main_rect,
-        &mi.rcWork,
-        tab_size,
+        &main_rect, &mi.rcWork, tab_size,
         0.0, // Full-visibility mode: tab stays entirely within work area
     );
 
@@ -439,7 +460,15 @@ fn ipc_dock_minimize_to_tab(
 
     // 5. SetWindowPos FIRST — position and size tab at final location
     unsafe {
-        SetWindowPos(tab_hwnd, std::ptr::null_mut(), snap_x, snap_y, tab_px, tab_px, SWP_NOZORDER);
+        SetWindowPos(
+            tab_hwnd,
+            std::ptr::null_mut(),
+            snap_x,
+            snap_y,
+            tab_px,
+            tab_px,
+            SWP_NOZORDER,
+        );
     }
 
     // 6. Apply circle region AFTER SetWindowPos (region based on actual window size)
@@ -510,20 +539,10 @@ pub fn run() {
         ])
         .setup(|app| {
             // System tray menu
-            let show_item = tauri::menu::MenuItem::with_id(
-                app,
-                "show",
-                "显示主窗口",
-                true,
-                None::<&str>,
-            )?;
-            let quit_item = tauri::menu::MenuItem::with_id(
-                app,
-                "quit",
-                "退出",
-                true,
-                None::<&str>,
-            )?;
+            let show_item =
+                tauri::menu::MenuItem::with_id(app, "show", "显示主窗口", true, None::<&str>)?;
+            let quit_item =
+                tauri::menu::MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
             let menu = tauri::menu::Menu::with_items(app, &[&show_item, &quit_item])?;
 
             let tray = app.tray_by_id("main").expect("tray icon exists");
@@ -550,35 +569,34 @@ pub fn run() {
 
                 let mods = parse_modifiers(&prefs.shortcut_modifiers)
                     .unwrap_or(Modifiers::ALT | Modifiers::SHIFT);
-                let code = parse_key_code(&prefs.shortcut_key)
-                    .unwrap_or(Code::KeyV);
+                let code = parse_key_code(&prefs.shortcut_key).unwrap_or(Code::KeyV);
                 let shortcut = Shortcut::new(Some(mods), code);
 
                 let app_handle = app.handle().clone();
-                let reg_result = app.global_shortcut().on_shortcut(
-                    shortcut.clone(),
-                    move |_app, _sc, event| {
-                        use tauri_plugin_global_shortcut::ShortcutState;
-                        if event.state == ShortcutState::Pressed {
-                            if let Some(w) = app_handle.get_webview_window("main") {
-                                if w.is_visible().unwrap_or(false) {
-                                    let _ = w.hide();
-                                } else {
-                                    let _ = w.show();
-                                    let _ = w.set_focus();
+                let reg_result =
+                    app.global_shortcut()
+                        .on_shortcut(shortcut, move |_app, _sc, event| {
+                            use tauri_plugin_global_shortcut::ShortcutState;
+                            if event.state == ShortcutState::Pressed {
+                                if let Some(w) = app_handle.get_webview_window("main") {
+                                    if w.is_visible().unwrap_or(false) {
+                                        let _ = w.hide();
+                                    } else {
+                                        let _ = w.show();
+                                        let _ = w.set_focus();
+                                    }
                                 }
                             }
-                        }
-                    },
-                );
+                        });
 
-                let registered = reg_result.is_ok()
-                    && app.global_shortcut().is_registered(shortcut.clone());
+                let registered =
+                    reg_result.is_ok() && app.global_shortcut().is_registered(shortcut);
 
                 // Persist registration status
                 {
                     let mut conn = state.db.lock().unwrap();
-                    let mut prefs = scratchpad::preferences::load_preferences(&conn).unwrap_or_default();
+                    let mut prefs =
+                        scratchpad::preferences::load_preferences(&conn).unwrap_or_default();
                     prefs.shortcut_registered = registered;
                     let _ = scratchpad::preferences::save_preferences(&mut conn, &prefs);
                 }
