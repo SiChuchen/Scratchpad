@@ -41,7 +41,6 @@ jobs:
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
         run: |
           $tag = "${{ github.ref_name }}"
           $version = $tag.TrimStart('v')
@@ -98,16 +97,8 @@ jobs:
                 }
               }
             }
-            Write-Host "Updated latest.json with renamed asset URLs"
-            # Re-sign updated latest.json (URL changes invalidate original signature)
-            $newSig = npx tauri signer sign --private-key $env:TAURI_SIGNING_PRIVATE_KEY $latestJsonPath
-            if ($LASTEXITCODE -eq 0 -and $newSig) {
-              $latestJson | Add-Member -NotePropertyValue $newSig.Trim() -Name 'signature' -Force
-              Write-Host "Re-signed updated latest.json"
-            } else {
-              Write-Warning "Failed to re-sign latest.json, updater may not work"
-            }
             $latestJson | ConvertTo-Json -Depth 10 | Set-Content $latestJsonPath -Encoding UTF8
+            Write-Host "Updated latest.json with renamed asset URLs"
             # Re-upload updated latest.json
             gh release upload $tag $latestJsonPath --clobber
             Write-Host "Re-uploaded updated latest.json"
@@ -202,11 +193,13 @@ jobs:
           }
 
           # 4. Verify signature field exists
+          # Note: URL changes invalidate the original signature. Re-signing requires
+          # npx tauri signer sign, which we need to fix in a follow-up.
           if (-not $latestJson.signature) {
             Write-Error "signature field missing or empty in latest.json"
             exit 1
           }
-          Write-Host "4. signature present ($($latestJson.signature.Length) chars)"
+          Write-Host "4. signature present ($($latestJson.signature.Length) chars) -- note: may be stale due to URL changes"
 
           # 5. Verify release asset names match convention
           $assets = gh release view $tag --json assets --jq '.assets[].name'
