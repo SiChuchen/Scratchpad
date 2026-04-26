@@ -46,20 +46,17 @@ jobs:
           $version = $tag.TrimStart('v')
           $label = "Soma_Scratchpad_${version}_Windows"
 
-          # Find the draft release
-          $release = gh release view $tag --draft --json id,assets --jq '.id,.assets[].name'
-          if ($LASTEXITCODE -ne 0) {
-            Write-Error "Release not found for tag $tag"
-            exit 1
-          }
+          # Publish the draft release so all gh commands work without --draft
+          gh release edit $tag --draft=false
 
-          $releaseJson = gh release view $tag --draft --json id,assets | ConvertFrom-Json
+          # Now work with the published release
+          $releaseJson = gh release view $tag --json id,assets | ConvertFrom-Json
           $releaseId = $releaseJson.id
 
           # Download all assets
           $downloadDir = "${{ runner.temp }}/release-assets"
           New-Item -ItemType Directory -Force -Path $downloadDir | Out-Null
-          gh release download $tag --draft --dir $downloadDir --clobber
+          gh release download $tag --dir $downloadDir --clobber
 
           # Rename MSI and NSIS, keep updater artifacts as-is
           $renamedAssets = @()
@@ -103,7 +100,7 @@ jobs:
             $latestJson | ConvertTo-Json -Depth 10 | Set-Content $latestJsonPath -Encoding UTF8
             Write-Host "Updated latest.json with renamed asset URLs"
             # Re-upload updated latest.json
-            gh release upload $tag $latestJsonPath --clobber --draft
+            gh release upload $tag $latestJsonPath --clobber
             Write-Host "Re-uploaded updated latest.json"
           }
 
@@ -162,7 +159,7 @@ jobs:
 
           # 1. Download latest.json
           $latestJsonPath = "${{ runner.temp }}/smoke-latest.json"
-          gh release download $tag --draft --pattern latest.json --dir "${{ runner.temp }}" --clobber
+          gh release download $tag --pattern latest.json --dir "${{ runner.temp }}" --clobber
           if (-not (Test-Path $latestJsonPath)) {
             Write-Error "latest.json not found in release assets"
             exit 1
@@ -203,7 +200,7 @@ jobs:
           Write-Host "4. signature present ($($latestJson.signature.Length) chars)"
 
           # 5. Verify release asset names match convention
-          $assets = gh release view $tag --draft --json assets --jq '.assets[].name'
+          $assets = gh release view $tag --json assets --jq '.assets[].name'
           $badAssets = @()
           foreach ($asset in $assets) {
             if ($asset -eq 'latest.json' -or $asset -match '\.tar\.gz(\.sig)?$') { continue }
