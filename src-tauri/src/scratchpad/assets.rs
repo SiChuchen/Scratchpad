@@ -10,6 +10,11 @@ use crate::storage::connection::data_dir;
 use crate::storage::error::StorageResult;
 use crate::scratchpad::storage::create_dock_entry_internal;
 
+fn unique_filename(original_name: &str) -> String {
+    let ts = Utc::now().timestamp_nanos_opt().unwrap_or_default();
+    format!("{}-{}", ts, original_name)
+}
+
 pub fn assets_dir() -> StorageResult<PathBuf> {
     let dated = Utc::now().format("%Y-%m-%d").to_string();
     let dir = data_dir()?.join("assets").join(dated);
@@ -45,7 +50,8 @@ pub fn import_file(
     let kind = classify_kind(source, mime_type.as_deref());
 
     let dest_dir = assets_dir()?;
-    let dest_path = dest_dir.join(&file_name);
+    let disk_name = unique_filename(&file_name);
+    let dest_path = dest_dir.join(&disk_name);
     fs::copy(source, &dest_path)?;
 
     let metadata = fs::metadata(source)?;
@@ -76,7 +82,8 @@ pub fn import_image_bytes(
     view: EntryView,
 ) -> StorageResult<DockEntry> {
     let dest_dir = assets_dir()?;
-    let dest_path = dest_dir.join(file_name);
+    let disk_name = unique_filename(file_name);
+    let dest_path = dest_dir.join(&disk_name);
     fs::write(&dest_path, bytes)?;
 
     let size_bytes = bytes.len() as i64;
@@ -107,7 +114,8 @@ pub fn import_file_bytes(
     let kind = classify_kind(path, mime_type);
 
     let dest_dir = assets_dir()?;
-    let dest_path = dest_dir.join(file_name);
+    let disk_name = unique_filename(file_name);
+    let dest_path = dest_dir.join(&disk_name);
     fs::write(&dest_path, bytes)?;
 
     let size_bytes = bytes.len() as i64;
