@@ -80,6 +80,10 @@ export const dockApi = {
     return invoke<void>('ipc_clipboard_copy_file', { path })
   },
 
+  readClipboardFilePaths() {
+    return invoke<string[]>('ipc_clipboard_read_file_paths')
+  },
+
   copyImage(path: string) {
     return invoke<void>('ipc_clipboard_copy_image', { path })
   },

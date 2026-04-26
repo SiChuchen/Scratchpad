@@ -140,6 +140,9 @@ export interface LocaleMessages {
     storedFileNamed: string
     dragDropFile: string
     dragDropFiles: string
+    largeFileWarn: string
+    largeFileProceed: string
+    largeFileCancel: string
     unknownError: string
     invalid: string
   }

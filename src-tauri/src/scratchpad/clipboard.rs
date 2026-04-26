@@ -14,13 +14,43 @@ mod win32_clipboard {
         fn CloseClipboard() -> i32;
         fn EmptyClipboard() -> i32;
         fn SetClipboardData(uFormat: u32, hMem: isize) -> isize;
+        fn GetClipboardData(uFormat: u32) -> isize;
         fn GlobalAlloc(uFlags: u32, dwBytes: usize) -> isize;
         fn GlobalLock(hMem: isize) -> isize;
         fn GlobalUnlock(hMem: isize) -> i32;
+        fn DragQueryFileW(hDrop: isize, iFile: u32, lpszFile: *mut u16, cch: u32) -> u32;
     }
 
     const CF_HDROP: u32 = 15;
     const GMEM_MOVEABLE: u32 = 0x0002;
+
+    /// Read file paths from CF_HDROP format in the system clipboard.
+    pub fn get_file_drop_list() -> Result<Vec<String>, String> {
+        unsafe {
+            if OpenClipboard(0) == 0 {
+                return Err("OpenClipboard failed".to_string());
+            }
+            let hdrop = GetClipboardData(CF_HDROP);
+            if hdrop == 0 {
+                CloseClipboard();
+                return Err("no CF_HDROP data on clipboard".to_string());
+            }
+            let count = DragQueryFileW(hdrop, 0xFFFFFFFF, std::ptr::null_mut(), 0);
+            let mut paths: Vec<String> = Vec::with_capacity(count as usize);
+            for i in 0..count {
+                let needed = DragQueryFileW(hdrop, i, std::ptr::null_mut(), 0) as usize;
+                if needed == 0 { continue; }
+                let mut buf: Vec<u16> = vec![0; needed + 1];
+                let written = DragQueryFileW(hdrop, i, buf.as_mut_ptr(), buf.len() as u32) as usize;
+                if written > 0 {
+                    let s = String::from_utf16_lossy(&buf[..written]);
+                    if !s.is_empty() { paths.push(s); }
+                }
+            }
+            CloseClipboard();
+            Ok(paths)
+        }
+    }
 
     /// Write file paths as CF_HDROP to the system clipboard via Win32 API.
     pub fn set_file_drop_list(paths: &[&str]) -> Result<(), String> {
@@ -93,6 +123,19 @@ pub fn copy_file(path: &str) -> Result<(), String> {
     });
 
     Ok(())
+}
+
+/// Read file paths from the Windows clipboard (CF_HDROP).
+/// Returns an empty list if CF_HDROP is not available.
+pub fn read_file_paths() -> Result<Vec<String>, String> {
+    #[cfg(windows)]
+    {
+        win32_clipboard::get_file_drop_list()
+    }
+    #[cfg(not(windows))]
+    {
+        Ok(Vec::new())
+    }
 }
 
 /// Copy image files using CF_HDROP so Ctrl+V in Explorer pastes the image file.

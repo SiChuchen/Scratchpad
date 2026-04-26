@@ -19,7 +19,7 @@
   let langKey = $state(0)
   let preferences = $state<DockPreferences | null>(null)
   let toast = $state<{ text: string; kind: 'success' | 'error'; undo?: () => void; actionLabel?: string } | null>(null)
-  let confirmDialog = $state<{ message: string; onConfirm: () => void; onCancel: () => void } | null>(null)
+  let confirmDialog = $state<{ message: string; onConfirm: () => void; onCancel: () => void; confirmLabel?: string; cancelLabel?: string } | null>(null)
   let toastTimer: ReturnType<typeof setTimeout> | null = null
 
   // Reactive system dark mode — separate from main async onMount
@@ -440,6 +440,10 @@
       pasteConsumed = true
       const blob = imageItem.getAsFile()
       if (!blob) return
+      if (blob.size > MAX_BLOB_IMPORT_BYTES) {
+        const ok = await confirmLargeFile(`pasted-${Date.now()}.png`, blob.size)
+        if (!ok) return
+      }
       try {
         const view = currentView === 'note' ? 'note' : 'home'
         const created = await dockApi.importImageBlob(blob, `pasted-${Date.now()}.png`, view)
@@ -461,7 +465,44 @@
       pasteConsumed = true
       try {
         const view = currentView === 'note' ? 'note' : 'home'
+        let imported = 0
+
+        // 1. Try reading file paths from Windows clipboard (CF_HDROP)
+        let clipboardPaths: string[] = []
+        try { clipboardPaths = await dockApi.readClipboardFilePaths() } catch {}
+        if (clipboardPaths.length > 0) {
+          for (const path of clipboardPaths) {
+            const created = await dockApi.importFile(path, view)
+            if (view === 'note') {
+              noteEntries = [{ ...created, inNote: true, inHome: false }, ...noteEntries]
+            } else {
+              homeEntries = insertHomeEntry(homeEntries, { ...created, inHome: true })
+            }
+            imported++
+          }
+          showToast(messages.toast.storedFiles.replace('{n}', String(imported)))
+          return
+        }
+
+        // 2. Fallback: blob-based import with size guard
         for (const file of files) {
+          const rawPath = (file as any).path as string | undefined
+          if (rawPath) {
+            const created = await dockApi.importFile(rawPath, view)
+            if (view === 'note') {
+              noteEntries = [{ ...created, inNote: true, inHome: false }, ...noteEntries]
+            } else {
+              homeEntries = insertHomeEntry(homeEntries, { ...created, inHome: true })
+            }
+            imported++
+            continue
+          }
+
+          if (file.size > MAX_BLOB_IMPORT_BYTES) {
+            const ok = await confirmLargeFile(file.name || messages.entry.unnamedFile, file.size)
+            if (!ok) continue
+          }
+
           if (file.type.startsWith('image/')) {
             const created = await dockApi.importImageBlob(file, file.name || `pasted-${Date.now()}.png`, view)
             if (view === 'note') {
@@ -470,21 +511,18 @@
               homeEntries = insertHomeEntry(homeEntries, { ...created, inHome: true })
             }
           } else {
-            const bytes = Array.from(new Uint8Array(await file.arrayBuffer()))
-            const created = await invoke<DockEntry>('ipc_entries_import_file_bytes', {
-              bytes,
-              fileName: file.name || `file-${Date.now()}`,
-              mimeType: file.type || null,
-              view,
-            })
+            const created = await dockApi.importFileBlob(file, file.name || `file-${Date.now()}`, view)
             if (view === 'note') {
               noteEntries = [{ ...created, inNote: true, inHome: false }, ...noteEntries]
             } else {
               homeEntries = insertHomeEntry(homeEntries, { ...created, inHome: true })
             }
           }
+          imported++
         }
-        showToast(messages.toast.storedFiles.replace('{n}', String(files.length)))
+        if (imported > 0) {
+          showToast(messages.toast.storedFiles.replace('{n}', String(imported)))
+        }
       } catch (e) {
         showToast(`${messages.toast.importFailed}: ${formatError(e)}`, 'error')
       }
@@ -581,6 +619,29 @@
     if (typeof error === 'string') return error
     return messages.toast.unknownError
   }
+
+  // --- Large file guard ---
+
+  const MAX_BLOB_IMPORT_BYTES = 100 * 1024 * 1024 // 100 MB
+
+  function formatSize(bytes: number): string {
+    if (bytes < 1024) return `${bytes} B`
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+    if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+    return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`
+  }
+
+  function confirmLargeFile(fileName: string, sizeBytes: number): Promise<boolean> {
+    return new Promise((resolve) => {
+      confirmDialog = {
+        message: messages.toast.largeFileWarn.replace('{name}', fileName).replace('{size}', formatSize(sizeBytes)),
+        confirmLabel: messages.toast.largeFileProceed,
+        cancelLabel: messages.toast.largeFileCancel,
+        onConfirm: () => { confirmDialog = null; resolve(true) },
+        onCancel: () => { confirmDialog = null; resolve(false) },
+      }
+    })
+  }
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -651,8 +712,8 @@
     <div class="confirm-dialog">
       <p class="confirm-msg">{confirmDialog.message}</p>
       <div class="confirm-actions">
-        <button class="confirm-btn cancel" onclick={confirmDialog.onCancel}>{messages.settings.restartLater}</button>
-        <button class="confirm-btn ok" onclick={confirmDialog.onConfirm}>{messages.settings.restartNow}</button>
+        <button class="confirm-btn cancel" onclick={confirmDialog.onCancel}>{confirmDialog.cancelLabel || messages.settings.restartLater}</button>
+        <button class="confirm-btn ok" onclick={confirmDialog.onConfirm}>{confirmDialog.confirmLabel || messages.settings.restartNow}</button>
       </div>
     </div>
   </div>

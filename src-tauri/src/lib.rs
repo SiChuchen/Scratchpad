@@ -318,6 +318,11 @@ fn ipc_clipboard_copy_image(path: String) -> Result<(), String> {
     scratchpad::clipboard::copy_image(&path)
 }
 
+#[tauri::command]
+fn ipc_clipboard_read_file_paths() -> Result<Vec<String>, String> {
+    scratchpad::clipboard::read_file_paths()
+}
+
 // --- System IPC commands ---
 
 #[tauri::command]
@@ -491,6 +496,7 @@ pub fn run() {
             ipc_entries_import_file_bytes,
             ipc_clipboard_copy_file,
             ipc_clipboard_copy_image,
+            ipc_clipboard_read_file_paths,
             ipc_preferences_get,
             ipc_preferences_set,
             ipc_preferences_list_fonts,
