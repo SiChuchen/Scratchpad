@@ -1078,4 +1078,69 @@ mod repository_tests {
         let home = list_entries(&conn, EntryView::Home, None).unwrap();
         assert!(home.is_empty());
     }
+
+    /// End-to-end: simulate app startup with auto_cleanup_days from preferences
+    #[test]
+    fn e2e_cleanup_driven_by_preferences() {
+        use crate::scratchpad::preferences::{load_preferences, save_preferences};
+        use crate::models::preferences::DockPreferences;
+
+        let mut conn = Connection::open_in_memory().unwrap();
+
+        // Phase 1: First startup with default prefs (auto_cleanup_days = 0)
+        ensure_dock_schema(&mut conn, 0).unwrap();
+        let _home_only = create_text_entry(&mut conn, EntryView::Home, "will be cleaned", "manual").unwrap();
+        let starred = create_text_entry(&mut conn, EntryView::Home, "keep forever", "manual").unwrap();
+        add_to_note(&mut conn, &starred.id).unwrap();
+
+        // Simulate app reading prefs and running cleanup
+        let prefs = load_preferences(&conn).unwrap();
+        assert_eq!(prefs.auto_cleanup_days, 0);
+
+        let deleted = cleanup_home_on_startup(&mut conn, prefs.auto_cleanup_days).unwrap();
+        assert_eq!(deleted, 1, "one unstarred entry should be cleaned");
+
+        let home = list_entries(&conn, EntryView::Home, None).unwrap();
+        let note = list_entries(&conn, EntryView::Note, None).unwrap();
+        assert_eq!(home.len(), 1, "starred entry still in home");
+        assert_eq!(note.len(), 1, "starred entry in note");
+
+        // Phase 2: User changes auto_cleanup_days to 7
+        let mut new_prefs = DockPreferences::default();
+        new_prefs.auto_cleanup_days = 7;
+        save_preferences(&mut conn, &new_prefs).unwrap();
+
+        // Insert entries of different ages
+        conn.execute(
+            "INSERT INTO entries (id, kind, content, collapsed, source, created_at, updated_at)
+             VALUES ('de-1d', 'text', '1 day old', 0, 'manual', datetime('now', '-1 day'), datetime('now', '-1 day'))",
+            [],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO home_entries (entry_id, created_at) VALUES ('de-1d', datetime('now', '-1 day'))",
+            [],
+        ).unwrap();
+
+        conn.execute(
+            "INSERT INTO entries (id, kind, content, collapsed, source, created_at, updated_at)
+             VALUES ('de-10d', 'text', '10 days old', 0, 'manual', datetime('now', '-10 days'), datetime('now', '-10 days'))",
+            [],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO home_entries (entry_id, created_at) VALUES ('de-10d', datetime('now', '-10 days'))",
+            [],
+        ).unwrap();
+
+        // Reload prefs and cleanup
+        let prefs2 = load_preferences(&conn).unwrap();
+        assert_eq!(prefs2.auto_cleanup_days, 7);
+
+        let deleted2 = cleanup_home_on_startup(&mut conn, prefs2.auto_cleanup_days).unwrap();
+        assert_eq!(deleted2, 1, "only the 10-day-old unstarred entry should be cleaned");
+
+        let home2 = list_entries(&conn, EntryView::Home, None).unwrap();
+        assert!(home2.iter().any(|e| e.id == "de-1d"), "1-day-old entry survives");
+        assert!(home2.iter().any(|e| e.id == starred.id), "starred entry survives");
+        assert!(!home2.iter().any(|e| e.id == "de-10d"), "10-day-old entry was cleaned");
+    }
 }
