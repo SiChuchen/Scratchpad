@@ -11,8 +11,17 @@ use crate::storage::error::StorageResult;
 use crate::scratchpad::storage::create_dock_entry_internal;
 
 fn unique_filename(original_name: &str) -> String {
+    // Sanitize: extract basename to prevent path traversal (e.g. ../../../evil)
+    let mut safe_name = Path::new(original_name)
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "untitled-file".to_string());
+    // Guard against "." and ".." which are directory references, not filenames
+    if safe_name == "." || safe_name == ".." || safe_name.is_empty() {
+        safe_name = "untitled-file".to_string();
+    }
     let ts = Utc::now().timestamp_nanos_opt().unwrap_or_default();
-    format!("{}-{}", ts, original_name)
+    format!("{}-{}", ts, safe_name)
 }
 
 pub fn assets_dir() -> StorageResult<PathBuf> {
