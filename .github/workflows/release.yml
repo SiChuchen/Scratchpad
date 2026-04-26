@@ -192,14 +192,13 @@ jobs:
             exit 1
           }
 
-          # 4. Verify signature field exists
-          # Note: URL changes invalidate the original signature. Re-signing requires
-          # npx tauri signer sign, which we need to fix in a follow-up.
-          if (-not $latestJson.signature) {
-            Write-Error "signature field missing or empty in latest.json"
+          # 4. Verify platform signature field exists
+          $sig = $latestJson.platforms.'windows-x86_64'.signature
+          if (-not $sig) {
+            Write-Error "platforms.windows-x86_64.signature missing or empty in latest.json"
             exit 1
           }
-          Write-Host "4. signature present ($($latestJson.signature.Length) chars) -- note: may be stale due to URL changes"
+          Write-Host "4. platform signature present ($($sig.Length) chars) -- note: may be stale due to URL changes"
 
           # 5. Verify release asset names match convention
           $assets = gh release view $tag --json assets --jq '.assets[].name'
