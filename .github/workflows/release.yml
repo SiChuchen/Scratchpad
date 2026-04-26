@@ -102,6 +102,9 @@ jobs:
             }
             $latestJson | ConvertTo-Json -Depth 10 | Set-Content $latestJsonPath -Encoding UTF8
             Write-Host "Updated latest.json with renamed asset URLs"
+            # Re-upload updated latest.json
+            gh release upload $tag $latestJsonPath --clobber
+            Write-Host "Re-uploaded updated latest.json"
           }
 
           # Create portable zip from release exe
