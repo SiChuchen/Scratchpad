@@ -5,7 +5,7 @@ description = "Soma Scratchpad"
 edition = "2021"
 
 [dependencies]
-tauri = { version = "2", features = ["protocol-asset", "tray-icon", "devtools", "image-ico"] }
+tauri = { version = "2", features = ["protocol-asset", "tray-icon", "image-ico"] }
 tauri-plugin-global-shortcut = "2"
 tauri-plugin-autostart = "2"
 tauri-plugin-updater = "2"
@@ -26,6 +26,9 @@ windows-sys = { version = "0.59", features = [
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_HiDpi",
 ] }
+
+[features]
+devtools = ["tauri/devtools"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

@@ -45,11 +45,11 @@
       }
     ],
     "security": {
-      "csp": null,
+      "csp": "default-src 'self'; img-src 'self' https://asset.localhost data:; style-src 'self' 'unsafe-inline'; connect-src 'self' ws:",
       "assetProtocol": {
         "enable": true,
         "scope": {
-          "allow": ["**"]
+          "allow": ["$EXE/data/**"]
         }
       }
     },
