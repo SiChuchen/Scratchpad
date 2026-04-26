@@ -99,6 +99,7 @@ const en: LocaleMessages = {
     dataDirLabel: 'Current data storage path',
     dataDirChange: 'Change directory',
     dataDirRestartHint: 'Restart the app after changing the data directory. Existing data is not migrated automatically — please copy it manually.',
+    dataDirRestartBtn: 'Restart Now',
     shortcut: 'Global shortcut',
     shortcutStatus: 'Status',
     shortcutRegistered: 'Registered',

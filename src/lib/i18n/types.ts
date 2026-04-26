@@ -97,6 +97,7 @@ export interface LocaleMessages {
     dataDirLabel: string
     dataDirChange: string
     dataDirRestartHint: string
+    dataDirRestartBtn: string
     shortcut: string
     shortcutStatus: string
     shortcutRegistered: string

@@ -99,6 +99,7 @@ const zhCN: LocaleMessages = {
     dataDirLabel: '当前数据存储路径',
     dataDirChange: '更改目录',
     dataDirRestartHint: '更改数据目录后请重启应用以生效。已有数据不会自动迁移，请手动复制。',
+    dataDirRestartBtn: '立即重启',
     shortcut: '全局快捷键',
     shortcutStatus: '状态',
     shortcutRegistered: '已注册',

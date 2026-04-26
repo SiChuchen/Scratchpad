@@ -273,12 +273,9 @@ fn handle_timer(hwnd: HWND, ctrl: &mut TabController, wparam: usize) -> bool {
     if wparam != TAB_LONG_PRESS_TIMER_ID {
         return false;
     }
-    match ctrl.state {
-        TabState::Pressed => {
-            unsafe { KillTimer(hwnd, TAB_LONG_PRESS_TIMER_ID) };
-            ctrl.state = TabState::Dragging;
-        }
-        _ => {}
+    if ctrl.state == TabState::Pressed {
+        unsafe { KillTimer(hwnd, TAB_LONG_PRESS_TIMER_ID) };
+        ctrl.state = TabState::Dragging;
     }
     true
 }

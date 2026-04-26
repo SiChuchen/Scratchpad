@@ -19,6 +19,7 @@
     "global-shortcut:allow-unregister",
     "autostart:default",
     "updater:default",
+    "dialog:default",
     "process:default"
   ]
 }

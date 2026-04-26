@@ -261,6 +261,7 @@ fn list_entries_internal(
     Ok(entries)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn create_dock_entry_internal(
     conn: &mut Connection,
     view: EntryView,
@@ -566,62 +567,6 @@ pub fn create_text_item(
         width: None,
         height: None,
         size_bytes: None,
-        pinned: false,
-        source: source.to_string(),
-        created_at: now.clone(),
-        updated_at: now.clone(),
-    };
-
-    conn.execute(
-        "INSERT INTO scratchpad_items (
-            id, item_type, content, file_path, file_name, mime_type,
-            width, height, size_bytes, pinned, source, created_at, updated_at
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
-        params![
-            item.id,
-            item.item_type,
-            item.content,
-            item.file_path,
-            item.file_name,
-            item.mime_type,
-            item.width,
-            item.height,
-            item.size_bytes,
-            item.pinned as i32,
-            item.source,
-            item.created_at,
-            item.updated_at,
-        ],
-    )?;
-
-    Ok(item)
-}
-
-pub fn create_image_item(
-    conn: &mut Connection,
-    file_path: &str,
-    file_name: &str,
-    mime_type: &str,
-    width: Option<i64>,
-    height: Option<i64>,
-    size_bytes: Option<i64>,
-    source: &str,
-) -> StorageResult<ScratchpadItem> {
-    let id = format!(
-        "sp-{}",
-        Utc::now().timestamp_nanos_opt().unwrap_or_default()
-    );
-    let now = Utc::now().to_rfc3339();
-    let item = ScratchpadItem {
-        id: id.clone(),
-        item_type: "image".to_string(),
-        content: None,
-        file_path: Some(file_path.to_string()),
-        file_name: Some(file_name.to_string()),
-        mime_type: Some(mime_type.to_string()),
-        width,
-        height,
-        size_bytes,
         pinned: false,
         source: source.to_string(),
         created_at: now.clone(),
@@ -1113,8 +1058,10 @@ mod repository_tests {
         assert_eq!(note.len(), 1, "starred entry in note");
 
         // Phase 2: User changes auto_cleanup_days to 7
-        let mut new_prefs = DockPreferences::default();
-        new_prefs.auto_cleanup_days = 7;
+        let new_prefs = DockPreferences {
+            auto_cleanup_days: 7,
+            ..Default::default()
+        };
         save_preferences(&mut conn, &new_prefs).unwrap();
 
         // Insert entries of different ages

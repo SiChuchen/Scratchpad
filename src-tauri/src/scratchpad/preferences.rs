@@ -168,14 +168,16 @@ mod preference_tests {
         let mut conn = Connection::open_in_memory().unwrap();
         ensure_dock_schema(&mut conn, 0).unwrap();
 
-        let mut prefs = DockPreferences::default();
-        prefs.theme_mode = "custom".to_string();
-        prefs.custom_base_preset_id = "dark-glass".to_string();
+        let mut prefs = DockPreferences {
+            theme_mode: "custom".to_string(),
+            custom_base_preset_id: "dark-glass".to_string(),
+            ui_text_size_px: 14.0,
+            spacing_preset: "compact".to_string(),
+            ..Default::default()
+        };
         prefs
             .theme_overrides
             .insert("--color-primary".to_string(), "#ff0000".to_string());
-        prefs.ui_text_size_px = 14.0;
-        prefs.spacing_preset = "compact".to_string();
 
         save_preferences(&mut conn, &prefs).unwrap();
         let loaded = load_preferences(&conn).unwrap();
@@ -205,8 +207,10 @@ mod preference_tests {
         let mut conn = Connection::open_in_memory().unwrap();
         ensure_dock_schema(&mut conn, 0).unwrap();
 
-        let mut prefs = DockPreferences::default();
-        prefs.font_family_zh = "Removed Font".to_string();
+        let prefs = DockPreferences {
+            font_family_zh: "Removed Font".to_string(),
+            ..Default::default()
+        };
         save_preferences(&mut conn, &prefs).unwrap();
 
         let loaded = load_preferences_with_fonts(

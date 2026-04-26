@@ -32,12 +32,11 @@ pub fn assets_dir() -> StorageResult<PathBuf> {
 }
 
 pub fn classify_kind(path: &Path, mime: Option<&str>) -> EntryKind {
-    if mime.map_or(false, |m| m.starts_with("image/")) {
-        EntryKind::Image
-    } else if guess_mime(path)
-        .first_raw()
-        .map_or(false, |m| m.starts_with("image/"))
-    {
+    let is_image = mime.is_some_and(|m| m.starts_with("image/"))
+        || guess_mime(path)
+            .first_raw()
+            .is_some_and(|m| m.starts_with("image/"));
+    if is_image {
         EntryKind::Image
     } else {
         EntryKind::File

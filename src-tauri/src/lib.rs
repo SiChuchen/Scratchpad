@@ -226,7 +226,7 @@ fn ipc_shortcut_status(
     let guard = state.current_shortcut.lock().map_err(|e| e.to_string())?;
     let registered = guard
         .as_ref()
-        .map_or(false, |s| app.global_shortcut().is_registered(*s));
+        .is_some_and(|s| app.global_shortcut().is_registered(*s));
     Ok(ShortcutStatus {
         modifiers: prefs.shortcut_modifiers,
         key: prefs.shortcut_key,
@@ -249,7 +249,7 @@ fn ipc_shortcut_update(
     // Unregister old shortcut
     let mut guard = state.current_shortcut.lock().map_err(|e| e.to_string())?;
     if let Some(ref old) = *guard {
-        let _ = app.global_shortcut().unregister(old.clone());
+        let _ = app.global_shortcut().unregister(*old);
     }
 
     // Register new shortcut with same toggle handler
@@ -540,6 +540,7 @@ pub fn run() {
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_autostart::Builder::new().build())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())
         .manage(AppState {
             db: Mutex::new(init_db()),

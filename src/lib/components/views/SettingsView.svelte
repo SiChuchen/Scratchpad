@@ -5,6 +5,8 @@
   import { THEME_PRESETS } from '$lib/themes/presets'
   import { TOKEN_SCHEMA, validateToken } from '$lib/themes/token-schema'
   import { messages } from '$lib/i18n'
+  import { open } from '@tauri-apps/plugin-dialog'
+  import { relaunch } from '@tauri-apps/plugin-process'
 
   interface Props {
     preferences: DockPreferences
@@ -38,15 +40,19 @@
   let dataDirChanged = $state(false)
 
   async function loadDataDirInfo() {
-    try { dataDirInfo = await dockApi.getDataDirInfo() } catch {}
+    try {
+      dataDirInfo = await dockApi.getDataDirInfo()
+      dataDirInput = dataDirInfo.path
+    } catch {}
   }
 
   async function changeDataDir() {
-    const path = dataDirInput.trim()
-    if (!path) return
     try {
+      const path = await open({ directory: true, title: '选择数据目录' })
+      if (!path) return
       const info = await dockApi.setDataDir(path)
       dataDirInfo = info
+      dataDirInput = path
       dataDirChanged = true
     } catch (e) {
       alert(String(e))
@@ -343,21 +349,17 @@
         <div class="section-body">
           {#if dataDirInfo}
             <div class="row">
-              <span class="label">{messages.settings.dataDirLabel}</span>
-              <span class="datadir-path">{dataDirInfo.path}</span>
-            </div>
-            <div class="row">
               <input
                 type="text"
                 class="proxy-input"
-                placeholder={dataDirInfo.path}
                 bind:value={dataDirInput}
                 onkeydown={(e) => { if (e.key === 'Enter') changeDataDir() }}
               />
               <button class="record-btn" onclick={changeDataDir}>{messages.settings.dataDirChange}</button>
             </div>
             {#if dataDirChanged}
-              <p class="section-subtitle datadir-hint">{messages.settings.dataDirRestartHint}</p>
+              <p class="section-subtitle">{messages.settings.dataDirRestartHint}</p>
+              <button class="record-btn" onclick={() => relaunch()}>{messages.settings.dataDirRestartBtn}</button>
             {/if}
           {:else}
             <p class="section-subtitle">加载中...</p>
@@ -1028,17 +1030,6 @@
     color: var(--color-danger);
   }
 
-  .datadir-path {
-    font-size: var(--font-sm, 0.6rem);
-    color: var(--text-muted);
-    word-break: break-all;
-    background: var(--surface-2);
-    padding: 0.15rem 0.4rem;
-    border-radius: var(--radius-sm, 0.25rem);
-    flex: 1;
-    min-width: 0;
-  }
-
   .shortcut-status {
     font-size: var(--font-sm, 0.65rem);
     padding: 0.15rem 0.4rem;
@@ -1078,10 +1069,6 @@
   .record-btn:disabled {
     opacity: 0.5;
     cursor: not-allowed;
-  }
-
-  .datadir-hint {
-    color: var(--color-info);
   }
 
   .section-subtitle {
