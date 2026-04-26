@@ -44,7 +44,7 @@ jobs:
         run: |
           $tag = "${{ github.ref_name }}"
           $version = $tag.TrimStart('v')
-          $label = "Soma Scratchpad_${version}_Windows"
+          $label = "Soma.Scratchpad_${version}_Windows"
 
           # Find the draft release
           $release = gh release view $tag --json id,assets --jq '.id,.assets[].name'
