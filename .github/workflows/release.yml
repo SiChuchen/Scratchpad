@@ -158,7 +158,7 @@ jobs:
           Write-Host "=== Smoke Check ==="
 
           # 1. Download latest.json
-          $latestJsonPath = "${{ runner.temp }}/smoke-latest.json"
+          $latestJsonPath = "${{ runner.temp }}/latest.json"
           gh release download $tag --pattern latest.json --dir "${{ runner.temp }}" --clobber
           if (-not (Test-Path $latestJsonPath)) {
             Write-Error "latest.json not found in release assets"
