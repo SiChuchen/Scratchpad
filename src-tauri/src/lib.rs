@@ -218,15 +218,14 @@ struct ShortcutStatus {
 #[tauri::command]
 fn ipc_shortcut_status(
     state: tauri::State<AppState>,
-    app: tauri::AppHandle,
 ) -> Result<ShortcutStatus, String> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
     let prefs = scratchpad::preferences::load_preferences(&conn).map_err(|e| e.to_string())?;
     drop(conn);
     let guard = state.current_shortcut.lock().map_err(|e| e.to_string())?;
-    let registered = guard
-        .as_ref()
-        .is_some_and(|s| app.global_shortcut().is_registered(*s));
+    // is_registered() can return false even when the shortcut works,
+    // so we trust the stored registration result from startup.
+    let registered = guard.as_ref().is_some();
     Ok(ShortcutStatus {
         modifiers: prefs.shortcut_modifiers,
         key: prefs.shortcut_key,
@@ -270,7 +269,7 @@ fn ipc_shortcut_update(
         })
         .map_err(|e| format!("failed to register shortcut: {e}"))?;
 
-    let registered = app.global_shortcut().is_registered(new_shortcut);
+    let registered = true; // on_shortcut succeeded above, trust it over is_registered()
     *guard = Some(new_shortcut);
 
     // Persist to preferences
@@ -627,8 +626,7 @@ pub fn run() {
                             }
                         });
 
-                let registered =
-                    reg_result.is_ok() && app.global_shortcut().is_registered(shortcut);
+                let registered = reg_result.is_ok();
 
                 // Persist registration status
                 {
