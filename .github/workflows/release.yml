@@ -5,10 +5,16 @@ on:
     tags:
       - 'v*'
 
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: true
+
 jobs:
-  release:
-    permissions:
-      contents: write
+  build:
+    name: Build
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -22,198 +28,274 @@ jobs:
           node-version: 22
           cache: pnpm
 
+      - name: Setup Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+
       - name: Install frontend dependencies
-        run: pnpm install
+        run: pnpm install --frozen-lockfile
 
       - name: Build Tauri app
-        uses: tauri-apps/tauri-action@v0
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-        with:
-          tagName: ${{ github.ref_name }}
-          releaseName: 'Soma Scratchpad ${{ github.ref_name }}'
-          releaseBody: 'See the assets to download this version and install.'
-          releaseDraft: true
-          prerelease: false
+        run: pnpm tauri build
 
-      - name: Rename artifacts and create portable zip
+      - name: Prepare release assets
         shell: pwsh
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          $tag = "${{ github.ref_name }}"
-          $version = $tag.TrimStart('v')
+          $ErrorActionPreference = 'Stop'
+          $VERSION = "${{ github.ref_name }}"
+          $version = $VERSION.TrimStart('v')
           $label = "Soma_Scratchpad_${version}_Windows"
+          New-Item -ItemType Directory -Force -Path release-assets | Out-Null
 
-          # Publish the draft release so all gh commands work without --draft
-          gh release edit $tag --draft=false
-
-          # Now work with the published release
-          $releaseJson = gh release view $tag --json id,assets | ConvertFrom-Json
-          $releaseId = $releaseJson.id
-
-          # Download all assets
-          $downloadDir = "${{ runner.temp }}/release-assets"
-          New-Item -ItemType Directory -Force -Path $downloadDir | Out-Null
-          gh release download $tag --dir $downloadDir --clobber
-
-          # Rename MSI and NSIS, keep updater artifacts as-is
-          $renamedAssets = @()
-          $updaterAssets = @()
-          foreach ($asset in $releaseJson.assets) {
-            $name = $asset.name
-            $newName = $null
-
-            if ($name -match '\.msi$') {
-              $newName = "${label}.msi"
-            } elseif ($name -match '-setup\.exe$' -or $name -match '\.exe$' -and $name -notmatch 'updater') {
-              $newName = "${label}.exe"
-            } elseif ($name -match '^(latest\.json|.*\.tar\.gz(\.sig)?)$') {
-              $updaterAssets += $name
-              Write-Host "Keeping updater artifact: $name"
+          # Find MSI installer and its .sig
+          $msi = Get-ChildItem -Path 'src-tauri/target/release/bundle' -Recurse -Include *.msi -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -notmatch 'updater' } | Select-Object -First 1
+          if ($msi) {
+            $dest = "$label.msi"
+            Copy-Item $msi.FullName "release-assets/$dest"
+            Write-Host "Copied MSI: $dest"
+            if (Test-Path "$($msi.FullName).sig") {
+              Copy-Item "$($msi.FullName).sig" "release-assets/$dest.sig"
+              Write-Host "Copied MSI signature: $dest.sig"
+            } else {
+              Write-Warning "MSI .sig not found at $($msi.FullName).sig"
             }
-
-            if ($newName) {
-              Copy-Item "$downloadDir/$name" "$downloadDir/$newName" -Force
-              $renamedAssets += @{ old = $name; new = $newName }
-              Write-Host "Rename: $name -> $newName"
-            }
+          } else {
+            Write-Error "No MSI installer found"
+            exit 1
           }
 
-          # Update latest.json URLs to match renamed assets
-          $latestJsonPath = "$downloadDir/latest.json"
-          if (Test-Path $latestJsonPath) {
-            $latestJson = Get-Content $latestJsonPath -Raw | ConvertFrom-Json
-            foreach ($item in $renamedAssets) {
-              if ($item.old -and $item.new) {
-                foreach ($platform in $latestJson.platforms.PSObject.Properties) {
-                  if ($platform.Value.url -match [regex]::Escape($item.old)) {
-                    $oldUrl = $platform.Value.url
-                    $newUrl = $oldUrl -replace [regex]::Escape($item.old), $item.new
-                    $platform.Value.url = $newUrl
-                    Write-Host "Updated URL: $oldUrl -> $newUrl"
-                  }
-                }
-              }
+          # Find NSIS installer and its .sig
+          $exe = Get-ChildItem -Path 'src-tauri/target/release/bundle' -Recurse -Include *setup.exe -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -notmatch 'updater' } | Select-Object -First 1
+          if ($exe) {
+            $dest = "$label.exe"
+            Copy-Item $exe.FullName "release-assets/$dest"
+            Write-Host "Copied NSIS: $dest"
+            if (Test-Path "$($exe.FullName).sig") {
+              Copy-Item "$($exe.FullName).sig" "release-assets/$dest.sig"
+              Write-Host "Copied NSIS signature: $dest.sig"
+            } else {
+              Write-Warning "NSIS .sig not found at $($exe.FullName).sig"
             }
-            $latestJson | ConvertTo-Json -Depth 10 | Set-Content $latestJsonPath -Encoding UTF8
-            Write-Host "Updated latest.json with renamed asset URLs"
-            # Re-upload updated latest.json
-            gh release upload $tag $latestJsonPath --clobber
-            Write-Host "Re-uploaded updated latest.json"
+          } else {
+            Write-Error "No NSIS installer found"
+            exit 1
           }
 
-          # Create portable zip from release exe
-          $releaseExe = "src-tauri/target/release/soma-scratchpad.exe"
+          # Create portable zip from release binary
+          $releaseExe = 'src-tauri/target/release/soma-scratchpad.exe'
           if (Test-Path $releaseExe) {
             $portableDir = "${{ runner.temp }}/portable"
             New-Item -ItemType Directory -Force -Path $portableDir | Out-Null
             Copy-Item $releaseExe "$portableDir/soma-scratchpad.exe"
-
-            $iconsDir = "src-tauri/target/release/icons"
-            if (Test-Path $iconsDir) {
-              Copy-Item -Recurse $iconsDir "$portableDir/icons"
-            }
-
+            $iconsDir = 'src-tauri/target/release/icons'
+            if (Test-Path $iconsDir) { Copy-Item -Recurse $iconsDir "$portableDir/icons" }
             $portableZip = "${label}_Portable.zip"
-            Compress-Archive -Path "$portableDir/*" -DestinationPath "$downloadDir/$portableZip" -Force
-            $renamedAssets += @{ old = $null; new = $portableZip }
+            Compress-Archive -Path "$portableDir/*" -DestinationPath "release-assets/$portableZip" -Force
             Write-Host "Created portable zip: $portableZip"
           } else {
-            Write-Warning "Release exe not found at $releaseExe, skipping portable zip"
+            Write-Warning "Release exe not found, skipping portable zip"
           }
 
-          # Delete old assets (except updater artifacts) and upload renamed ones
-          foreach ($asset in $releaseJson.assets) {
-            if ($updaterAssets -contains $asset.name) {
-              Write-Host "Skipping updater artifact: $($asset.name)"
-              continue
-            }
-            Write-Host "Deleting old asset: $($asset.name)"
-            gh release delete-asset $tag $asset.name --yes
+          # Also copy latest.json generated by tauri build for reference
+          $latestJson = Get-ChildItem -Path 'src-tauri/target/release/bundle' -Recurse -Include latest.json -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($latestJson) {
+            Copy-Item $latestJson.FullName release-assets/latest.json
+            Write-Host "Copied latest.json from bundle"
           }
 
-          # Upload all new assets
-          foreach ($item in $renamedAssets) {
-            $path = "$downloadDir/$($item.new)"
-            if (Test-Path $path) {
-              Write-Host "Uploading: $($item.new)"
-              gh release upload $tag $path --clobber
-            }
-          }
+          Write-Host "Release assets prepared:"
+          Get-ChildItem release-assets | ForEach-Object { Write-Host "  $($_.Name) ($($_.Length) bytes)" }
 
-          Write-Host "Done. Release assets updated."
+      - name: Upload release assets (workflow artifact)
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-assets
+          path: release-assets/*
+          if-no-files-found: error
 
-      - name: Smoke check
-        shell: pwsh
+  publish:
+    name: Publish
+    runs-on: ubuntu-22.04
+    needs: build
+    permissions:
+      contents: write
+    steps:
+      - name: Download built assets
+        uses: actions/download-artifact@v4
+        with:
+          name: release-assets
+          path: release-assets
+
+      - name: List assets
+        run: ls -la release-assets
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Soma Scratchpad ${{ github.ref_name }}
+          prerelease: false
+          draft: false
+          files: release-assets/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  assemble-latest-json:
+    name: Assemble latest.json
+    runs-on: ubuntu-22.04
+    needs: publish
+    permissions:
+      contents: write
+    steps:
+      - name: Install gh CLI
+        run: |
+          type -p gh >/dev/null || (sudo apt-get update -qq && sudo apt-get install -y -qq gh)
+
+      - name: Download release assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          $ErrorActionPreference = "Stop"
-          $tag = "${{ github.ref_name }}"
-          $version = $tag.TrimStart('v')
-          $expectedPrefix = "Soma_Scratchpad_${version}_Windows"
+          set -euxo pipefail
+          TAG="${{ github.ref_name }}"
+          mkdir -p dl
+          gh release download "$TAG" --dir dl --repo "$GITHUB_REPOSITORY"
+          ls -la dl
 
-          Write-Host "=== Smoke Check ==="
+      - name: Generate latest.json from .sig files
+        env:
+          REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          VERSION="${TAG#v}"
+          PUB_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          base_url="https://github.com/$REPO/releases/download/$TAG"
+
+          # Find MSI .sig content for updater
+          msi_sig_file=$(ls dl/*.msi.sig 2>/dev/null | head -1 || true)
+          if [ -z "$msi_sig_file" ]; then
+            echo "❌ No .msi.sig file found in release assets" >&2
+            ls -la dl
+            exit 1
+          fi
+          msi_sig=$(cat "$msi_sig_file")
+          msi_name=$(basename "$msi_sig_file" .sig)
+          msi_url="$base_url/$msi_name"
+
+          echo "MSI updater: $msi_name"
+          echo "MSI signature: ${msi_sig:0:20}..."
+
+          # Write latest.json
+          cat > latest.json <<JSON
+          {
+            "version": "$VERSION",
+            "notes": "Soma Scratchpad $TAG",
+            "pub_date": "$PUB_DATE",
+            "platforms": {
+              "windows-x86_64": {
+                "signature": "$msi_sig",
+                "url": "$msi_url"
+              }
+            }
+          }
+          JSON
+
+          echo "Generated latest.json:"
+          cat latest.json
+
+      - name: Upload latest.json to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ github.ref_name }}" latest.json --clobber --repo "$GITHUB_REPOSITORY"
+
+      - name: Upload latest.json as workflow artifact (for smoke check)
+        uses: actions/upload-artifact@v4
+        with:
+          name: latest-json
+          path: latest.json
+
+  smoke-check:
+    name: Smoke Check
+    runs-on: ubuntu-22.04
+    needs: assemble-latest-json
+    permissions:
+      contents: read
+    steps:
+      - name: Install gh CLI
+        run: |
+          type -p gh >/dev/null || (sudo apt-get update -qq && sudo apt-get install -y -qq gh)
+
+      - name: Smoke check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${{ github.ref_name }}"
+          VERSION="${TAG#v}"
+          PREFIX="Soma_Scratchpad_${VERSION}_Windows"
+
+          echo "=== Smoke Check ==="
 
           # 1. Download latest.json
-          $latestJsonPath = "${{ runner.temp }}/latest.json"
-          gh release download $tag --pattern latest.json --dir "${{ runner.temp }}" --clobber
-          if (-not (Test-Path $latestJsonPath)) {
-            Write-Error "latest.json not found in release assets"
+          gh release download "$TAG" --pattern latest.json --dir . --repo "$GITHUB_REPOSITORY"
+          if [ ! -f latest.json ]; then
+            echo "❌ latest.json not found in release assets" >&2
             exit 1
-          }
-          $latestJson = Get-Content $latestJsonPath -Raw | ConvertFrom-Json
-          Write-Host "1. latest.json downloaded"
+          fi
+          echo "1. latest.json downloaded"
 
-          # 2. Verify version == tag.version
-          if ($latestJson.version -ne $version) {
-            Write-Error "Version mismatch: latest.json=$($latestJson.version) vs tag=$version"
+          # 2. Verify version matches
+          json_version=$(jq -r '.version' latest.json)
+          if [ "$json_version" != "$VERSION" ]; then
+            echo "❌ Version mismatch: latest.json=$json_version vs tag=$VERSION" >&2
             exit 1
-          }
-          Write-Host "2. version matches: $version"
+          fi
+          echo "2. version matches: $VERSION"
 
-          # 3. Verify platforms.windows-x86_64.url is accessible
-          $url = $latestJson.platforms.'windows-x86_64'.url
-          if (-not $url) {
-            Write-Error "platforms.windows-x86_64.url is missing in latest.json"
+          # 3. Verify platform URL accessible
+          url=$(jq -r '.platforms."windows-x86_64".url' latest.json)
+          if [ -z "$url" ] || [ "$url" = "null" ]; then
+            echo "❌ platforms.windows-x86_64.url missing" >&2
             exit 1
-          }
-          try {
-            $response = Invoke-WebRequest -Uri $url -Method Head -UseBasicParsing -TimeoutSec 30
-            if ($response.StatusCode -ne 200) {
-              Write-Error "Asset URL returned HTTP $($response.StatusCode): $url"
-              exit 1
-            }
-            Write-Host "3. asset URL accessible (HTTP 200): $url"
-          } catch {
-            Write-Error "Asset URL not reachable: $url`n$($_.Exception.Message)"
+          fi
+          if ! curl -sIf "$url" >/dev/null 2>&1; then
+            http_code=$(curl -s -o /dev/null -w '%{http_code}' "$url" || echo "failed")
+            echo "❌ Asset URL returned HTTP $http_code: $url" >&2
             exit 1
-          }
+          fi
+          echo "3. asset URL accessible: $url"
 
-          # 4. Verify platform signature field exists
-          $sig = $latestJson.platforms.'windows-x86_64'.signature
-          if (-not $sig) {
-            Write-Error "platforms.windows-x86_64.signature missing or empty in latest.json"
+          # 4. Verify platform signature exists
+          sig=$(jq -r '.platforms."windows-x86_64".signature' latest.json)
+          if [ -z "$sig" ] || [ "$sig" = "null" ]; then
+            echo "❌ platform signature missing or empty" >&2
             exit 1
-          }
-          Write-Host "4. platform signature present ($($sig.Length) chars) -- note: may be stale due to URL changes"
+          fi
+          echo "4. platform signature present (${#sig} chars)"
 
-          # 5. Verify release asset names match convention
-          $assets = gh release view $tag --json assets --jq '.assets[].name'
-          $badAssets = @()
-          foreach ($asset in $assets) {
-            if ($asset -eq 'latest.json' -or $asset -match '\.tar\.gz(\.sig)?$') { continue }
-            if ($asset -notmatch [regex]::Escape($expectedPrefix)) {
-              $badAssets += $asset
-              Write-Warning "   MISMATCH: '$asset' does not match prefix '$expectedPrefix'"
-            }
-          }
-          if ($badAssets.Count -gt 0) {
-            Write-Error "Found $($badAssets.Count) asset(s) not following naming convention: $($badAssets -join ', ')"
+          # 5. Verify asset naming convention
+          assets=$(gh release view "$TAG" --json assets --jq '.assets[].name' --repo "$GITHUB_REPOSITORY")
+          bad_assets=""
+          for asset in $assets; do
+            case "$asset" in
+              latest.json|*.tar.gz|*.tar.gz.sig) continue ;;
+              ${PREFIX}*) continue ;;
+              *)
+                bad_assets="$bad_assets $asset"
+                echo "   MISMATCH: '$asset' does not match prefix '$PREFIX'"
+                ;;
+            esac
+          done
+          if [ -n "$bad_assets" ]; then
+            echo "❌ Assets not following naming convention:$bad_assets" >&2
             exit 1
-          }
-          Write-Host "5. all asset names follow convention: $expectedPrefix"
+          fi
+          echo "5. all asset names follow convention: $PREFIX"
 
-          Write-Host "=== Smoke Check PASSED ==="
+          echo "=== Smoke Check PASSED ==="
