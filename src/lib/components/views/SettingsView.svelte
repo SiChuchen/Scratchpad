@@ -7,6 +7,7 @@
   import { messages } from '$lib/i18n'
   import { open } from '@tauri-apps/plugin-dialog'
   import { relaunch } from '@tauri-apps/plugin-process'
+  import VaultLlmConfig from '$lib/components/vault/VaultLlmConfig.svelte'
 
   interface Props {
     preferences: DockPreferences
@@ -661,6 +662,13 @@
           {/if}
         </div>
       {/if}
+    </div>
+
+    <!-- Vault LLM config -->
+    <div class="section">
+      <div class="section-body">
+        <VaultLlmConfig />
+      </div>
     </div>
 
     <!-- Danger zone -->
