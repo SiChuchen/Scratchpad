@@ -27,6 +27,16 @@ windows-sys = { version = "0.59", features = [
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_HiDpi",
 ] }
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+async-trait = "0.1"
+regex = "1"
+sha2 = "0.10"
+hex = "0.4"
+rand = "0.8"
+
+[dev-dependencies]
+mockito = "1"
+tokio = { version = "1", features = ["macros", "rt"] }
 
 [features]
 devtools = ["tauri/devtools"]

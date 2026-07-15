@@ -2,6 +2,7 @@ pub mod models;
 pub mod scratchpad;
 pub mod storage;
 pub mod system;
+pub mod vault;
 
 use rusqlite::Connection;
 use std::sync::Mutex;
