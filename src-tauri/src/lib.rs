@@ -530,6 +530,7 @@ fn init_db() -> Connection {
         .unwrap_or(0);
     scratchpad::storage::ensure_dock_schema(&mut conn, cleanup_days)
         .expect("Failed to init scratch dock schema");
+    vault::storage::ensure_vault_schema(&mut conn).expect("Failed to init vault schema");
     conn
 }
 
