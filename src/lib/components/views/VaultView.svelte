@@ -1,10 +1,12 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import { vaultApi } from '$lib/api/vault'
+  import { onTagsUpdated, onLlmError } from '$lib/api/vault'
   import type { EntryKind, VaultEntry } from '$lib/types/vault'
   import CredentialForm from '$lib/components/vault/CredentialForm.svelte'
   import BookmarkForm from '$lib/components/vault/BookmarkForm.svelte'
   import NoteForm from '$lib/components/vault/NoteForm.svelte'
+  import EntryCard from '$lib/components/vault/EntryCard.svelte'
 
   let activeKind = $state<EntryKind | 'all'>('all')
   let entries = $state<VaultEntry[]>([])
@@ -20,7 +22,11 @@
     }
   }
 
-  onMount(reload)
+  onMount(() => {
+    reload()
+    onTagsUpdated(() => reload())
+    onLlmError((e) => alert(`LLM 错误: ${e.kind} - ${e.message}`))
+  })
 </script>
 
 <div class="vault-view">
@@ -54,11 +60,11 @@
     {:else if entries.length === 0}
       <div>暂无条目，点击「+ 新建」添加</div>
     {:else}
-      <ul>
+      <div class="entry-list">
         {#each entries as e (e.id)}
-          <li>{e.title} <span class="kind-badge">{e.kind}</span></li>
+          <EntryCard entryId={e.id} />
         {/each}
-      </ul>
+      </div>
     {/if}
   </div>
 </div>
@@ -68,7 +74,7 @@
   .vault-tabs { display: flex; gap: 4px; }
   .vault-tabs button { padding: 4px 12px; cursor: pointer; }
   .vault-tabs button.active { background: var(--accent-color, #4a9); color: white; }
-  .kind-badge { font-size: 0.75em; opacity: 0.6; margin-left: 6px; }
   .form-panel { display: flex; flex-direction: column; gap: 6px; padding: 8px; border: 1px solid #ddd; border-radius: 4px; background: rgba(0,0,0,0.02); }
   .form-panel button { align-self: flex-start; padding: 4px 12px; cursor: pointer; }
+  .entry-list { display: flex; flex-direction: column; gap: 8px; }
 </style>
