@@ -8,12 +8,14 @@
   import NoteForm from '$lib/components/vault/NoteForm.svelte'
   import EntryCard from '$lib/components/vault/EntryCard.svelte'
   import SearchBar from '$lib/components/vault/SearchBar.svelte'
+  import SmartImportDialog from '$lib/components/vault/SmartImportDialog.svelte'
   import type { VaultSearchHit } from '$lib/types/vault'
 
   let activeKind = $state<EntryKind | 'all'>('all')
   let entries = $state<VaultEntry[]>([])
   let loading = $state(false)
   let showForm = $state<null | 'credential' | 'bookmark' | 'note'>(null)
+  let showImport = $state(false)
   let searchResults = $state<VaultSearchHit[] | null>(null)
 
   function handleResults(hits: VaultSearchHit[]) {
@@ -50,6 +52,7 @@
     <button onclick={() => showForm = 'credential'}>+ 凭据</button>
     <button onclick={() => showForm = 'bookmark'}>+ 书签</button>
     <button onclick={() => showForm = 'note'}>+ 笔记</button>
+    <button onclick={() => showImport = true}>📥 智能导入</button>
   </div>
 
   <SearchBar onResults={handleResults} onClear={handleClear} />
@@ -65,6 +68,10 @@
       {/if}
       <button onclick={() => showForm = null}>取消</button>
     </div>
+  {/if}
+
+  {#if showImport}
+    <SmartImportDialog onClose={() => showImport = false} onImported={() => { showImport = false; reload() }} />
   {/if}
 
   <div class="vault-content">
