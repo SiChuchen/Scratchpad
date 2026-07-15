@@ -3,5 +3,5 @@
 pub mod models;
 pub mod storage;
 pub mod desensitize;
-// pub mod llm;
+pub mod llm;
 // pub mod ipc;
