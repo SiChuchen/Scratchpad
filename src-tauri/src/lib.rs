@@ -577,6 +577,13 @@ pub fn run() {
             ipc_dock_restore_from_tab,
             ipc_dock_minimize_to_tab,
             vault::ipc::ipc_vault_create_entry,
+            vault::ipc::ipc_vault_update_entry,
+            vault::ipc::ipc_vault_delete_entry,
+            vault::ipc::ipc_vault_list_entries,
+            vault::ipc::ipc_vault_get_entry,
+            vault::ipc::ipc_vault_update_tags,
+            vault::ipc::ipc_vault_retag,
+            vault::ipc::ipc_vault_search,
         ])
         .setup(|app| {
             // System tray menu
