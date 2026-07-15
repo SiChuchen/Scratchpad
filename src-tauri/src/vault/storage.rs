@@ -91,7 +91,7 @@ pub fn create_entry(conn: &mut Connection, input: &VaultEntryInput) -> StorageRe
         )?;
     }
     tx.commit()?;
-
+    fts5_upsert(conn, &id)?;
     get_entry_by_id(conn, &id)?.ok_or_else(|| StorageError::Other("insert failed".into()))
 }
 
@@ -170,11 +170,15 @@ pub fn update_entry(
         )?;
     }
     tx.commit()?;
+    fts5_upsert(conn, id)?;
     get_entry_by_id(conn, id)?.ok_or_else(|| StorageError::Other("missing after update".into()))
 }
 
 pub fn delete_entry(conn: &mut Connection, id: &str) -> StorageResult<()> {
-    let n = conn.execute("DELETE FROM vault_entries WHERE id=?1", params![id])?;
+    let tx = conn.transaction()?;
+    fts5_delete(&tx, id)?;
+    let n = tx.execute("DELETE FROM vault_entries WHERE id=?1", params![id])?;
+    tx.commit()?;
     if n == 0 {
         return Err(StorageError::Other(format!("entry not found: {id}")));
     }
@@ -217,6 +221,7 @@ pub fn set_tags(conn: &mut Connection, entry_id: &str, tags: &[String]) -> Stora
         )?;
     }
     tx.commit()?;
+    fts5_upsert(conn, entry_id)?;
     Ok(())
 }
 
@@ -224,6 +229,81 @@ pub fn list_tags(conn: &Connection, entry_id: &str) -> StorageResult<Vec<String>
     let mut stmt = conn.prepare("SELECT tag FROM vault_tags WHERE entry_id=?1 ORDER BY tag")?;
     let rows = stmt.query_map(params![entry_id], |r| r.get::<_, String>(0))?;
     rows.collect::<rusqlite::Result<Vec<_>>>().map_err(StorageError::from)
+}
+
+fn build_searchable(conn: &Connection, entry_id: &str) -> StorageResult<String> {
+    // 拼接所有非敏感字段的 value + 所有 tag
+    let mut parts: Vec<String> = Vec::new();
+
+    let mut stmt = conn.prepare(
+        "SELECT value FROM vault_fields WHERE entry_id=?1 AND is_sensitive=0",
+    )?;
+    let values = stmt.query_map(params![entry_id], |r| r.get::<_, String>(0))?;
+    for v in values {
+        parts.push(v?);
+    }
+
+    let mut stmt = conn.prepare("SELECT tag FROM vault_tags WHERE entry_id=?1")?;
+    let tags = stmt.query_map(params![entry_id], |r| r.get::<_, String>(0))?;
+    for t in tags {
+        parts.push(t?);
+    }
+    Ok(parts.join(" "))
+}
+
+fn fts5_upsert(conn: &Connection, entry_id: &str) -> StorageResult<()> {
+    let entry = get_entry_by_id(conn, entry_id)?
+        .ok_or_else(|| StorageError::Other(format!("entry {entry_id} missing for fts")))?;
+    let searchable = build_searchable(conn, entry_id)?;
+    conn.execute(
+        "DELETE FROM vault_fts WHERE entry_id=?1",
+        params![entry_id],
+    )?;
+    conn.execute(
+        "INSERT INTO vault_fts(entry_id, title, notes, searchable) VALUES (?1, ?2, ?3, ?4)",
+        params![entry_id, entry.title, entry.notes.unwrap_or_default(), searchable],
+    )?;
+    Ok(())
+}
+
+fn fts5_delete(conn: &Connection, entry_id: &str) -> StorageResult<()> {
+    conn.execute("DELETE FROM vault_fts WHERE entry_id=?1", params![entry_id])?;
+    Ok(())
+}
+
+pub fn fts5_search(
+    conn: &Connection,
+    query: &str,
+    limit: usize,
+) -> StorageResult<Vec<(String, f64)>> {
+    // SQLite FTS5 BM25：rank 越小越相关（升序排）。返回值 score 沿用 rank 语义。
+    let sql = format!(
+        "SELECT entry_id, rank FROM vault_fts WHERE vault_fts MATCH ?1
+         ORDER BY rank LIMIT {limit}"
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map(params![escape_fts_query(query)], |r| {
+        Ok((r.get::<_, String>(0)?, r.get::<_, f64>(1)?))
+    })?;
+    rows.collect::<rusqlite::Result<Vec<_>>>().map_err(StorageError::from)
+}
+
+fn escape_fts_query(q: &str) -> String {
+    // 按空格分词，每个 token 单独转义后用 OR 连接（FTS5 默认 token 之间是隐式 AND，
+    // 多词查询用 OR 才能召回更广；中文 unicode61 分词器会按字分词，单 token 也可行）
+    let tokens: Vec<String> = q
+        .split_whitespace()
+        .map(|tok| {
+            let escaped = tok.replace('"', "\"\"");
+            format!("\"{escaped}\"")
+        })
+        .collect();
+    if tokens.is_empty() {
+        // 全空格 / 空字符串：返回不可能匹配的查询
+        "\"\"".to_string()
+    } else {
+        tokens.join(" OR ")
+    }
 }
 
 #[cfg(test)]
@@ -418,5 +498,53 @@ mod tests {
         let mut tags = list_tags(&conn, &e.id).unwrap();
         tags.sort();
         assert_eq!(tags, vec!["b".to_string(), "c".to_string()]);
+    }
+
+    #[test]
+    fn fts5_indexes_title_username_and_tags_not_password() {
+        let mut conn = open_test_db();
+        let e = create_entry(
+            &mut conn,
+            &VaultEntryInput {
+                kind: EntryKind::Credential,
+                title: "Production Database".into(),
+                fields: vec![
+                    FieldInput { key: "user".into(), value: "admin".into(), is_sensitive: false },
+                    FieldInput {
+                        key: "password".into(),
+                        value: "supersecretvalue".into(),
+                        is_sensitive: false,
+                    },
+                ],
+                notes: Some("mysql prod".into()),
+            },
+        )
+        .unwrap();
+        set_tags(&mut conn, &e.id, &["mysql".into(), "prod".into()]).unwrap();
+
+        // 搜 title
+        let hits = fts5_search(&conn, "production", 10).unwrap();
+        assert!(hits.iter().any(|(id, _)| id == &e.id));
+
+        // 搜 username
+        let hits = fts5_search(&conn, "admin", 10).unwrap();
+        assert!(hits.iter().any(|(id, _)| id == &e.id));
+
+        // 搜 tag
+        let hits = fts5_search(&conn, "mysql", 10).unwrap();
+        assert!(hits.iter().any(|(id, _)| id == &e.id));
+
+        // 不能搜 password
+        let hits = fts5_search(&conn, "supersecretvalue", 10).unwrap();
+        assert!(!hits.iter().any(|(id, _)| id == &e.id));
+    }
+
+    #[test]
+    fn fts5_search_after_delete_returns_nothing() {
+        let mut conn = open_test_db();
+        let e = make_entry(&mut conn, "DeleteMe");
+        assert!(!fts5_search(&conn, "DeleteMe", 10).unwrap().is_empty());
+        delete_entry(&mut conn, &e.id).unwrap();
+        assert!(fts5_search(&conn, "DeleteMe", 10).unwrap().is_empty());
     }
 }
