@@ -1,5 +1,5 @@
 export type EntryKind = 'text' | 'image' | 'file'
-export type DockView = 'home' | 'categories' | 'note' | 'settings'
+export type DockView = 'home' | 'categories' | 'note' | 'vault' | 'settings'
 export type EntryMembershipView = 'home' | 'note'
 
 export interface DockEntry {

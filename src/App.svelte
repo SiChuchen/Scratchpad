@@ -6,6 +6,7 @@
   import CategoriesView from '$lib/components/views/CategoriesView.svelte'
   import NoteView from '$lib/components/views/NoteView.svelte'
   import SettingsView from '$lib/components/views/SettingsView.svelte'
+  import VaultView from '$lib/components/views/VaultView.svelte'
   import { dockApi } from '$lib/api/dock'
   import { insertHomeEntry } from '$lib/state/dock'
   import { computeThemeTokens } from '$lib/themes/engine'
@@ -689,6 +690,8 @@
     onCopy={copyContent}
     onCopyPath={copyPath}
   />
+{:else if currentView === 'vault'}
+  <VaultView />
 {:else if currentView === 'settings' && preferences}
   <SettingsView
     preferences={preferences}
