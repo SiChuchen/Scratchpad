@@ -548,6 +548,7 @@ pub fn run() {
             main_geometry: Mutex::new(None),
             current_shortcut: Mutex::new(None),
         })
+        .manage(vault::ipc::VaultRuntimeState::default())
         .invoke_handler(tauri::generate_handler![
             ipc_entries_create_text,
             ipc_entries_list,
@@ -575,6 +576,7 @@ pub fn run() {
             ipc_window_clear_region,
             ipc_dock_restore_from_tab,
             ipc_dock_minimize_to_tab,
+            vault::ipc::ipc_vault_create_entry,
         ])
         .setup(|app| {
             // System tray menu
