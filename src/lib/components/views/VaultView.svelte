@@ -7,11 +7,22 @@
   import BookmarkForm from '$lib/components/vault/BookmarkForm.svelte'
   import NoteForm from '$lib/components/vault/NoteForm.svelte'
   import EntryCard from '$lib/components/vault/EntryCard.svelte'
+  import SearchBar from '$lib/components/vault/SearchBar.svelte'
+  import type { VaultSearchHit } from '$lib/types/vault'
 
   let activeKind = $state<EntryKind | 'all'>('all')
   let entries = $state<VaultEntry[]>([])
   let loading = $state(false)
   let showForm = $state<null | 'credential' | 'bookmark' | 'note'>(null)
+  let searchResults = $state<VaultSearchHit[] | null>(null)
+
+  function handleResults(hits: VaultSearchHit[]) {
+    searchResults = hits
+  }
+
+  function handleClear() {
+    searchResults = null
+  }
 
   async function reload() {
     loading = true
@@ -41,6 +52,8 @@
     <button onclick={() => showForm = 'note'}>+ 笔记</button>
   </div>
 
+  <SearchBar onResults={handleResults} onClear={handleClear} />
+
   {#if showForm}
     <div class="form-panel">
       {#if showForm === 'credential'}
@@ -55,7 +68,17 @@
   {/if}
 
   <div class="vault-content">
-    {#if loading}
+    {#if searchResults}
+      {#if searchResults.length === 0}
+        <div class="empty">未找到匹配条目</div>
+      {:else}
+        <div class="entry-list">
+          {#each searchResults as hit (hit.entry.id)}
+            <EntryCard entryId={hit.entry.id} />
+          {/each}
+        </div>
+      {/if}
+    {:else if loading}
       <div>加载中...</div>
     {:else if entries.length === 0}
       <div>暂无条目，点击「+ 新建」添加</div>
