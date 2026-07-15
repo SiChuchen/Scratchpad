@@ -584,6 +584,10 @@ pub fn run() {
             vault::ipc::ipc_vault_update_tags,
             vault::ipc::ipc_vault_retag,
             vault::ipc::ipc_vault_search,
+            vault::ipc::ipc_vault_get_llm_presets,
+            vault::ipc::ipc_vault_get_llm_config,
+            vault::ipc::ipc_vault_set_llm_config,
+            vault::ipc::ipc_vault_test_llm,
         ])
         .setup(|app| {
             // System tray menu

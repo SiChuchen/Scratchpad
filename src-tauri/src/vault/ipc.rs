@@ -1,11 +1,14 @@
 // src-tauri/src/vault/ipc.rs
 use std::sync::Mutex;
 
+use rusqlite::params;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
 
+use crate::storage::error::{StorageError, StorageResult};
 use crate::vault::desensitize::{desensitize_entry, TokenMap};
 use crate::vault::llm::openai_compat::OpenAiCompatAdapter;
+use crate::vault::llm::presets::{find_preset, ProviderPreset, PRESETS};
 use crate::vault::llm::prompt::{search_prompt, tag_prompt};
 use crate::vault::llm::{LlmAdapter, LlmError, LlmRequest};
 use crate::vault::models::{EntryKind, VaultEntry, VaultEntryDetail, VaultEntryInput, VaultSearchHit};
@@ -317,4 +320,135 @@ pub async fn ipc_vault_search(
         }
     }
     Ok(hits)
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderPresetDto {
+    pub id: String,
+    pub label: String,
+    pub base_url: String,
+    pub models: Vec<String>,
+    pub default_model: String,
+}
+
+impl From<&ProviderPreset> for ProviderPresetDto {
+    fn from(p: &ProviderPreset) -> Self {
+        Self {
+            id: p.id.into(),
+            label: p.label.into(),
+            base_url: p.base_url.into(),
+            models: p.models.iter().map(|s| s.to_string()).collect(),
+            default_model: p.default_model.into(),
+        }
+    }
+}
+
+const LLM_CONFIG_PREF_KEY: &str = "vault_llm_config";
+
+fn load_llm_config(conn: &rusqlite::Connection) -> Option<LlmConfig> {
+    let v: Option<String> = conn
+        .query_row(
+            "SELECT value FROM preferences WHERE key=?1",
+            params![LLM_CONFIG_PREF_KEY],
+            |r| r.get(0),
+        )
+        .ok();
+    v.and_then(|s| serde_json::from_str(&s).ok())
+}
+
+fn save_llm_config(conn: &mut rusqlite::Connection, cfg: &LlmConfig) -> StorageResult<()> {
+    let s = serde_json::to_string(cfg).map_err(|e| StorageError::Other(e.to_string()))?;
+    conn.execute(
+        "INSERT INTO preferences(key, value) VALUES (?1, ?2)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        params![LLM_CONFIG_PREF_KEY, s],
+    )?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn ipc_vault_get_llm_presets() -> Vec<ProviderPresetDto> {
+    PRESETS.iter().map(ProviderPresetDto::from).collect()
+}
+
+#[tauri::command]
+pub async fn ipc_vault_get_llm_config(
+    state: State<'_, crate::AppState>,
+    vault_state: State<'_, VaultRuntimeState>,
+) -> Result<Option<LlmConfig>, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let cfg = load_llm_config(&conn);
+    drop(conn);
+    // 同步到 runtime state（lock → assign → drop）
+    *vault_state.llm_config.lock().unwrap() = cfg.clone();
+    Ok(cfg)
+}
+
+#[tauri::command]
+pub async fn ipc_vault_set_llm_config(
+    state: State<'_, crate::AppState>,
+    vault_state: State<'_, VaultRuntimeState>,
+    config: LlmConfig,
+) -> Result<(), String> {
+    // 应用 base_url 默认（如果 provider 是预设的且用户没改）
+    let mut cfg = config;
+    if let Some(p) = find_preset(&cfg.provider_id) {
+        if cfg.base_url.is_empty() {
+            cfg.base_url = p.base_url.into();
+        }
+    }
+    {
+        let mut conn = state.db.lock().map_err(|e| e.to_string())?;
+        save_llm_config(&mut conn, &cfg).map_err(|e| e.to_string())?;
+    }
+    *vault_state.llm_config.lock().unwrap() = Some(cfg);
+    Ok(())
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LlmTestResult {
+    pub ok: bool,
+    pub message: String,
+    pub model_echo: Option<String>,
+}
+
+#[tauri::command]
+pub async fn ipc_vault_test_llm(
+    config: LlmConfig,
+) -> Result<LlmTestResult, String> {
+    let base_url = if config.base_url.is_empty() {
+        find_preset(&config.provider_id).map(|p| p.base_url.to_string()).unwrap_or_default()
+    } else {
+        config.base_url
+    };
+    if base_url.is_empty() || config.api_key.is_empty() || config.model.is_empty() {
+        return Ok(LlmTestResult { ok: false, message: "配置不完整".into(), model_echo: None });
+    }
+
+    let adapter = match OpenAiCompatAdapter::new(base_url, config.api_key.clone(), config.model.clone()) {
+        Ok(a) => a,
+        Err(e) => return Ok(LlmTestResult { ok: false, message: format!("{e:?}"), model_echo: None }),
+    };
+
+    let req = LlmRequest {
+        messages: vec![crate::vault::llm::ChatMessage::user("ping")],
+        json_mode: false,
+        temperature: 0.0,
+        max_tokens: Some(8),
+    };
+
+    match adapter.complete(req).await {
+        Ok(resp) => Ok(LlmTestResult {
+            ok: true,
+            message: format!("响应 {} 字节", resp.content.len()),
+            model_echo: Some(config.model),
+        }),
+        Err(e) => Ok(LlmTestResult {
+            ok: false,
+            message: format!("{e:?}"),
+            model_echo: None,
+        }),
+    }
 }
