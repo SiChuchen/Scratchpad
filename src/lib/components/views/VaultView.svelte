@@ -43,16 +43,19 @@
 </script>
 
 <div class="vault-view">
-  <div class="vault-tabs">
-    <button class:active={activeKind === 'all'} onclick={() => { activeKind = 'all'; reload() }}>全部</button>
-    <button class:active={activeKind === 'credential'} onclick={() => { activeKind = 'credential'; reload() }}>凭据</button>
-    <button class:active={activeKind === 'bookmark'} onclick={() => { activeKind = 'bookmark'; reload() }}>书签</button>
-    <button class:active={activeKind === 'note'} onclick={() => { activeKind = 'note'; reload() }}>安全笔记</button>
-    <span style="flex:1"></span>
-    <button onclick={() => showForm = 'credential'}>+ 凭据</button>
-    <button onclick={() => showForm = 'bookmark'}>+ 书签</button>
-    <button onclick={() => showForm = 'note'}>+ 笔记</button>
-    <button onclick={() => showImport = true}>📥 智能导入</button>
+  <div class="vault-header">
+    <div class="vault-filters">
+      <button class="filter-btn" class:active={activeKind === 'all'} onclick={() => { activeKind = 'all'; reload() }}>全部</button>
+      <button class="filter-btn" class:active={activeKind === 'credential'} onclick={() => { activeKind = 'credential'; reload() }}>凭据</button>
+      <button class="filter-btn" class:active={activeKind === 'bookmark'} onclick={() => { activeKind = 'bookmark'; reload() }}>书签</button>
+      <button class="filter-btn" class:active={activeKind === 'note'} onclick={() => { activeKind = 'note'; reload() }}>安全笔记</button>
+    </div>
+    <div class="vault-actions">
+      <button class="action-btn" onclick={() => showForm = 'credential'} title="新建凭据">+ 凭据</button>
+      <button class="action-btn" onclick={() => showForm = 'bookmark'} title="新建书签">+ 书签</button>
+      <button class="action-btn" onclick={() => showForm = 'note'} title="新建笔记">+ 笔记</button>
+      <button class="action-btn" onclick={() => showImport = true} title="智能导入">📥</button>
+    </div>
   </div>
 
   <SearchBar onResults={handleResults} onClear={handleClear} />
@@ -66,7 +69,6 @@
       {:else if showForm === 'note'}
         <NoteForm onSaved={() => { showForm = null; reload() }} />
       {/if}
-      <button onclick={() => showForm = null}>取消</button>
     </div>
   {/if}
 
@@ -74,10 +76,13 @@
     <SmartImportDialog onClose={() => showImport = false} onImported={() => { showImport = false; reload() }} />
   {/if}
 
-  <div class="vault-content">
+  <div class="vault-body">
     {#if searchResults}
       {#if searchResults.length === 0}
-        <div class="empty">未找到匹配条目</div>
+        <div class="dock-empty">
+          <div>未找到匹配条目</div>
+          <div class="hint">尝试其它关键词，或清空搜索框查看全部</div>
+        </div>
       {:else}
         <div class="entry-list">
           {#each searchResults as hit (hit.entry.id)}
@@ -86,9 +91,14 @@
         </div>
       {/if}
     {:else if loading}
-      <div>加载中...</div>
+      <div class="dock-empty">
+        <div>加载中...</div>
+      </div>
     {:else if entries.length === 0}
-      <div>暂无条目，点击「+ 新建」添加</div>
+      <div class="dock-empty">
+        <div>暂无条目</div>
+        <div class="hint">点击右上方「+ 凭据 / + 书签 / + 笔记」按钮添加</div>
+      </div>
     {:else}
       <div class="entry-list">
         {#each entries as e (e.id)}
@@ -100,11 +110,120 @@
 </div>
 
 <style>
-  .vault-view { padding: 12px; display: flex; flex-direction: column; gap: 8px; }
-  .vault-tabs { display: flex; gap: 4px; }
-  .vault-tabs button { padding: 4px 12px; cursor: pointer; }
-  .vault-tabs button.active { background: var(--accent-color, #4a9); color: white; }
-  .form-panel { display: flex; flex-direction: column; gap: 6px; padding: 8px; border: 1px solid #ddd; border-radius: 4px; background: rgba(0,0,0,0.02); }
-  .form-panel button { align-self: flex-start; padding: 4px 12px; cursor: pointer; }
-  .entry-list { display: flex; flex-direction: column; gap: 8px; }
+  .vault-view {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    padding: 0.5rem 0.65rem;
+    overflow: hidden;
+    min-height: 0;
+  }
+
+  .vault-header {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    flex-shrink: 0;
+    min-height: 1.75rem;
+  }
+
+  .vault-filters {
+    display: flex;
+    gap: 0.15rem;
+    flex: 1;
+    min-width: 0;
+  }
+
+  .filter-btn {
+    background: none;
+    border: 1px solid transparent;
+    color: color-mix(in srgb, var(--text-primary) 50%, transparent);
+    font-size: var(--font-sm, 0.65rem);
+    font-weight: 500;
+    padding: 0.25rem 0.5rem;
+    border-radius: var(--radius-md, 0.3rem);
+    cursor: pointer;
+    transition: color 0.12s, background 0.12s, border-color 0.12s;
+    font-family: inherit;
+    white-space: nowrap;
+  }
+
+  .filter-btn:hover {
+    color: var(--text-primary);
+    background: color-mix(in srgb, var(--text-primary) 10%, transparent);
+    border-color: color-mix(in srgb, var(--text-primary) 15%, transparent);
+  }
+
+  .filter-btn.active {
+    color: var(--text-primary);
+    background: color-mix(in srgb, var(--text-primary) 15%, transparent);
+    border-color: color-mix(in srgb, var(--text-primary) 25%, transparent);
+  }
+
+  .vault-actions {
+    display: flex;
+    gap: 0.15rem;
+    flex-shrink: 0;
+  }
+
+  .action-btn {
+    background: var(--surface-2);
+    border: 1px solid var(--border-default);
+    color: var(--text-muted);
+    font-size: var(--font-sm, 0.65rem);
+    padding: 0.25rem 0.5rem;
+    border-radius: var(--radius-md, 0.3rem);
+    cursor: pointer;
+    transition: background 0.12s, color 0.12s, border-color 0.12s;
+    font-family: inherit;
+    white-space: nowrap;
+  }
+
+  .action-btn:hover {
+    background: color-mix(in srgb, var(--color-primary) 15%, transparent);
+    border-color: color-mix(in srgb, var(--color-primary) 30%, transparent);
+    color: var(--color-primary);
+  }
+
+  .form-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    padding: 0.5rem;
+    background: var(--surface-1);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-lg, 0.5rem);
+    flex-shrink: 0;
+  }
+
+  .vault-body {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+  }
+
+  .dock-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 2rem 0.5rem;
+    color: var(--text-faint);
+    font-size: var(--font-sm, 0.75rem);
+    text-align: center;
+    gap: 0.2rem;
+  }
+
+  .dock-empty .hint {
+    font-size: var(--font-sm, 0.65rem);
+    color: var(--text-faint);
+    opacity: 0.7;
+  }
+
+  .entry-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
 </style>

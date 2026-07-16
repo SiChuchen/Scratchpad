@@ -16,7 +16,6 @@
     const text = raw.trim()
     if (!text) return
 
-    // URL with embedded credentials: scheme://user:pass@host
     const m1 = text.match(/^([a-zA-Z][a-zA-Z0-9+.-]*):\/\/([^:/@\s]+):([^:/@\s]+)@([^\s/]+)/)
     if (m1) {
       detected = 'credential'
@@ -29,7 +28,6 @@
       return
     }
 
-    // ssh user@host
     const m2 = text.match(/^ssh\s+([^\s@]+)@([^\s]+)$/)
     if (m2) {
       detected = 'credential'
@@ -38,7 +36,6 @@
       return
     }
 
-    // user:pass@host:port
     const m3 = text.match(/^([^\s:]+):([^\s@]+)@([^\s:]+):?(\d*)$/)
     if (m3) {
       detected = 'credential'
@@ -51,7 +48,6 @@
       return
     }
 
-    // https://...
     const m4 = text.match(/^(https?:\/\/[^\s]+)$/i)
     if (m4) {
       detected = 'bookmark'
@@ -60,7 +56,6 @@
       return
     }
 
-    // fallback: nothing detected
     detected = null
   }
 
@@ -79,34 +74,205 @@
 </script>
 
 <div class="dialog">
-  <h3>智能导入</h3>
-  <textarea
-    bind:value={raw}
-    rows={4}
-    placeholder="粘贴 ssh user@host、user:pass@host:port、https://... 等"
-  ></textarea>
-  <button onclick={parse}>解析</button>
+  <div class="dialog-header">
+    <span class="dialog-title">📥 智能导入</span>
+    <button class="close-btn" onclick={() => onClose?.()} title="关闭" aria-label="关闭">✕</button>
+  </div>
+
+  <div class="section">
+    <div class="label">粘贴原始文本</div>
+    <textarea
+      class="raw-input"
+      bind:value={raw}
+      rows={3}
+      placeholder="ssh user@host、user:pass@host:port、https://... 等"
+    ></textarea>
+    <div class="row">
+      <button class="btn-secondary" onclick={parse}>解析</button>
+    </div>
+  </div>
 
   {#if detected}
     <div class="preview">
-      <p>识别为：{detected === 'credential' ? '凭据' : '书签'}</p>
-      <label>标题<input bind:value={title} /></label>
-      {#each fields as f, i}
-        <label>{f.key}
-          <input bind:value={f.value} type={f.isSensitive ? 'password' : 'text'} />
+      <div class="detected">
+        识别为：<span class="kind">{detected === 'credential' ? '凭据' : '书签'}</span>
+      </div>
+      <label class="field">
+        <span class="label">标题</span>
+        <input class="input" bind:value={title} />
+      </label>
+      {#each fields as f}
+        <label class="field">
+          <span class="label">{f.key}</span>
+          <input class="input" bind:value={f.value} type={f.isSensitive ? 'password' : 'text'} />
         </label>
       {/each}
-      <button onclick={save}>保存</button>
+      <div class="actions">
+        <button class="btn-submit" onclick={save}>保存</button>
+      </div>
     </div>
   {/if}
-
-  <button class="cancel" onclick={() => onClose?.()}>取消</button>
 </div>
 
 <style>
-  .dialog { border: 1px solid var(--border-color, #ccc); padding: 12px; display: flex; flex-direction: column; gap: 8px; background: var(--bg, #fff); }
-  textarea { width: 100%; }
-  .preview { border-top: 1px dashed var(--border-color, #ccc); padding-top: 8px; display: flex; flex-direction: column; gap: 4px; }
-  .preview label { display: flex; flex-direction: column; font-size: 0.85em; }
-  .cancel { margin-top: 8px; }
+  .dialog {
+    background: var(--surface-1);
+    border: 1px solid var(--border-emphasis);
+    border-radius: var(--radius-lg, 0.5rem);
+    padding: 0.6rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    box-shadow: var(--shadow-default);
+  }
+
+  .dialog-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .dialog-title {
+    font-size: var(--font-sm, 0.75rem);
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+
+  .close-btn {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 0.8rem;
+    padding: 0.1rem 0.3rem;
+    border-radius: var(--radius-md, 0.25rem);
+    transition: color 0.12s, background 0.12s;
+  }
+
+  .close-btn:hover {
+    color: var(--text-primary);
+    background: color-mix(in srgb, var(--text-primary) 10%, transparent);
+  }
+
+  .section {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+  }
+
+  .label {
+    font-size: var(--font-sm, 0.6rem);
+    color: var(--text-muted);
+    font-weight: 500;
+  }
+
+  .raw-input {
+    width: 100%;
+    background: var(--surface-2);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md, 0.3rem);
+    color: var(--text-primary);
+    font-size: var(--font-sm, 0.7rem);
+    font-family: var(--font-family-mono, "Cascadia Code", "Consolas", monospace);
+    padding: 0.35rem 0.45rem;
+    outline: none;
+    resize: vertical;
+    line-height: 1.45;
+    transition: border-color 0.12s;
+  }
+
+  .raw-input::placeholder {
+    color: var(--text-faint);
+  }
+
+  .raw-input:focus {
+    border-color: color-mix(in srgb, var(--color-primary) 40%, transparent);
+  }
+
+  .row {
+    display: flex;
+    gap: 0.25rem;
+  }
+
+  .btn-secondary {
+    padding: 0.25rem 0.7rem;
+    background: var(--surface-2);
+    border: 1px solid var(--border-default);
+    color: var(--text-muted);
+    font-size: var(--font-sm, 0.65rem);
+    border-radius: var(--radius-md, 0.3rem);
+    cursor: pointer;
+    font-family: inherit;
+    transition: background 0.12s, color 0.12s;
+  }
+
+  .btn-secondary:hover {
+    background: var(--border-default);
+    color: var(--text-primary);
+  }
+
+  .preview {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    padding-top: 0.4rem;
+    border-top: 1px solid var(--border-subtle);
+  }
+
+  .detected {
+    font-size: var(--font-sm, 0.65rem);
+    color: var(--text-muted);
+  }
+
+  .kind {
+    color: var(--color-primary);
+    font-weight: 600;
+  }
+
+  .field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+  }
+
+  .input {
+    background: var(--surface-2);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md, 0.3rem);
+    color: var(--text-primary);
+    font-size: var(--font-sm, 0.7rem);
+    font-family: inherit;
+    padding: 0.3rem 0.45rem;
+    outline: none;
+    transition: border-color 0.12s;
+    width: 100%;
+  }
+
+  .input:focus {
+    border-color: color-mix(in srgb, var(--color-primary) 40%, transparent);
+  }
+
+  .actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.25rem;
+    margin-top: 0.1rem;
+  }
+
+  .btn-submit {
+    padding: 0.25rem 0.7rem;
+    background: color-mix(in srgb, var(--color-primary) 15%, transparent);
+    border: 1px solid color-mix(in srgb, var(--color-primary) 30%, transparent);
+    color: var(--color-primary);
+    font-size: var(--font-sm, 0.65rem);
+    font-weight: 500;
+    border-radius: var(--radius-md, 0.3rem);
+    cursor: pointer;
+    font-family: inherit;
+    transition: background 0.12s;
+  }
+
+  .btn-submit:hover {
+    background: color-mix(in srgb, var(--color-primary) 25%, transparent);
+  }
 </style>

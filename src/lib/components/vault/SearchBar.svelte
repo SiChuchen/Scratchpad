@@ -34,18 +34,64 @@
   }
 </script>
 
-<div class="search-bar">
+<div class="search-box">
+  <svg class="search-icon" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+    <circle cx="11" cy="11" r="7" />
+    <line x1="21" y1="21" x2="16.65" y2="16.65" />
+  </svg>
   <input
+    class="search-input"
     type="search"
-    placeholder="搜索标题/用户名/标签（FTS5 优先，未命中自动调用 LLM）"
+    placeholder="搜索标题 / 用户名 / 标签"
     bind:value={query}
     oninput={onInput}
   />
-  {#if loading}<span class="searching">搜索中...</span>{/if}
+  {#if loading}<span class="search-status">...</span>{/if}
 </div>
 
 <style>
-  .search-bar { display: flex; gap: 6px; align-items: center; }
-  .search-bar input { flex: 1; padding: 6px 8px; }
-  .searching { font-size: 0.8em; opacity: 0.6; }
+  .search-box {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+    background: var(--surface-2);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md, 0.3rem);
+    padding: 0 0.35rem;
+    height: 1.75rem;
+    flex-shrink: 0;
+  }
+
+  .search-icon {
+    flex-shrink: 0;
+    opacity: 0.35;
+    color: var(--text-primary);
+  }
+
+  .search-input {
+    flex: 1;
+    background: none;
+    border: none;
+    color: var(--text-primary);
+    font-size: var(--font-sm, 0.65rem);
+    font-family: inherit;
+    outline: none;
+    padding: 0;
+    min-width: 0;
+  }
+
+  .search-input::placeholder {
+    color: var(--text-faint);
+  }
+
+  .search-input::-webkit-search-cancel-button {
+    -webkit-appearance: none;
+  }
+
+  .search-status {
+    font-size: var(--font-sm, 0.6rem);
+    color: var(--text-faint);
+    flex-shrink: 0;
+  }
 </style>
