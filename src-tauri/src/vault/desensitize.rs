@@ -1,5 +1,6 @@
 // src-tauri/src/vault/desensitize.rs
 use std::collections::HashMap;
+use std::sync::OnceLock;
 
 use rand::Rng;
 use regex::Regex;
@@ -51,7 +52,9 @@ impl TokenMap {
     /// 立即返回 `StorageError::Validation`，避免把模型编造的占位符当成
     /// 普通文本写回数据库。只有所有占位符都已知时才执行回填。
     pub fn detokenize_strict(&self, text: &str) -> Result<String, StorageError> {
-        let placeholder_re = Regex::new(r"\[SECRET:[^\]]+\]").unwrap();
+        static PLACEHOLDER_RE: OnceLock<Regex> = OnceLock::new();
+        let placeholder_re =
+            PLACEHOLDER_RE.get_or_init(|| Regex::new(r"\[SECRET:[^\]]+\]").unwrap());
         for m in placeholder_re.find_iter(text) {
             if !self.reverse.contains_key(m.as_str()) {
                 return Err(StorageError::Validation(format!(
@@ -143,6 +146,102 @@ mod tests {
         let masked = desensitize_raw_text("internal codename orion", &["orion".into()], &mut map);
         assert!(!masked.contains("orion"));
     }
+
+    /// C1 回归：占位符内的 `SECRET:` 不应被赋值型正则二次匹配，
+    /// 避免出现 `[SECRET[SECRET:...]]` 这种嵌套占位符。
+    #[test]
+    fn regex_does_not_remask_existing_placeholders() {
+        let mut map = TokenMap::new();
+        let masked = desensitize_raw_text(
+            "github_pat_11AA0abcdefghijklmnopqrstuvwxyz1234",
+            &[],
+            &mut map,
+        );
+        // 不应出现嵌套占位符
+        assert!(
+            !masked.contains("[SECRET[SECRET:"),
+            "nested placeholders detected: {masked}"
+        );
+        // 占位符出现次数必须等于 forward map 大小（每个敏感原文只入表一次）
+        assert_eq!(
+            masked.matches("[SECRET:").count(),
+            map.forward.len(),
+            "masked = {masked}, forward map size = {}",
+            map.forward.len()
+        );
+    }
+
+    /// C1 回归（赋值场景）：`use this key: sk-...` 中 `sk-` 先被前缀正则
+    /// 脱敏成 `[SECRET:...]`，随后赋值正则看到 `key: [SECRET:...]` 不应
+    /// 把已经脱敏的 value 二次脱敏。
+    #[test]
+    fn regex_does_not_remask_placeholder_after_assignment_keyword() {
+        let mut map = TokenMap::new();
+        let masked =
+            desensitize_raw_text("use this key: sk-abcdefghijklmnopqrstuvwxyz1234", &[], &mut map);
+        assert!(
+            !masked.contains("[SECRET[SECRET:"),
+            "nested placeholders detected: {masked}"
+        );
+        assert_eq!(
+            masked.matches("[SECRET:").count(),
+            map.forward.len(),
+            "masked = {masked}, forward map size = {}",
+            map.forward.len()
+        );
+    }
+
+    /// C2 回归：赋值型脱敏必须保留 keyword 和分隔符。
+    #[test]
+    fn assignment_regex_preserves_separator() {
+        let mut map = TokenMap::new();
+        let masked = desensitize_raw_text("password=hunter2", &[], &mut map);
+        assert!(
+            masked.starts_with("password=[SECRET:"),
+            "separator `=` lost: {masked}"
+        );
+
+        let mut map2 = TokenMap::new();
+        let masked2 = desensitize_raw_text("password: hunter2", &[], &mut map2);
+        assert!(
+            masked2.starts_with("password: [SECRET:"),
+            "separator `: ` lost: {masked2}"
+        );
+
+        let mut map3 = TokenMap::new();
+        let masked3 = desensitize_raw_text("api_key: sk-abcdefghijklmnopqrstuvwxyz", &[], &mut map3);
+        assert!(
+            masked3.contains("api_key: [SECRET:"),
+            "separator lost in api_key: {masked3}"
+        );
+        // 同样不能嵌套
+        assert!(
+            !masked3.contains("[SECRET[SECRET:"),
+            "nested placeholders: {masked3}"
+        );
+        assert_eq!(
+            masked3.matches("[SECRET:").count(),
+            map3.forward.len()
+        );
+    }
+
+    /// C2 回归：带边界字符（如 `{`、`(`、`,`）的赋值也必须正确脱敏。
+    #[test]
+    fn assignment_regex_handles_brace_and_paren_boundaries() {
+        let mut map = TokenMap::new();
+        let masked = desensitize_raw_text("{password=hunter2}", &[], &mut map);
+        assert!(
+            masked.contains("{password=[SECRET:"),
+            "brace boundary broken: {masked}"
+        );
+
+        let mut map2 = TokenMap::new();
+        let masked2 = desensitize_raw_text("(token=ghp_1234567890abcdefghijklmnop)", &[], &mut map2);
+        assert!(
+            masked2.contains("(token=[SECRET:"),
+            "paren boundary broken: {masked2}"
+        );
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -167,6 +266,12 @@ pub struct DesensitizedEntry {
 /// 顺序非常重要：先把语义性更强、更长的 token 模式跑完（GitHub PAT、
 /// `sk-` 前缀），再跑通用赋值 `password=...`，最后跑容易误伤的长 base64
 /// /银行卡号等模式。每个正则只替换自身匹配到的片段，不会跨界。
+/// 返回进程级缓存的正则集合。正则编译开销显著，不应每次调用都重新编译。
+fn regex_set() -> &'static [Regex] {
+    static REGEX_SET: OnceLock<Vec<Regex>> = OnceLock::new();
+    REGEX_SET.get_or_init(build_regex_set)
+}
+
 fn build_regex_set() -> Vec<Regex> {
     vec![
         // GitHub PAT v2 — 必须在 classic token 之前，避免被 `ghp_` 截断匹配
@@ -176,10 +281,13 @@ fn build_regex_set() -> Vec<Regex> {
         // OpenAI / Stripe 风格 API key 前缀
         Regex::new(r"\bsk-[A-Za-z0-9_-]{20,}\b").unwrap(),
         // 赋值型敏感值：保留 key 和分隔符，只 token 化 value
-        // 捕获组 1 = 完整的 "key op" 前缀（含分隔符），组 2 = value
-        // value 不能以 `[SECRET:` 开头（已被前序正则脱敏过，避免嵌套）
+        // 捕获组 1 = "keyword + 分隔符（含周围空白）"，例如 `password=` / `pwd: `
+        // 组 2 = value（不可含空白、逗号、分号）
+        // 左边界用 (?:^|[\s,;{(]) 代替 \b：避免占位符 `[SECRET:xxx]` 中的
+        // `SECRET:`（`[` 与 `S` 之间满足 `\b`）被本条正则二次匹配，导致嵌套占位符。
+        // 边界字符本身不进入捕获组，由外层 `apply_regex_mask` 单独原样保留。
         Regex::new(
-            r"(?i)\b(password|passwd|pwd|secret|token|api[_-]?key)\s*[:=]\s*([^\s,;]+)",
+            r"(?i)(?:^|[\s,;{(])((?:password|passwd|pwd|secret|token|api[_-]?key)\s*[:=]\s*)([^\s,;]+)",
         )
         .unwrap(),
         // PEM 私钥
@@ -203,10 +311,13 @@ fn build_regex_set() -> Vec<Regex> {
 /// 按正则集合顺序脱敏。对带捕获组的赋值正则只 token 化第 2 组（value），
 /// 其余正则整体替换。若 value 已经是 `[SECRET:xxx]` 占位符（被前序正则
 /// 脱敏过）则跳过，避免占位符被嵌套二次脱敏。
+///
+/// 注意：赋值型正则 `(?:^|[\s,;{(])(...)...` 的首字符可能是边界字符
+/// （空白、逗号、`{`、`(` 等），它不属于捕获组 1，因此需要单独原样保留。
 fn apply_regex_mask(text: &str, map: &mut TokenMap) -> String {
-    let regexes = build_regex_set();
+    let regexes = regex_set();
     let mut current = text.to_string();
-    for re in &regexes {
+    for re in regexes.iter() {
         let mut replaced = String::new();
         let mut last_end = 0;
         for caps in re.captures_iter(&current) {
@@ -216,11 +327,16 @@ fn apply_regex_mask(text: &str, map: &mut TokenMap) -> String {
             };
             replaced.push_str(&current[last_end..whole.start()]);
             if let (Some(prefix_m), Some(value_m)) = (caps.get(1), caps.get(2)) {
+                // 计算边界字符长度（whole 起点到 prefix 起点之间的字符）
+                let boundary_len = prefix_m.start() - whole.start();
+                if boundary_len > 0 {
+                    replaced.push_str(&whole.as_str()[..boundary_len]);
+                }
                 if value_m.as_str().starts_with("[SECRET:") {
-                    // value 已经是占位符：原样保留整段匹配
-                    replaced.push_str(whole.as_str());
+                    // value 已经是占位符：原样保留 prefix + value（即整段匹配剩余部分）
+                    replaced.push_str(&whole.as_str()[boundary_len..]);
                 } else {
-                    // 赋值型：保留 prefix（key + 分隔符），仅 token 化 value
+                    // 赋值型：保留 prefix（keyword + 分隔符），仅 token 化 value
                     replaced.push_str(prefix_m.as_str());
                     replaced.push_str(&map.tokenize(value_m.as_str()));
                 }
@@ -274,6 +390,9 @@ pub fn desensitize_raw_text(
 /// - 单项长度超过 `max_len` 拒绝
 /// - 包含 `[SECRET:` 拒绝
 /// - 与本请求 `TokenMap` 中任一敏感原文相同（按 Unicode 小写比较）拒绝
+/// - 此外，对于长度 ≥ 6 的敏感原文，执行子串匹配（任一敏感原文作为子串出现即拒绝），
+///   以防 AI 把敏感值嵌入到更长的标签/摘要里。短敏感值（< 6 字符）只做等值
+///   匹配，避免对 3–5 字符的通用代码过度误伤。
 /// - 按 Unicode 小写去重
 pub fn validate_non_sensitive_metadata(
     values: &[String],
@@ -306,7 +425,10 @@ pub fn validate_non_sensitive_metadata(
             return Err(format!("value contains placeholder: {}", trimmed));
         }
         let lower = trimmed.to_lowercase();
-        if sensitive_lower.iter().any(|s| s == &lower) {
+        if sensitive_lower
+            .iter()
+            .any(|s| s == &lower || (s.len() >= 6 && lower.contains(s)))
+        {
             return Err(format!("value matches sensitive original: {}", trimmed));
         }
         if seen.contains_key(&lower) {
