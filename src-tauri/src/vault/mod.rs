@@ -6,3 +6,4 @@ pub mod migrations;
 pub mod desensitize;
 pub mod llm;
 pub mod ipc;
+pub mod capture;
