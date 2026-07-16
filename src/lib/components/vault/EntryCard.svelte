@@ -67,7 +67,7 @@
       <div class="notes">{detail.entry.notes}</div>
     {/if}
 
-    <TagEditor entryId={entryId} tags={detail.tags} />
+    <TagEditor entryId={entryId} tags={detail.tags.map(t => t.tag)} />
   </div>
 {/if}
 

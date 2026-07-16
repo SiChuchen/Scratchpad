@@ -72,8 +72,8 @@
       {:else}
         <div class="result-meta">找到 {results.length} 条匹配</div>
         <div class="entry-list">
-          {#each results as hit (hit.entry.id)}
-            <EntryCard entryId={hit.entry.id} />
+          {#each results as hit (hit.summary.entry.id)}
+            <EntryCard entryId={hit.summary.entry.id} />
           {/each}
         </div>
       {/if}

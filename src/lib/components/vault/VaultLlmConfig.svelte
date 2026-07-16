@@ -1,10 +1,15 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import { vaultApi } from '$lib/api/vault'
-  import type { LlmConfig, LlmTestResult, ProviderPreset } from '$lib/types/vault'
+  import type { LlmTestResult, ProviderPreset } from '$lib/types/vault'
 
   let presets = $state<ProviderPreset[]>([])
-  let config = $state<LlmConfig>({
+  let config = $state<{
+    providerId: string
+    baseUrl: string
+    apiKey: string
+    model: string
+  }>({
     providerId: 'deepseek',
     baseUrl: 'https://api.deepseek.com/v1',
     apiKey: '',
@@ -17,7 +22,11 @@
   onMount(async () => {
     presets = await vaultApi.getLlmPresets()
     const saved = await vaultApi.getLlmConfig()
-    if (saved) config = saved
+    if (saved) {
+      config.providerId = saved.providerId
+      config.baseUrl = saved.baseUrl
+      config.model = saved.model
+    }
   })
 
   function pickProvider(id: string) {
@@ -31,6 +40,7 @@
   }
 
   async function save() {
+    // 临时沿用旧 setLlmConfig 兼容别名；Task 14 会迁移到 verifyAndSaveLlm。
     await vaultApi.setLlmConfig({ ...config })
     testResult = { ok: true, message: '配置已保存', modelEcho: null }
   }

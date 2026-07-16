@@ -1,20 +1,21 @@
 <script lang="ts">
   import { vaultApi } from '$lib/api/vault'
-  import type { VaultEntry } from '$lib/types/vault'
+  import type { VaultEntryDetail } from '$lib/types/vault'
 
-  let { onSaved }: { onSaved?: (e: VaultEntry) => void } = $props()
+  let { onSaved }: { onSaved?: (e: VaultEntryDetail) => void } = $props()
   let title = $state('')
   let content = $state('')
 
   async function submit() {
     if (!title.trim()) return
-    const entry = await vaultApi.createEntry({
+    const detail = await vaultApi.createEntry({
       kind: 'note',
       title: title.trim(),
       fields: [],
       notes: content.trim() || null,
+      manualTags: [],
     })
-    onSaved?.(entry)
+    onSaved?.(detail)
     title = content = ''
   }
 </script>

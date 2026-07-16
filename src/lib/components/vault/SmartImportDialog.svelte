@@ -66,6 +66,7 @@
       title,
       fields,
       notes: null,
+      manualTags: [],
     }
     await vaultApi.createEntry(input)
     onImported?.()

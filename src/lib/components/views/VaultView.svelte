@@ -2,7 +2,7 @@
   import { onMount } from 'svelte'
   import { vaultApi } from '$lib/api/vault'
   import { onTagsUpdated, onLlmError } from '$lib/api/vault'
-  import type { EntryKind, VaultEntry } from '$lib/types/vault'
+  import type { EntryKind, VaultEntrySummary } from '$lib/types/vault'
   import CredentialForm from '$lib/components/vault/CredentialForm.svelte'
   import BookmarkForm from '$lib/components/vault/BookmarkForm.svelte'
   import NoteForm from '$lib/components/vault/NoteForm.svelte'
@@ -14,7 +14,7 @@
 
   type Filter = EntryKind | 'all' | 'search'
   let activeFilter = $state<Filter>('all')
-  let entries = $state<VaultEntry[]>([])
+  let entries = $state<VaultEntrySummary[]>([])
   let loading = $state(false)
   let showForm = $state<null | 'credential' | 'bookmark' | 'note'>(null)
   let showImport = $state(false)
@@ -48,7 +48,7 @@
   onMount(() => {
     reload()
     onTagsUpdated(() => reload())
-    onLlmError((e) => alert(`LLM 错误: ${e.kind} - ${e.message}`))
+    onLlmError((e) => alert(`LLM 错误: ${e.kind} - ${e.code}`))
   })
 </script>
 
@@ -100,8 +100,8 @@
           </div>
         {:else}
           <div class="entry-list">
-            {#each searchResults as hit (hit.entry.id)}
-              <EntryCard entryId={hit.entry.id} />
+            {#each searchResults as hit (hit.summary.entry.id)}
+              <EntryCard entryId={hit.summary.entry.id} />
             {/each}
           </div>
         {/if}
@@ -116,8 +116,8 @@
         </div>
       {:else}
         <div class="entry-list">
-          {#each entries as e (e.id)}
-            <EntryCard entryId={e.id} />
+          {#each entries as e (e.entry.id)}
+            <EntryCard entryId={e.entry.id} />
           {/each}
         </div>
       {/if}
