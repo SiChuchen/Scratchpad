@@ -25,7 +25,7 @@ use crate::vault::config::LlmConfigStored;
 use crate::vault::desensitize::{desensitize_raw_text, TokenMap};
 use crate::vault::llm::prompt::capture_enrichment_prompt;
 use crate::vault::llm::{LlmAdapter, LlmError, LlmRequest};
-use crate::vault::models::{CaptureDraft, CaptureEnrichment, VaultEntryDetail};
+use crate::vault::models::{is_default_sensitive_key, CaptureDraft, CaptureEnrichment, VaultEntryDetail};
 use crate::vault::storage as vstore;
 
 /// 用户可读的占位符扫描失败信息。
@@ -48,7 +48,7 @@ pub async fn ipc_vault_parse_capture_local(
 #[tauri::command]
 pub async fn ipc_vault_enrich_capture(
     vault: State<'_, crate::vault::ipc::VaultRuntimeState>,
-    draft: CaptureDraft,
+    _draft: CaptureDraft,
     raw_text: String,
     manual_sensitive_values: Vec<String>,
     _request_id: String,
@@ -69,15 +69,9 @@ pub async fn ipc_vault_enrich_capture(
     )
     .map_err(|e| e.to_string())?;
 
-    enrich_capture_with(
-        &adapter,
-        &config,
-        &draft,
-        &raw_text,
-        &manual_sensitive_values,
-    )
-    .await
-    .map_err(|e| e.to_string())
+    enrich_capture_with(&adapter, &config, &raw_text, &manual_sensitive_values)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// 保存最终 draft 到 DB；幂等；绝不调 LLM。
@@ -122,7 +116,6 @@ pub async fn ipc_vault_create_from_capture(
 pub(crate) async fn enrich_capture_with(
     adapter: &dyn LlmAdapter,
     config: &LlmConfigStored,
-    _draft: &CaptureDraft,
     raw_text: &str,
     manual_sensitive_values: &[String],
 ) -> Result<CaptureEnrichment, LlmError> {
@@ -195,6 +188,12 @@ fn validate_final_draft(draft: &CaptureDraft) -> Result<(), String> {
     if draft.title.trim().is_empty() {
         return Err("title 不能为空".to_string());
     }
+    if draft.title.chars().count() > 120 {
+        return Err(format!(
+            "title 过长：{} 字符（上限 120）",
+            draft.title.chars().count()
+        ));
+    }
     if draft.fields.len() > 32 {
         return Err("字段数量超过 32 上限".to_string());
     }
@@ -224,7 +223,7 @@ fn reject_sensitive_metadata_leak(draft: &CaptureDraft) -> Result<(), String> {
     let sensitive_values: Vec<String> = draft
         .fields
         .iter()
-        .filter(|f| f.is_sensitive)
+        .filter(|f| f.is_sensitive || is_default_sensitive_key(&f.key))
         .map(|f| f.value.clone())
         .filter(|v| !v.trim().is_empty())
         .collect();
@@ -357,12 +356,11 @@ mod tests {
             counter: counter.clone(),
         };
         let config = sample_stored();
-        let draft = sample_draft();
+        let _draft = sample_draft();
         let raw_text = "hello world topsecret";
         let enrichment = enrich_capture_with(
             &adapter,
             &config,
-            &draft,
             raw_text,
             &["topsecret".to_string()],
         )
@@ -392,7 +390,7 @@ mod tests {
         let adapter = FailingAdapter;
         let config = sample_stored();
         let draft = sample_draft();
-        let result = enrich_capture_with(&adapter, &config, &draft, "any raw", &[]).await;
+        let result = enrich_capture_with(&adapter, &config, "any raw", &[]).await;
         assert!(result.is_err());
 
         // 但 create_from_capture 应仍能用本地 draft 保存（这条路径不调 LLM）
@@ -552,5 +550,35 @@ mod tests {
         }];
         d.ai_tags = vec!["alice".into()];
         assert!(reject_sensitive_metadata_leak(&d).is_ok());
+    }
+
+    /// 回归 M1：is_sensitive=false 但 key 是默认敏感词（如 "password"）时，
+    /// 仍必须进入敏感值检查，防止对抗性 draft 绕过元数据泄漏扫描。
+    #[test]
+    fn reject_sensitive_metadata_leak_catches_default_sensitive_key_unflagged() {
+        let mut d = sample_draft();
+        d.fields = vec![crate::vault::models::CaptureField {
+            draft_id: "f1".into(),
+            key: "password".into(),
+            value: "p@ssw0rd-leak".into(),
+            // 故意标 is_sensitive=false，模拟对抗性 draft
+            is_sensitive: false,
+        }];
+        d.ai_tags = vec!["contains-p@ssw0rd-leak".into()];
+        assert!(
+            reject_sensitive_metadata_leak(&d).is_err(),
+            "default-sensitive key must be checked even if is_sensitive=false"
+        );
+    }
+
+    /// 回归 M2：超长 title 必须被拒（避免对抗性 draft 写入 10000 字标题）。
+    #[test]
+    fn validate_final_draft_rejects_overlong_title() {
+        let mut d = sample_draft();
+        d.title = "x".repeat(121);
+        assert!(validate_final_draft(&d).is_err());
+        // 恰好 120 应通过
+        d.title = "y".repeat(120);
+        assert!(validate_final_draft(&d).is_ok());
     }
 }

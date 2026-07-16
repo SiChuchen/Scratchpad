@@ -14,12 +14,12 @@
 //   * app setup：若 config 存在且 auto_enrich=true，spawn 一个 worker；
 //   * verify_and_save 成功后：再次 trigger（worker mutex 保证重复触发是 no-op）。
 
-use std::sync::Mutex;
 use std::time::Duration;
 
 use rusqlite::Connection;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
+use tokio::sync::Semaphore;
 
 use crate::vault::ai::parse_capture_response;
 use crate::vault::desensitize::{desensitize_entry, TokenMap};
@@ -37,8 +37,9 @@ const BACKFILL_THROTTLE_MS: u64 = 750;
 /// 单次 worker run 最多处理多少条 entry（防止无限循环）。
 const BACKFILL_BATCH_LIMIT: usize = 50;
 
-/// 单例 worker mutex。`true` 表示已有 worker 在运行。
-static WORKER_RUNNING: Mutex<bool> = Mutex::new(false);
+/// 单例 worker 信号量。容量 1；permit 在 worker 任务结束时自动 Drop
+/// （即使 worker panic 也会释放，避免 `WORKER_RUNNING=true` 永久卡死）。
+static WORKER_PERMIT: Semaphore = Semaphore::const_new(1);
 
 /// 在 worker 内向外发送的 metadata 更新事件 payload。
 #[derive(Debug, Clone, Serialize)]
@@ -74,22 +75,19 @@ pub fn should_run_backfill(runtime: &VaultRuntimeState) -> bool {
 /// 尝试启动一个 backfill worker。如果已有 worker 在运行，直接返回（不排队）。
 ///
 /// 调用方通常在 setup 或 verify_and_save 成功后调用。
+///
+/// 使用 `Semaphore::try_acquire` 而非 `Mutex<bool>`：permit 通过 RAII Drop
+/// 释放，即使 worker 任务 panic 也能恢复，避免 flag 永久卡在 true。
 pub fn try_start_backfill(app: &AppHandle) {
-    // 单 worker 检查
-    {
-        let mut guard = WORKER_RUNNING.lock().unwrap();
-        if *guard {
-            return;
-        }
-        *guard = true;
-    }
+    let permit = match WORKER_PERMIT.try_acquire() {
+        Ok(p) => p,
+        Err(_) => return, // 已有 worker 在运行
+    };
 
     let app_handle = app.clone();
     tauri::async_runtime::spawn(async move {
+        let _permit = permit; // moved into task; Drop releases on normal return OR panic
         run_backfill_loop(app_handle).await;
-        // 离开 loop 时清掉 running flag
-        let mut guard = WORKER_RUNNING.lock().unwrap();
-        *guard = false;
     });
 }
 
@@ -241,6 +239,32 @@ async fn process_one_entry(app: &AppHandle, entry_id: &str) {
 
     // 6) 计算 content_hash（保持与 create_entry 时一致）
     let content_hash = vstore::compute_entry_content_hash(&detail.entry, &detail.fields);
+
+    // 6.5) **竞态保护**：LLM 调用可能持续数十秒。期间 `update_entry` 可能
+    // 已经把 entry 改成了新内容（删 ai tags、置 pending、写新 content_hash）。
+    // 若直接用旧 snapshot 的 hash 写回，会把用户编辑触发的 pending 状态用
+    // ready + stale 数据覆盖，且该 entry 不会再次回填（status 已变 ready）。
+    //
+    // 解决方案：写之前在 DB 锁下重新读取 entry 的当前 ai content_hash，
+    // 若与 snapshot 不一致，放弃本次写。entry 会保持 pending 状态，由
+    // 下一轮回填处理。
+    {
+        let app_state = app.state::<crate::AppState>();
+        let Ok(conn) = app_state.db.lock() else { return };
+        let current_hash = vstore::ai_content_hash_for_entry(&conn, entry_id)
+            .unwrap_or_default();
+        // 读 metadata 当前 status，只有仍为 pending（未变 ready/error）才写
+        let current_status = vstore::get_ai_metadata(&conn, entry_id)
+            .ok()
+            .flatten()
+            .map(|m| m.status);
+        if current_hash != content_hash
+            || current_status != Some(AiMetadataStatus::Pending)
+        {
+            // entry 已被修改或已处理；放弃本次写入
+            return;
+        }
+    }
 
     // 7) 写入 ready metadata + replace ai tags
     let metadata = VaultAiMetadata {
@@ -510,5 +534,89 @@ mod tests {
         assert_eq!(json["entryId"], "v2");
         assert_eq!(json["status"], "error");
         assert!(json["metadata"].is_null(), "metadata should be null on error");
+    }
+
+    /// 回归 C1：worker 在 LLM 调用期间 entry 被并发 update_entry 修改时，
+    /// 写入路径必须重新检查 ai_content_hash + status，避免用过期 snapshot
+    /// 覆盖新写入的 pending metadata。
+    ///
+    /// 由于 `process_one_entry` 需要 `AppHandle`，无法在纯单元测试里直接驱动；
+    /// 这里以 storage-level API 模拟同一竞态序列，验证保护逻辑的输入条件
+    /// （current_hash != snapshot_hash OR status != pending → 跳过写入）。
+    #[test]
+    fn backfill_skips_when_entry_changed_during_llm_call() {
+        use crate::vault::models::{FieldInput, VaultEntryInput};
+
+        let mut conn = open_db();
+        let mk_input = |title: &str| VaultEntryInput {
+            kind: crate::vault::models::EntryKind::Note,
+            title: title.into(),
+            fields: Vec::<FieldInput>::new(),
+            notes: None,
+            manual_tags: Vec::new(),
+        };
+
+        // 1) 创建 entry，默认 pending
+        let detail = vstore::create_entry(&mut conn, &mk_input("Original")).unwrap();
+        let id = detail.entry.id.clone();
+        let snapshot_hash =
+            vstore::compute_entry_content_hash(&detail.entry, &detail.fields);
+
+        // 2) 模拟"LLM 调用期间，update_entry 修改了 title → 触发 hash 变化 +
+        //    status 仍为 pending（update_entry 内部把 ready→pending；这里
+        //    默认就是 pending）"
+        let mut new_input = mk_input("Edited during LLM");
+        new_input.title = "Edited during LLM".into();
+        vstore::update_entry(&mut conn, &id, &new_input).unwrap();
+
+        // 3) 保护逻辑：重新读取当前 hash + status
+        let current_hash = vstore::ai_content_hash_for_entry(&conn, &id).unwrap();
+        let current_status =
+            vstore::get_ai_metadata(&conn, &id).unwrap().unwrap().status;
+
+        // 4) 断言：snapshot_hash != current_hash → 写入必须被跳过
+        assert_ne!(
+            snapshot_hash, current_hash,
+            "update_entry should have changed the content hash"
+        );
+        assert_eq!(current_status, AiMetadataStatus::Pending);
+
+        // 模拟 process_one_entry 的决策分支
+        let should_skip = current_hash != snapshot_hash
+            || current_status != AiMetadataStatus::Pending;
+        assert!(
+            should_skip,
+            "worker must skip write when entry changed during LLM call"
+        );
+
+        // 5) 验证：跳过写入后，metadata 仍是 pending、无 summary、无 ai tags
+        //    （即 update_entry 留下的"等待重新回填"状态未被覆盖）
+        let md = vstore::get_ai_metadata(&conn, &id).unwrap().unwrap();
+        assert_eq!(md.status, AiMetadataStatus::Pending);
+        assert!(md.summary.is_none());
+        let tags = vstore::list_tags_with_source(&conn, &id).unwrap();
+        assert!(
+            !tags.iter().any(|t| t.source
+                == crate::vault::models::TagSource::Ai),
+            "no stale AI tags should be written"
+        );
+    }
+
+    /// 回归 I1：worker 通过 Semaphore permit 保护，panic 后能再次启动。
+    /// 由于 `try_start_backfill` 需要 `AppHandle`，这里直接验证 Semaphore
+    /// 本身的 panic-safe 语义：模拟 permit 被占用然后"释放"（panic 等价于
+    /// permit 被 Drop）。
+    #[test]
+    fn worker_permit_recovers_after_drop() {
+        // 静态 Semaphore 在测试间共享，可能处于被占用状态；这里使用局部
+        // Semaphore 验证 panic-safe 语义（Drop 总是释放）。
+        let sem = Semaphore::new(1);
+        let permit1 = sem.try_acquire().unwrap();
+        // 占用后第二个 acquire 失败
+        assert!(sem.try_acquire().is_err());
+        // 模拟 panic：drop permit（panic 时 Rust 也会 Drop）
+        drop(permit1);
+        // 应能再次 acquire
+        assert!(sem.try_acquire().is_ok());
     }
 }
