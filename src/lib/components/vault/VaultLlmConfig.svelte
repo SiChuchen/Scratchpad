@@ -1,9 +1,17 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import { vaultApi } from '$lib/api/vault'
-  import type { LlmTestResult, ProviderPreset } from '$lib/types/vault'
+  import type { LlmTestResult, ProviderPreset, VaultAiSettings } from '$lib/types/vault'
 
-  let presets = $state<ProviderPreset[]>([])
+  // 已保存的 LLM 配置概览（不含 API Key）
+  let savedConfig = $state<{
+    providerId: string
+    baseUrl: string
+    model: string
+    hasApiKey: boolean
+  } | null>(null)
+
+  // 用户输入；API Key 留空时表示"保持不变"
   let config = $state<{
     providerId: string
     baseUrl: string
@@ -15,18 +23,35 @@
     apiKey: '',
     model: 'deepseek-v4-flash',
   })
+
+  let presets = $state<ProviderPreset[]>([])
+  let aiSettings = $state<VaultAiSettings>({
+    autoEnrich: false,
+    autoHybridSearch: false,
+    sensitiveClipboardClearSeconds: null,
+  })
+
   let showAdvanced = $state(false)
   let testing = $state(false)
   let testResult = $state<LlmTestResult | null>(null)
+  let deleteConfirmOpen = $state(false)
+  let errorMsg = $state('')
+  // 首次保存成功的标志 — 用于决定是否在保存成功后自动启用两项能力
+  let wasUnconfigured = $state(false)
 
   onMount(async () => {
     presets = await vaultApi.getLlmPresets()
     const saved = await vaultApi.getLlmConfig()
     if (saved) {
+      savedConfig = saved
       config.providerId = saved.providerId
       config.baseUrl = saved.baseUrl
       config.model = saved.model
+      config.apiKey = '' // 输入框始终为空；placeholder 提示
+    } else {
+      wasUnconfigured = true
     }
+    aiSettings = await vaultApi.getAiSettings()
   })
 
   function pickProvider(id: string) {
@@ -39,28 +64,130 @@
     }
   }
 
-  async function save() {
-    // 临时沿用旧 setLlmConfig 兼容别名；Task 14 会迁移到 verifyAndSaveLlm。
-    await vaultApi.setLlmConfig({ ...config })
-    testResult = { ok: true, message: '配置已保存', modelEcho: null }
-  }
-
-  async function test() {
+  async function saveAndVerify() {
     testing = true
     testResult = null
+    errorMsg = ''
     try {
-      testResult = await vaultApi.testLlm({ ...config })
+      const input = {
+        providerId: config.providerId,
+        baseUrl: config.baseUrl,
+        // 空字符串传给后端，表示复用已存的 key（仅 provider 未变时合法）
+        apiKey: config.apiKey || null,
+        model: config.model,
+      }
+      const result = await vaultApi.verifyAndSaveLlm(input)
+      testResult = result
+      if (result.ok) {
+        const fresh = await vaultApi.getLlmConfig()
+        if (fresh) {
+          savedConfig = fresh
+          config.apiKey = ''
+        }
+        // 首次配置成功：由后端启用 autoEnrich + autoHybridSearch
+        // （后端在 verify_and_save 内部处理；这里只是同步前端 UI）
+        if (wasUnconfigured) {
+          const refreshed = await vaultApi.getAiSettings()
+          aiSettings = refreshed
+          wasUnconfigured = false
+        }
+      }
+    } catch (e) {
+      errorMsg = String(e)
+      testResult = { ok: false, message: String(e), modelEcho: null }
     } finally {
       testing = false
     }
   }
+
+  async function retest() {
+    testing = true
+    testResult = null
+    errorMsg = ''
+    try {
+      // 用已保存配置测试；不覆盖用户开关
+      testResult = await vaultApi.testSavedLlm()
+    } catch (e) {
+      errorMsg = String(e)
+      testResult = { ok: false, message: String(e), modelEcho: null }
+    } finally {
+      testing = false
+    }
+  }
+
+  async function requestDelete() {
+    deleteConfirmOpen = true
+  }
+
+  async function cancelDelete() {
+    deleteConfirmOpen = false
+  }
+
+  async function confirmDelete() {
+    try {
+      await vaultApi.deleteLlmConfig()
+      savedConfig = null
+      config.apiKey = ''
+      wasUnconfigured = true
+      testResult = null
+      deleteConfirmOpen = false
+    } catch (e) {
+      errorMsg = String(e)
+    }
+  }
+
+  async function toggleAutoEnrich() {
+    const next = { ...aiSettings, autoEnrich: !aiSettings.autoEnrich }
+    aiSettings = await vaultApi.setAiSettings(next)
+  }
+
+  async function toggleAutoHybridSearch() {
+    const next = { ...aiSettings, autoHybridSearch: !aiSettings.autoHybridSearch }
+    aiSettings = await vaultApi.setAiSettings(next)
+  }
+
+  async function toggleClipboardClear() {
+    // 开启写 Some(30)；关闭写 None。不提供任意秒数输入。
+    const nextSeconds = aiSettings.sensitiveClipboardClearSeconds === null ? 30 : null
+    const next = { ...aiSettings, sensitiveClipboardClearSeconds: nextSeconds }
+    aiSettings = await vaultApi.setAiSettings(next)
+  }
+
+  const connectionOk = $derived(!!savedConfig?.hasApiKey)
+  const clipboardClearOn = $derived(aiSettings.sensitiveClipboardClearSeconds !== null)
+  const apiKeyPlaceholder = $derived(savedConfig?.hasApiKey ? '已保存；留空保持不变' : 'sk-...')
 </script>
 
 <div class="llm-config">
-  <div class="section-label">Vault LLM</div>
+  <div class="section-label">AI 整理与搜索</div>
 
+  <!-- 连接状态 -->
+  <div class="row">
+    <span class="label">连接状态</span>
+    <span class="status" class:ok={connectionOk} class:fail={!connectionOk}>
+      {connectionOk ? '已连接' : '未配置'}
+    </span>
+  </div>
+
+  <!-- 自动整理与标签 -->
+  <div class="row">
+    <span class="label">自动整理与标签</span>
+    <div class="toggle" class:active={aiSettings.autoEnrich} onclick={toggleAutoEnrich} role="switch" aria-checked={aiSettings.autoEnrich} tabindex="0">
+      <div class="toggle-knob"></div>
+    </div>
+  </div>
+
+  <!-- 自动混合检索 -->
+  <div class="row">
+    <span class="label">自动混合检索</span>
+    <div class="toggle" class:active={aiSettings.autoHybridSearch} onclick={toggleAutoHybridSearch} role="switch" aria-checked={aiSettings.autoHybridSearch} tabindex="0">
+      <div class="toggle-knob"></div>
+    </div>
+  </div>
+
+  <!-- 供应商 -->
   <label class="field">
-    <span class="label">厂商</span>
+    <span class="label">供应商</span>
     <select class="select" value={config.providerId} onchange={e => pickProvider(e.currentTarget.value)}>
       {#each presets as p}
         <option value={p.id}>{p.label}</option>
@@ -68,27 +195,34 @@
     </select>
   </label>
 
+  <!-- API Key -->
   <label class="field">
     <span class="label">API Key</span>
-    <input class="input" type="password" bind:value={config.apiKey} placeholder="sk-..." />
+    <input class="input" type="password" bind:value={config.apiKey} placeholder={apiKeyPlaceholder} autocomplete="off" />
   </label>
 
-  <label class="field">
-    <span class="label">模型</span>
-    <input class="input" list="vault-models" bind:value={config.model} />
-    <datalist id="vault-models">
-      {#each presets.find(p => p.id === config.providerId)?.models ?? [] as m}
-        <option value={m}></option>
-      {/each}
-    </datalist>
-  </label>
-
+  <!-- 操作按钮 -->
   <div class="actions">
-    <button class="btn-submit" onclick={save}>保存</button>
-    <button class="btn-secondary" onclick={test} disabled={testing}>
-      {testing ? '测试中...' : '测试连接'}
+    <button class="btn-submit" onclick={saveAndVerify} disabled={testing}>
+      {testing ? '验证中...' : '保存并验证'}
+    </button>
+    <button class="btn-secondary" onclick={retest} disabled={testing || !connectionOk}>
+      重新测试
+    </button>
+    <button class="btn-danger" onclick={requestDelete} disabled={!savedConfig}>
+      删除配置
     </button>
   </div>
+
+  {#if deleteConfirmOpen}
+    <div class="delete-confirm">
+      <span class="confirm-text">确认删除 LLM 配置？此操作不可撤销。</span>
+      <div class="confirm-actions">
+        <button class="btn-danger" onclick={confirmDelete}>确认删除</button>
+        <button class="btn-secondary" onclick={cancelDelete}>取消</button>
+      </div>
+    </div>
+  {/if}
 
   {#if testResult}
     <div class="test-result" class:ok={testResult.ok} class:fail={!testResult.ok}>
@@ -97,6 +231,14 @@
     </div>
   {/if}
 
+  {#if errorMsg && !testResult}
+    <div class="test-result fail">
+      <span class="test-icon">✗</span>
+      <span class="test-msg">{errorMsg}</span>
+    </div>
+  {/if}
+
+  <!-- 高级（折叠） -->
   <button class="advanced-toggle" onclick={() => showAdvanced = !showAdvanced}>
     <span class="chevron">{showAdvanced ? '▾' : '▸'}</span>
     <span>高级</span>
@@ -104,10 +246,40 @@
 
   {#if showAdvanced}
     <label class="field">
+      <span class="label">模型</span>
+      <input class="input" list="vault-models" bind:value={config.model} />
+      <datalist id="vault-models">
+        {#each presets.find(p => p.id === config.providerId)?.models ?? [] as m}
+          <option value={m}></option>
+        {/each}
+      </datalist>
+    </label>
+
+    <label class="field">
       <span class="label">Base URL</span>
       <input class="input" bind:value={config.baseUrl} placeholder="https://..." />
     </label>
   {/if}
+
+  <!-- 30s clipboard toggle -->
+  <div class="row clipboard-row">
+    <span class="label">复制敏感字段后 30 秒清除</span>
+    <div class="toggle" class:active={clipboardClearOn} onclick={toggleClipboardClear} role="switch" aria-checked={clipboardClearOn} tabindex="0">
+      <div class="toggle-knob"></div>
+    </div>
+  </div>
+
+  <!-- 数据说明 -->
+  <div class="data-notice">
+    <div class="notice-title">数据说明</div>
+    <ul class="notice-list">
+      <li>整理时发送可查看的脱敏内容（敏感字段原文不发送）。</li>
+      <li>搜索时发送脱敏后的查询，不会上传完整资料库。</li>
+      <li>识别为敏感的字段原文不会发送给 LLM。</li>
+      <li>API Key 仅保存在本地数据库。</li>
+      <li>数据文件无应用层加密；请使用系统盘加密保护。</li>
+    </ul>
+  </div>
 </div>
 
 <style>
@@ -126,6 +298,14 @@
     letter-spacing: 0.04em;
   }
 
+  .row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    padding: 0.15rem 0;
+  }
+
   .field {
     display: flex;
     flex-direction: column;
@@ -136,6 +316,48 @@
     font-size: var(--font-sm, 0.6rem);
     color: var(--text-muted);
     font-weight: 500;
+  }
+
+  .status {
+    font-size: var(--font-sm, 0.6rem);
+    padding: 0.1rem 0.4rem;
+    border-radius: var(--radius-sm, 0.25rem);
+  }
+  .status.ok {
+    color: var(--color-success);
+    background: color-mix(in srgb, var(--color-success) 12%, transparent);
+  }
+  .status.fail {
+    color: var(--text-muted);
+    background: var(--surface-2);
+  }
+
+  .toggle {
+    width: 2rem;
+    height: 1.1rem;
+    background: var(--border-default);
+    border-radius: 0.55rem;
+    position: relative;
+    cursor: pointer;
+    transition: background 0.2s;
+    flex-shrink: 0;
+  }
+  .toggle.active {
+    background: var(--color-primary-faint);
+  }
+  .toggle-knob {
+    width: 0.85rem;
+    height: 0.85rem;
+    background: var(--text-muted);
+    border-radius: 50%;
+    position: absolute;
+    top: 0.125rem;
+    left: 0.125rem;
+    transition: transform 0.2s, background 0.2s;
+  }
+  .toggle.active .toggle-knob {
+    transform: translateX(0.9rem);
+    background: var(--color-primary);
   }
 
   .input, .select {
@@ -171,6 +393,7 @@
     display: flex;
     gap: 0.3rem;
     margin-top: 0.1rem;
+    flex-wrap: wrap;
   }
 
   .btn-submit {
@@ -185,9 +408,12 @@
     font-family: inherit;
     transition: background 0.12s;
   }
-
-  .btn-submit:hover {
+  .btn-submit:hover:not(:disabled) {
     background: color-mix(in srgb, var(--color-primary) 25%, transparent);
+  }
+  .btn-submit:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
   }
 
   .btn-secondary {
@@ -201,15 +427,50 @@
     font-family: inherit;
     transition: background 0.12s, color 0.12s;
   }
-
   .btn-secondary:hover:not(:disabled) {
     background: var(--border-default);
     color: var(--text-primary);
   }
-
   .btn-secondary:disabled {
     opacity: 0.5;
     cursor: not-allowed;
+  }
+
+  .btn-danger {
+    padding: 0.25rem 0.7rem;
+    background: color-mix(in srgb, var(--color-danger) 10%, transparent);
+    border: 1px solid color-mix(in srgb, var(--color-danger) 30%, transparent);
+    color: var(--color-danger);
+    font-size: var(--font-sm, 0.65rem);
+    border-radius: var(--radius-md, 0.3rem);
+    cursor: pointer;
+    font-family: inherit;
+    transition: background 0.12s;
+  }
+  .btn-danger:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--color-danger) 20%, transparent);
+  }
+  .btn-danger:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .delete-confirm {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    padding: 0.4rem 0.5rem;
+    border: 1px solid color-mix(in srgb, var(--color-danger) 30%, transparent);
+    border-radius: var(--radius-md, 0.3rem);
+    background: color-mix(in srgb, var(--color-danger) 5%, transparent);
+  }
+  .confirm-text {
+    font-size: var(--font-sm, 0.6rem);
+    color: var(--color-danger);
+  }
+  .confirm-actions {
+    display: flex;
+    gap: 0.3rem;
   }
 
   .test-result {
@@ -220,17 +481,14 @@
     border-radius: var(--radius-md, 0.3rem);
     font-size: var(--font-sm, 0.65rem);
   }
-
   .test-result.ok {
     background: color-mix(in srgb, #4ade80 12%, transparent);
     color: #4ade80;
   }
-
   .test-result.fail {
     background: color-mix(in srgb, #ff6b6b 12%, transparent);
     color: #ff6b6b;
   }
-
   .test-icon {
     font-weight: 700;
   }
@@ -248,13 +506,43 @@
     font-family: inherit;
     transition: color 0.12s;
   }
-
   .advanced-toggle:hover {
     color: var(--text-primary);
   }
-
   .chevron {
     width: 0.7rem;
     text-align: center;
+  }
+
+  .clipboard-row {
+    margin-top: 0.2rem;
+    padding-top: 0.2rem;
+    border-top: 1px solid var(--border-subtle);
+  }
+
+  .data-notice {
+    margin-top: 0.2rem;
+    padding: 0.4rem 0.5rem;
+    background: var(--surface-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md, 0.3rem);
+  }
+  .notice-title {
+    font-size: var(--font-sm, 0.6rem);
+    font-weight: 600;
+    color: var(--text-muted);
+    margin-bottom: 0.2rem;
+  }
+  .notice-list {
+    margin: 0;
+    padding-left: 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.1rem;
+  }
+  .notice-list li {
+    font-size: var(--font-xs, 0.55rem);
+    color: var(--text-muted);
+    line-height: 1.4;
   }
 </style>

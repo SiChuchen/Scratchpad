@@ -697,6 +697,7 @@
     preferences={preferences}
     onChange={updatePreferences}
     onBack={() => navigate('home')}
+    notify={showToast}
   />
 {/if}
 {/key}

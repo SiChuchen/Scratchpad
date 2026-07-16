@@ -28,6 +28,9 @@ function makePrefs(overrides: Partial<DockPreferences> = {}): DockPreferences {
     shortcutModifiers: 'Alt+Shift',
     shortcutKey: 'V',
     shortcutRegistered: true,
+    quickAccessShortcutModifiers: 'Alt+Shift',
+    quickAccessShortcutKey: 'Space',
+    quickAccessShortcutRegistered: true,
     autoCleanupDays: 0,
     ...overrides,
   }

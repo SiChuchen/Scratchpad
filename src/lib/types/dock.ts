@@ -53,14 +53,21 @@ export interface DockPreferences {
   // Language
   language: string
 
-  // Shortcut
+  // Shortcut (主窗口显示/隐藏)
   shortcutModifiers: string
   shortcutKey: string
   shortcutRegistered: boolean
 
+  // Quick access shortcut (全局资料入口)
+  quickAccessShortcutModifiers: string
+  quickAccessShortcutKey: string
+  quickAccessShortcutRegistered: boolean
+
   // Cleanup
   autoCleanupDays: number
 }
+
+export type ShortcutTarget = 'main' | 'quickAccess'
 
 export interface ShortcutStatus {
   modifiers: string

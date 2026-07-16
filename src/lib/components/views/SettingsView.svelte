@@ -13,9 +13,10 @@
     preferences: DockPreferences
     onChange: (next: DockPreferences) => void
     onBack: () => void
+    notify?: (text: string, kind?: 'success' | 'error') => void
   }
 
-  let { preferences, onChange, onBack }: Props = $props()
+  let { preferences, onChange, onBack, notify }: Props = $props()
 
   let installedFonts = $state<string[]>([])
   let zhFontQuery = $state('')
@@ -56,14 +57,19 @@
       dataDirInput = path
       dataDirChanged = true
     } catch (e) {
-      alert(String(e))
+      const msg = String(e)
+      if (notify) {
+        notify(`更改数据目录失败：${msg}`, 'error')
+      }
     }
   }
 
-  // Shortcut state
+  // Shortcut state — dual shortcuts
   let shortcutOpen = $state(true)
-  let recording = $state(false)
-  let shortcutStatus = $state<'idle' | 'ok' | 'failed'>('idle')
+  let recordingTarget = $state<'main' | 'quickAccess' | null>(null)
+  let mainShortcutStatus = $state<'idle' | 'ok' | 'failed'>('idle')
+  let quickAccessShortcutStatus = $state<'idle' | 'ok' | 'failed'>('idle')
+  let shortcutConflictMsg = $state('')
 
   function modifiersToString(mods: { alt: boolean; ctrl: boolean; shift: boolean; meta: boolean }): string {
     const parts: string[] = []
@@ -74,34 +80,73 @@
     return parts.join('+')
   }
 
-  function startRecording() {
-    recording = true
+  function keyEventToShortcutString(e: KeyboardEvent): string | null {
+    // 不接收普通 Tab（避免破坏焦点导航）
+    if (e.key === 'Tab') return null
+    const mods = { alt: e.altKey, ctrl: e.ctrlKey, shift: e.shiftKey, meta: e.metaKey }
+    const hasMod = mods.alt || mods.ctrl || mods.shift || mods.meta
+    // 忽略单独的修饰键或未知键
+    const ignored = ['Alt', 'Control', 'Shift', 'Meta']
+    if (!hasMod) return null
+    if (ignored.includes(e.key)) return null
+    if (e.key.length > 1 && !e.key.startsWith('F') && e.key !== 'Space' && e.key !== 'Enter' && e.key !== 'Tab') return null
+    const key = e.key === 'Space' ? 'Space' : (e.key.length === 1 ? e.key.toUpperCase() : e.key)
+    return `${modifiersToString(mods)}+${key}`
+  }
+
+  function startRecordingMain() {
+    recordingTarget = 'main'
+    shortcutConflictMsg = ''
+  }
+  function startRecordingQuickAccess() {
+    recordingTarget = 'quickAccess'
+    shortcutConflictMsg = ''
   }
 
   function handleKeyCapture(e: KeyboardEvent) {
-    if (!recording) return
+    if (!recordingTarget) return
     e.preventDefault()
     e.stopPropagation()
 
-    const mods = { alt: e.altKey, ctrl: e.ctrlKey, shift: e.shiftKey, meta: e.metaKey }
-    const hasMod = mods.alt || mods.ctrl || mods.shift || mods.meta
-    // Ignore standalone modifiers or unknown keys
-    if (!hasMod || e.key === 'Alt' || e.key === 'Control' || e.key === 'Shift' || e.key === 'Meta' || e.key.length > 1 && !e.key.startsWith('F')) {
-      return
-    }
-    recording = false
+    const sc = keyEventToShortcutString(e)
+    if (!sc) return
 
-    const key = e.key.length === 1 ? e.key.toUpperCase() : e.key
-    const modifiers = modifiersToString(mods)
-    dockApi.updateShortcut(modifiers, key).then((status) => {
-      shortcutStatus = status.registered ? 'ok' : 'failed'
-      onChange({ ...preferences, shortcutModifiers: status.modifiers, shortcutKey: status.key, shortcutRegistered: status.registered })
-    }).catch(() => {
-      shortcutStatus = 'failed'
+    const target = recordingTarget
+    recordingTarget = null
+    const [modifiers, ...keyParts] = sc.split('+')
+    const key = keyParts.join('+')
+    dockApi.updateShortcut(target, modifiers, key).then((status) => {
+      shortcutConflictMsg = ''
+      if (target === 'main') {
+        mainShortcutStatus = status.registered ? 'ok' : 'failed'
+        onChange({
+          ...preferences,
+          shortcutModifiers: status.modifiers,
+          shortcutKey: status.key,
+          shortcutRegistered: status.registered,
+        })
+      } else {
+        quickAccessShortcutStatus = status.registered ? 'ok' : 'failed'
+        onChange({
+          ...preferences,
+          quickAccessShortcutModifiers: status.modifiers,
+          quickAccessShortcutKey: status.key,
+          quickAccessShortcutRegistered: status.registered,
+        })
+      }
+    }).catch((err) => {
+      // 冲突或注册失败 — 保留用户原设置，显示内联提示
+      shortcutConflictMsg = String(err)
+      if (target === 'main') {
+        mainShortcutStatus = 'failed'
+      } else {
+        quickAccessShortcutStatus = 'failed'
+      }
     })
   }
 
-  const shortcutLabel = $derived(`${preferences.shortcutModifiers}+${preferences.shortcutKey}`)
+  const mainShortcutLabel = $derived(`${preferences.shortcutModifiers}+${preferences.shortcutKey}`)
+  const quickAccessShortcutLabel = $derived(`${preferences.quickAccessShortcutModifiers}+${preferences.quickAccessShortcutKey}`)
 
   // Section open/close state
   let themeOpen = $state(true)
@@ -155,7 +200,8 @@
     // Parse proxy into IP + port
     parseProxy(preferences.updateProxy)
     // Sync shortcut status
-    shortcutStatus = preferences.shortcutRegistered ? 'ok' : 'failed'
+    mainShortcutStatus = preferences.shortcutRegistered ? 'ok' : 'failed'
+    quickAccessShortcutStatus = preferences.quickAccessShortcutRegistered ? 'ok' : 'failed'
     loadDataDirInfo()
   })
 
@@ -270,6 +316,7 @@
     const defaultZh = installedFonts.find(f => f === 'Microsoft YaHei') || 'Microsoft YaHei'
     const defaultEn = installedFonts.find(f => f === 'Segoe UI') || 'Segoe UI'
     onChange({
+      ...preferences,
       themeMode: 'system',
       themePresetId: 'dark-glass',
       customBasePresetId: '',
@@ -278,10 +325,6 @@
       contentTextSizePx: 14,
       spacingPreset: 'normal',
       radiusPreset: 'normal',
-      dockPositionX: preferences.dockPositionX,
-      dockPositionY: preferences.dockPositionY,
-      dockWidth: preferences.dockWidth,
-      dockHeight: preferences.dockHeight,
       dockEdgeAnchor: 'right',
       dockMinimized: false,
       fontFamilyZh: defaultZh,
@@ -290,14 +333,20 @@
       shortcutModifiers: 'Alt+Shift',
       shortcutKey: 'V',
       shortcutRegistered: false,
+      quickAccessShortcutModifiers: 'Alt+Shift',
+      quickAccessShortcutKey: 'Space',
+      quickAccessShortcutRegistered: false,
       updateProxy: '',
-      language: preferences.language,
       autoCleanupDays: 0,
+      // 注意：handleReset 不删除 LLM 配置；AI 配置只能通过该区域的显式"删除配置"操作移除
     })
     proxyType = 'http'
     proxyIp = ''
     proxyPort = ''
     proxyErrors = []
+    // 尝试恢复两个快捷键到默认
+    dockApi.updateShortcut('main', 'Alt+Shift', 'V').catch(() => {})
+    dockApi.updateShortcut('quickAccess', 'Alt+Shift', 'Space').catch(() => {})
   }
 
   async function handleCheckUpdate() {
@@ -571,21 +620,39 @@
       </div>
       {#if shortcutOpen}
         <div class="section-body">
+          <!-- 主窗口 -->
           <div class="row">
-            <span class="label">{messages.settings.shortcutStatus}</span>
+            <span class="label">显示/隐藏主窗口</span>
             <span class="shortcut-status" class:ok={preferences.shortcutRegistered} class:failed={!preferences.shortcutRegistered}>
               {preferences.shortcutRegistered ? messages.settings.shortcutRegistered : messages.settings.shortcutFailed}
             </span>
           </div>
           <div class="row">
             <span class="label">快捷键</span>
-            <span class="shortcut-key">{shortcutLabel}</span>
-          </div>
-          <div class="row">
-            <button class="record-btn" onclick={startRecording} disabled={recording}>
-              {recording ? messages.settings.shortcutRecording : messages.settings.shortcutRecord}
+            <span class="shortcut-key">{mainShortcutLabel}</span>
+            <button class="record-btn" onclick={startRecordingMain} disabled={recordingTarget !== null}>
+              {recordingTarget === 'main' ? messages.settings.shortcutRecording : messages.settings.shortcutRecord}
             </button>
           </div>
+
+          <!-- Quick access -->
+          <div class="row" style="margin-top:0.3rem">
+            <span class="label">打开全局资料入口</span>
+            <span class="shortcut-status" class:ok={preferences.quickAccessShortcutRegistered} class:failed={!preferences.quickAccessShortcutRegistered}>
+              {preferences.quickAccessShortcutRegistered ? messages.settings.shortcutRegistered : messages.settings.shortcutFailed}
+            </span>
+          </div>
+          <div class="row">
+            <span class="label">快捷键</span>
+            <span class="shortcut-key">{quickAccessShortcutLabel}</span>
+            <button class="record-btn" onclick={startRecordingQuickAccess} disabled={recordingTarget !== null}>
+              {recordingTarget === 'quickAccess' ? messages.settings.shortcutRecording : messages.settings.shortcutRecord}
+            </button>
+          </div>
+
+          {#if shortcutConflictMsg}
+            <p class="proxy-error">{shortcutConflictMsg}</p>
+          {/if}
           <p class="section-subtitle">{messages.settings.shortcutHint}</p>
         </div>
       {/if}

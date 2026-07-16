@@ -37,10 +37,15 @@ pub struct DockPreferences {
     // Language
     pub language: String, // "zh-CN" | "en", default "" (auto-detect)
 
-    // Shortcut
+    // Shortcut (主窗口显示/隐藏)
     pub shortcut_modifiers: String,
     pub shortcut_key: String,
     pub shortcut_registered: bool,
+
+    // 快速入口快捷键（全局资料入口）
+    pub quick_access_shortcut_modifiers: String,
+    pub quick_access_shortcut_key: String,
+    pub quick_access_shortcut_registered: bool,
 
     // Cleanup
     pub auto_cleanup_days: i64, // 0 = clean all unstarred on startup, N = keep N days
@@ -72,6 +77,9 @@ impl Default for DockPreferences {
             shortcut_modifiers: "Alt+Shift".to_string(),
             shortcut_key: "V".to_string(),
             shortcut_registered: false,
+            quick_access_shortcut_modifiers: "Alt+Shift".to_string(),
+            quick_access_shortcut_key: "Space".to_string(),
+            quick_access_shortcut_registered: false,
             auto_cleanup_days: 0,
         }
     }

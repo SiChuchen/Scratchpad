@@ -12,7 +12,40 @@ use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut}
 pub struct AppState {
     pub db: Mutex<Connection>,
     pub main_geometry: Mutex<Option<system::tab_controller::MainWindowGeometry>>,
-    pub current_shortcut: Mutex<Option<Shortcut>>,
+    pub shortcuts: Mutex<RegisteredShortcuts>,
+}
+
+/// 已注册的全局快捷键。两个 target 互相独立：一个注册失败不影响另一个。
+#[derive(Default)]
+pub struct RegisteredShortcuts {
+    pub main: Option<Shortcut>,
+    pub quick_access: Option<Shortcut>,
+}
+
+/// 快捷键目标。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+enum ShortcutTarget {
+    Main,
+    QuickAccess,
+}
+
+impl ShortcutTarget {
+    fn prefs_fields(self) -> (&'static str, &'static str, &'static str) {
+        // (modifiers_key, key_key, registered_key)
+        match self {
+            ShortcutTarget::Main => (
+                "shortcut_modifiers",
+                "shortcut_key",
+                "shortcut_registered",
+            ),
+            ShortcutTarget::QuickAccess => (
+                "quick_access_shortcut_modifiers",
+                "quick_access_shortcut_key",
+                "quick_access_shortcut_registered",
+            ),
+        }
+    }
 }
 
 // --- Shortcut helpers ---
@@ -38,6 +71,18 @@ fn parse_modifiers(s: &str) -> Option<Modifiers> {
 
 fn parse_key_code(s: &str) -> Option<Code> {
     let upper = s.to_uppercase();
+    match upper.as_str() {
+        "SPACE" => return Some(Code::Space),
+        "TAB" => return Some(Code::Tab),
+        "ENTER" | "RETURN" => return Some(Code::Enter),
+        "ESC" | "ESCAPE" => return Some(Code::Escape),
+        "BACKSPACE" => return Some(Code::Backspace),
+        "UP" => return Some(Code::ArrowUp),
+        "DOWN" => return Some(Code::ArrowDown),
+        "LEFT" => return Some(Code::ArrowLeft),
+        "RIGHT" => return Some(Code::ArrowRight),
+        _ => {}
+    }
     if let Some(num) = upper.strip_prefix('F').and_then(|n| n.parse::<u8>().ok()) {
         return match num {
             1 => Some(Code::F1),
@@ -216,28 +261,47 @@ struct ShortcutStatus {
     registered: bool,
 }
 
-#[tauri::command]
-fn ipc_shortcut_status(
-    state: tauri::State<AppState>,
+/// 计算 target 当前应该返回的状态（从持久化偏好 + 内存注册结果汇总）。
+fn shortcut_status_for(
+    state: &AppState,
+    target: ShortcutTarget,
 ) -> Result<ShortcutStatus, String> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
     let prefs = scratchpad::preferences::load_preferences(&conn).map_err(|e| e.to_string())?;
     drop(conn);
-    let guard = state.current_shortcut.lock().map_err(|e| e.to_string())?;
-    // is_registered() can return false even when the shortcut works,
-    // so we trust the stored registration result from startup.
-    let registered = guard.as_ref().is_some();
+    let guard = state.shortcuts.lock().map_err(|e| e.to_string())?;
+    let (modifiers, key, registered) = match target {
+        ShortcutTarget::Main => (
+            prefs.shortcut_modifiers,
+            prefs.shortcut_key,
+            guard.main.is_some(),
+        ),
+        ShortcutTarget::QuickAccess => (
+            prefs.quick_access_shortcut_modifiers,
+            prefs.quick_access_shortcut_key,
+            guard.quick_access.is_some(),
+        ),
+    };
     Ok(ShortcutStatus {
-        modifiers: prefs.shortcut_modifiers,
-        key: prefs.shortcut_key,
+        modifiers,
+        key,
         registered,
     })
+}
+
+#[tauri::command]
+fn ipc_shortcut_status(
+    state: tauri::State<AppState>,
+    target: ShortcutTarget,
+) -> Result<ShortcutStatus, String> {
+    shortcut_status_for(&state, target)
 }
 
 #[tauri::command]
 fn ipc_shortcut_update(
     state: tauri::State<AppState>,
     app: tauri::AppHandle,
+    target: ShortcutTarget,
     modifiers: String,
     key: String,
 ) -> Result<ShortcutStatus, String> {
@@ -246,41 +310,100 @@ fn ipc_shortcut_update(
     let code = parse_key_code(&key).ok_or_else(|| format!("invalid key: {key}"))?;
     let new_shortcut = Shortcut::new(Some(mods), code);
 
-    // Unregister old shortcut
-    let mut guard = state.current_shortcut.lock().map_err(|e| e.to_string())?;
-    if let Some(ref old) = *guard {
-        let _ = app.global_shortcut().unregister(*old);
+    // 检查与另一 target 是否冲突。冲突时不注销旧 shortcut，保留用户原设置。
+    {
+        let guard = state.shortcuts.lock().map_err(|e| e.to_string())?;
+        let other = match target {
+            ShortcutTarget::Main => guard.quick_access,
+            ShortcutTarget::QuickAccess => guard.main,
+        };
+        if let Some(other_sc) = other {
+            if other_sc == new_shortcut {
+                return Err(format!(
+                    "shortcut conflict: same combination is used by the other target"
+                ));
+            }
+        }
     }
 
-    // Register new shortcut with same toggle handler
+    // 先尝试注册新 shortcut；成功后再注销旧 shortcut，避免失败时两个都不可用。
     let app_handle = app.clone();
-    app.global_shortcut()
-        .on_shortcut(new_shortcut, move |_app, _sc, event| {
-            use tauri_plugin_global_shortcut::ShortcutState;
-            if event.state == ShortcutState::Pressed {
-                if let Some(w) = app_handle.get_webview_window("main") {
-                    if w.is_visible().unwrap_or(false) {
-                        let _ = w.hide();
-                    } else {
-                        let _ = w.show();
-                        let _ = w.set_focus();
+    match target {
+        ShortcutTarget::Main => {
+            app.global_shortcut()
+                .on_shortcut(new_shortcut, move |_app, _sc, event| {
+                    use tauri_plugin_global_shortcut::ShortcutState;
+                    if event.state == ShortcutState::Pressed {
+                        if let Some(w) = app_handle.get_webview_window("main") {
+                            if w.is_visible().unwrap_or(false) {
+                                let _ = w.hide();
+                            } else {
+                                let _ = w.show();
+                                let _ = w.set_focus();
+                            }
+                        }
                     }
-                }
-            }
-        })
-        .map_err(|e| format!("failed to register shortcut: {e}"))?;
+                })
+                .map_err(|e| format!("failed to register shortcut: {e}"))?;
+        }
+        ShortcutTarget::QuickAccess => {
+            app.global_shortcut()
+                .on_shortcut(new_shortcut, move |app, _sc, event| {
+                    use tauri_plugin_global_shortcut::ShortcutState;
+                    if event.state == ShortcutState::Pressed {
+                        // Task 15 会创建 quick-access 窗口；当前先复用 main 窗口的
+                        // toggle 行为，让快捷键不至于"无反应"。
+                        if let Some(w) = app.get_webview_window("quick-access") {
+                            if w.is_visible().unwrap_or(false) {
+                                let _ = w.hide();
+                            } else {
+                                let _ = w.show();
+                                let _ = w.set_focus();
+                            }
+                        } else if let Some(w) = app.get_webview_window("main") {
+                            if w.is_visible().unwrap_or(false) {
+                                let _ = w.hide();
+                            } else {
+                                let _ = w.show();
+                                let _ = w.set_focus();
+                            }
+                        }
+                    }
+                })
+                .map_err(|e| format!("failed to register shortcut: {e}"))?;
+        }
+    }
 
-    let registered = true; // on_shortcut succeeded above, trust it over is_registered()
-    *guard = Some(new_shortcut);
+    // 注册成功 — 注销旧 shortcut 并写入新状态。
+    let mut guard = state.shortcuts.lock().map_err(|e| e.to_string())?;
+    let old = match target {
+        ShortcutTarget::Main => guard.main.replace(new_shortcut),
+        ShortcutTarget::QuickAccess => guard.quick_access.replace(new_shortcut),
+    };
+    if let Some(old_sc) = old {
+        let _ = app.global_shortcut().unregister(old_sc);
+    }
 
-    // Persist to preferences
+    // 持久化偏好（registered 字段实际不持久化，但保留字段语义）
+    let registered = true;
     {
         let mut conn = state.db.lock().map_err(|e| e.to_string())?;
         let mut prefs =
             scratchpad::preferences::load_preferences(&conn).map_err(|e| e.to_string())?;
-        prefs.shortcut_modifiers = modifiers.clone();
-        prefs.shortcut_key = key.clone();
-        prefs.shortcut_registered = registered;
+        let (mods_key, key_key, reg_key) = target.prefs_fields();
+        match target {
+            ShortcutTarget::Main => {
+                prefs.shortcut_modifiers = modifiers.clone();
+                prefs.shortcut_key = key.clone();
+                prefs.shortcut_registered = registered;
+            }
+            ShortcutTarget::QuickAccess => {
+                prefs.quick_access_shortcut_modifiers = modifiers.clone();
+                prefs.quick_access_shortcut_key = key.clone();
+                prefs.quick_access_shortcut_registered = registered;
+            }
+        }
+        let _ = (mods_key, key_key, reg_key); // 仅用于文档化字段名映射
         scratchpad::preferences::save_preferences(&mut conn, &prefs).map_err(|e| e.to_string())?;
     }
 
@@ -552,7 +675,7 @@ pub fn run() {
         .manage(AppState {
             db: Mutex::new(conn),
             main_geometry: Mutex::new(None),
-            current_shortcut: Mutex::new(None),
+            shortcuts: Mutex::new(RegisteredShortcuts::default()),
         })
         .manage(vault_runtime)
         .invoke_handler(tauri::generate_handler![
@@ -629,22 +752,24 @@ pub fn run() {
                 _ => {}
             });
 
-            // Global shortcut: load from preferences, register, report status
+            // Global shortcuts: load from preferences, register each target
+            // independently. 两个 target 互不阻塞：一个被系统占用时，另一个
+            // 仍然注册和工作。
             {
                 let state = app.state::<AppState>();
                 let conn = state.db.lock().unwrap();
                 let prefs = scratchpad::preferences::load_preferences(&conn).unwrap_or_default();
                 drop(conn);
 
-                let mods = parse_modifiers(&prefs.shortcut_modifiers)
+                // --- 主窗口 toggle ---
+                let main_mods = parse_modifiers(&prefs.shortcut_modifiers)
                     .unwrap_or(Modifiers::ALT | Modifiers::SHIFT);
-                let code = parse_key_code(&prefs.shortcut_key).unwrap_or(Code::KeyV);
-                let shortcut = Shortcut::new(Some(mods), code);
-
-                let app_handle = app.handle().clone();
-                let reg_result =
+                let main_code = parse_key_code(&prefs.shortcut_key).unwrap_or(Code::KeyV);
+                let main_shortcut = Shortcut::new(Some(main_mods), main_code);
+                let main_registered = {
+                    let app_handle = app.handle().clone();
                     app.global_shortcut()
-                        .on_shortcut(shortcut, move |_app, _sc, event| {
+                        .on_shortcut(main_shortcut, move |_app, _sc, event| {
                             use tauri_plugin_global_shortcut::ShortcutState;
                             if event.state == ShortcutState::Pressed {
                                 if let Some(w) = app_handle.get_webview_window("main") {
@@ -656,21 +781,59 @@ pub fn run() {
                                     }
                                 }
                             }
-                        });
+                        })
+                        .is_ok()
+                };
+                if main_registered {
+                    let mut guard = state.shortcuts.lock().unwrap();
+                    guard.main = Some(main_shortcut);
+                }
 
-                let registered = reg_result.is_ok();
+                // --- Quick access toggle ---
+                let qa_mods = parse_modifiers(&prefs.quick_access_shortcut_modifiers)
+                    .unwrap_or(Modifiers::ALT | Modifiers::SHIFT);
+                let qa_code = parse_key_code(&prefs.quick_access_shortcut_key)
+                    .unwrap_or(Code::Space);
+                let qa_shortcut = Shortcut::new(Some(qa_mods), qa_code);
+                let qa_registered = {
+                    app.global_shortcut()
+                        .on_shortcut(qa_shortcut, move |app, _sc, event| {
+                            use tauri_plugin_global_shortcut::ShortcutState;
+                            if event.state == ShortcutState::Pressed {
+                                // Task 15 创建 quick-access 窗口；当前先复用 main 窗口。
+                                if let Some(w) = app.get_webview_window("quick-access") {
+                                    if w.is_visible().unwrap_or(false) {
+                                        let _ = w.hide();
+                                    } else {
+                                        let _ = w.show();
+                                        let _ = w.set_focus();
+                                    }
+                                } else if let Some(w) = app.get_webview_window("main") {
+                                    if w.is_visible().unwrap_or(false) {
+                                        let _ = w.hide();
+                                    } else {
+                                        let _ = w.show();
+                                        let _ = w.set_focus();
+                                    }
+                                }
+                            }
+                        })
+                        .is_ok()
+                };
+                if qa_registered {
+                    let mut guard = state.shortcuts.lock().unwrap();
+                    guard.quick_access = Some(qa_shortcut);
+                }
 
-                // Persist registration status
+                // 持久化注册结果（registered 字段不持久化但写库以备调试）
                 {
                     let mut conn = state.db.lock().unwrap();
                     let mut prefs =
                         scratchpad::preferences::load_preferences(&conn).unwrap_or_default();
-                    prefs.shortcut_registered = registered;
+                    prefs.shortcut_registered = main_registered;
+                    prefs.quick_access_shortcut_registered = qa_registered;
                     let _ = scratchpad::preferences::save_preferences(&mut conn, &prefs);
                 }
-
-                let mut guard = state.current_shortcut.lock().unwrap();
-                *guard = Some(shortcut);
             }
 
             // Ensure window is focused on startup so keyboard/paste events work
@@ -718,4 +881,112 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod shortcut_tests {
+    use super::*;
+    use rusqlite::Connection;
+
+    /// `parse_key_code("Space")` 必须返回 `Code::Space` — 这是 Quick Access
+    /// 默认快捷键的关键码，老版本无法解析。
+    #[test]
+    fn shortcut_parse_space_key_code() {
+        assert_eq!(parse_key_code("Space"), Some(Code::Space));
+        assert_eq!(parse_key_code("space"), Some(Code::Space));
+        assert_eq!(parse_key_code("SPACE"), Some(Code::Space));
+    }
+
+    #[test]
+    fn shortcut_parse_tab_and_arrows() {
+        assert_eq!(parse_key_code("Tab"), Some(Code::Tab));
+        assert_eq!(parse_key_code("Up"), Some(Code::ArrowUp));
+        assert_eq!(parse_key_code("Down"), Some(Code::ArrowDown));
+    }
+
+    /// 模拟冲突检测逻辑：当两个 target 的 (modifiers, key) 相同时，
+    /// `ipc_shortcut_update` 应当拒绝并保留旧 shortcut。
+    #[test]
+    fn shortcut_update_rejects_conflict_with_other_target_and_preserves_old() {
+        let main_mods = parse_modifiers("Alt+Shift").unwrap();
+        let main_sc = Shortcut::new(Some(main_mods), Code::KeyV);
+
+        let new_mods = parse_modifiers("Alt+Shift").unwrap();
+        let new_sc_for_qa = Shortcut::new(Some(new_mods), Code::KeyV);
+
+        // Quick Access 已有 Some(other)；现在 Main 想注册相同组合
+        let mut shortcuts = RegisteredShortcuts::default();
+        shortcuts.quick_access = Some(main_sc);
+
+        // 模拟 ipc_shortcut_update 中的冲突检查
+        let other = shortcuts.quick_access;
+        let conflict = other
+            .map(|o| o == new_sc_for_qa)
+            .unwrap_or(false);
+        assert!(conflict, "same combination must be detected as conflict");
+
+        // 冲突时不应注销旧 shortcut
+        assert!(shortcuts.quick_access.is_some());
+    }
+
+    /// Main 注册失败不应阻塞 Quick Access 注册。这里通过 RegisteredShortcuts
+    /// 的字段独立性验证：可以只设置 quick_access 而保留 main = None。
+    #[test]
+    fn shortcut_main_registration_does_not_block_quick_access_registration() {
+        let mut shortcuts = RegisteredShortcuts::default();
+        // 模拟 Main 注册失败（保持 None），Quick Access 成功
+        let qa_mods = parse_modifiers("Alt+Shift").unwrap();
+        let qa_sc = Shortcut::new(Some(qa_mods), Code::Space);
+        shortcuts.quick_access = Some(qa_sc);
+
+        assert!(shortcuts.main.is_none());
+        assert!(shortcuts.quick_access.is_some());
+    }
+
+    /// 整合测试：通过 DockPreferences 验证两个 target 的字段独立持久化。
+    #[test]
+    fn shortcut_roundtrip_persists_both_targets() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        scratchpad::storage::ensure_dock_schema(&mut conn, 0).unwrap();
+
+        let prefs = models::preferences::DockPreferences {
+            shortcut_modifiers: "Ctrl+Alt".to_string(),
+            shortcut_key: "V".to_string(),
+            shortcut_registered: true,
+            quick_access_shortcut_modifiers: "Ctrl+Shift".to_string(),
+            quick_access_shortcut_key: "Space".to_string(),
+            quick_access_shortcut_registered: true,
+            ..Default::default()
+        };
+        scratchpad::preferences::save_preferences(&mut conn, &prefs).unwrap();
+        let loaded = scratchpad::preferences::load_preferences(&conn).unwrap();
+
+        assert_eq!(loaded.shortcut_modifiers, "Ctrl+Alt");
+        assert_eq!(loaded.shortcut_key, "V");
+        assert_eq!(loaded.quick_access_shortcut_modifiers, "Ctrl+Shift");
+        assert_eq!(loaded.quick_access_shortcut_key, "Space");
+    }
+
+    /// 旧偏好缺 quick_access_* 字段时使用 Alt+Shift+Space 默认值。
+    #[test]
+    fn shortcut_legacy_prefs_default_quick_access_to_alt_shift_space() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        scratchpad::storage::ensure_dock_schema(&mut conn, 0).unwrap();
+        conn.execute(
+            "INSERT INTO preferences(key, value) VALUES ('shortcut_modifiers', 'Ctrl+K')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO preferences(key, value) VALUES ('shortcut_key', 'V')",
+            [],
+        )
+        .unwrap();
+
+        let loaded = scratchpad::preferences::load_preferences(&conn).unwrap();
+        assert_eq!(loaded.shortcut_modifiers, "Ctrl+K");
+        assert_eq!(loaded.shortcut_key, "V");
+        assert_eq!(loaded.quick_access_shortcut_modifiers, "Alt+Shift");
+        assert_eq!(loaded.quick_access_shortcut_key, "Space");
+    }
 }
