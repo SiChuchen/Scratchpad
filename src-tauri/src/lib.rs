@@ -107,7 +107,7 @@ fn win_monitor_work_area(_x: i32, _y: i32) -> system::window::WorkRect {
 
 /// 把 quick-access 窗口移动到鼠标所在显示器的工作区中心并 show/set_focus/emit。
 fn show_quick_access_centered(app: &tauri::AppHandle) {
-    use tauri::{PhysicalPosition as PhysPos, PhysicalSize as PhysSize};
+    use tauri::{PhysicalPosition as PhysPos, PhysicalSize as PhysSize, Size};
 
     let Some(quick) = app.get_webview_window("quick-access") else {
         return;
@@ -115,8 +115,13 @@ fn show_quick_access_centered(app: &tauri::AppHandle) {
     let (cx, cy) = win_cursor_pos();
     let work = win_monitor_work_area(cx, cy);
     let (x, y, w, h) = system::window::fit_and_center_quick_access(cx, cy, work);
+    let (min_w, min_h) = system::window::runtime_min_size(&work);
     let _ = quick.set_position(PhysPos::new(x as f64, y as f64));
     let _ = quick.set_size(PhysSize::new(w as f64, h as f64));
+    let _ = quick.set_min_size(Some(Size::Physical(PhysSize::new(
+        min_w as u32,
+        min_h as u32,
+    ))));
     let _ = quick.show();
     let _ = quick.set_focus();
     let _ = app.emit("quick-access-focus-input", ());

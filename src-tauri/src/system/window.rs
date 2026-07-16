@@ -138,6 +138,21 @@ pub fn fit_and_center_quick_access(
     (x, y, width, height)
 }
 
+/// Compute the runtime minimum size for the quick-access window, clamped to
+/// 90% of the work area so a small work area cannot push the static minimum
+/// above what the screen can actually display.
+///
+/// Spec: `min(480, work_width*0.9) x min(320, work_height*0.9)`.
+///
+/// Pure function — returns `(min_width, min_height)` in physical pixels.
+pub fn runtime_min_size(work_area: &WorkRect) -> (i32, i32) {
+    let work_w = work_area.right - work_area.left;
+    let work_h = work_area.bottom - work_area.top;
+    let min_w = (480).min(work_w * 9 / 10);
+    let min_h = (320).min(work_h * 9 / 10);
+    (min_w, min_h)
+}
+
 /// Work-area rectangle in physical pixels. Mirrors `windows_sys::Win32::Foundation::RECT`
 /// but kept as a plain struct so the pure helper is testable without depending on Win32.
 #[derive(Debug, Clone, Copy)]
@@ -198,5 +213,27 @@ mod tests {
         let work_height = 1080 - 0; // 1080
         assert_eq!(x, -1920 + (work_width - w) / 2);
         assert_eq!(y, 0 + (work_height - h) / 2);
+    }
+
+    /// On a large monitor the runtime min stays at the static 480×320.
+    #[test]
+    fn runtime_min_size_clamps_below_static() {
+        // Large monitor: stays at 480×320
+        let large = WorkRect {
+            left: 0,
+            top: 0,
+            right: 1920,
+            bottom: 1080,
+        };
+        assert_eq!(runtime_min_size(&large), (480, 320));
+
+        // Small work area: clamped to 90%
+        let small = WorkRect {
+            left: 0,
+            top: 0,
+            right: 400,
+            bottom: 300,
+        };
+        assert_eq!(runtime_min_size(&small), (360, 270)); // 90% of 400×300
     }
 }
