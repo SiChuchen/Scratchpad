@@ -678,6 +678,36 @@ fn ai_content_hash(input: &VaultEntryInput) -> String {
     hex::encode(Sha256::digest(canonical.as_bytes()))
 }
 
+/// 从存储的 entry + fields 重新计算当前 content hash。
+/// Task 9 search 用它判断 metadata.content_hash 是否已经 stale。
+/// 与 `ai_content_hash(input)` 的 canonical 输入完全一致，因此可以
+/// 直接拿来和 metadata.content_hash 对比。
+pub fn compute_entry_content_hash(
+    entry: &VaultEntry,
+    fields: &[VaultField],
+) -> String {
+    let fields_str = fields
+        .iter()
+        .map(|f| {
+            let value = if f.is_sensitive || is_default_sensitive_key(&f.key) {
+                "<sensitive>".to_string()
+            } else {
+                f.value.trim().to_string()
+            };
+            format!("{}={value}", f.key.trim().to_lowercase())
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let canonical = format!(
+        "{}\n{}\n{}\n{}",
+        entry.kind.as_str(),
+        entry.title.trim(),
+        entry.notes.as_deref().unwrap_or("").trim(),
+        fields_str,
+    );
+    hex::encode(Sha256::digest(canonical.as_bytes()))
+}
+
 /// 从 capture draft 原子地创建 entry：
 ///  - 若 request_id 已存在于 vault_capture_requests，直接返回对应 entry（idempotent）
 ///  - 否则在单事务内写入：entry + fields + manual_tags + ai_tags + ready metadata + request_id + FTS

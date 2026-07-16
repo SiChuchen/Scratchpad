@@ -14,6 +14,7 @@
 // 绝不把 `LlmError::Server` 的响应 body 或 reqwest 错误直接送到前端。
 
 pub mod settings;
+pub mod search;
 
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -26,13 +27,12 @@ use tokio_util::sync::CancellationToken;
 use crate::vault::config::{
     self, load_ai_settings, load_stored_config, LlmConfigStored, VaultAiSettings,
 };
-use crate::vault::desensitize::{desensitize_entry, desensitize_raw_text, TokenMap};
+use crate::vault::desensitize::{desensitize_entry, TokenMap};
 use crate::vault::llm::openai_compat::OpenAiCompatAdapter;
-use crate::vault::llm::prompt::{capture_enrichment_prompt, query_plan_prompt};
+use crate::vault::llm::prompt::capture_enrichment_prompt;
 use crate::vault::llm::{LlmAdapter, LlmError, LlmRequest};
 use crate::vault::models::{
-    EntryKind, SearchSource, VaultEntryDetail, VaultEntryInput, VaultEntrySummary,
-    VaultSearchHit,
+    EntryKind, VaultEntryDetail, VaultEntryInput, VaultEntrySummary, VaultSearchHit,
 };
 use crate::vault::storage as vstore;
 
@@ -161,6 +161,9 @@ impl VaultRuntimeState {
             LlmError::Server(_, _) | LlmError::Parse(_) | LlmError::InvalidConfig(_) => {
                 // 不参与门控
             }
+            LlmError::Cancelled => {
+                // 用户取消不计入失败门控
+            }
         }
     }
 
@@ -180,7 +183,8 @@ impl VaultRuntimeState {
     }
 
     /// 把 `LlmError` 映射到稳定的用户事件 code（绝不泄露响应 body）。
-    /// 返回字符串来自闭集：auth / rateLimit / timeout / network / server / parse。
+    /// 返回字符串来自闭集：auth / rateLimit / timeout / network / server /
+    /// parse / config / cancelled。
     pub fn user_error_code(error: &LlmError) -> &'static str {
         match error {
             LlmError::Auth => "auth",
@@ -190,6 +194,7 @@ impl VaultRuntimeState {
             LlmError::Server(_, _) => "server",
             LlmError::Parse(_) => "parse",
             LlmError::InvalidConfig(_) => "config",
+            LlmError::Cancelled => "cancelled",
         }
     }
 
@@ -228,6 +233,17 @@ impl VaultRuntimeState {
             .unwrap()
             .as_ref()
             .map(|(_, t)| t.clone())
+    }
+
+    /// 判断当前活跃搜索的 request_id 是否等于传入值。
+    /// Task 9 用它来决定是否真的取消（防止迟到 cleanup 误取消新查询）。
+    pub fn active_search_id_matches(&self, request_id: &str) -> bool {
+        self.active_search
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|(id, _)| id == request_id)
+            .unwrap_or(false)
     }
 
     /// 用 request_id 清除匹配的活跃搜索；不匹配则不动。
@@ -281,6 +297,7 @@ pub(crate) fn llm_error_event(e: LlmError) -> LlmErrorEvent {
         LlmError::Server(_, _) => "server",
         LlmError::Parse(_) => "parse",
         LlmError::InvalidConfig(_) => "config",
+        LlmError::Cancelled => "cancelled",
     };
     LlmErrorEvent {
         kind: kind.to_string(),
@@ -485,142 +502,15 @@ pub async fn ipc_vault_search(
     query: String,
     limit: Option<usize>,
 ) -> Result<Vec<VaultSearchHit>, String> {
-    // FTS5-only：用于 Vault header 的快速关键词搜索
+    // FTS5-only：用于 Vault header 的快速关键词搜索。
+    // Task 9 之后完整的混合检索改由 `vault::ipc::search::ipc_vault_search_hybrid_local`
+    // 提供；本命令保留作为前端轻量调用入口，行为与 hybrid local 的
+    // "原查询 + 无 plan" 路径等价（但只返回 Local 来源，不涉及 AI 扩展）。
     let limit = limit.unwrap_or(20);
 
-    let fts_hits: Vec<(String, f64)> = {
-        let conn = state.db.lock().map_err(|e| e.to_string())?;
-        vstore::fts5_search(&conn, &query, limit).map_err(|e| e.to_string())?
-    };
-
     let conn = state.db.lock().map_err(|e| e.to_string())?;
-    let mut hits = Vec::with_capacity(fts_hits.len());
-    for (id, score) in fts_hits {
-        if let Ok(Some(entry)) = vstore::get_entry_by_id(&conn, &id) {
-            let tags = vstore::list_tags_with_source(&conn, &id).unwrap_or_default();
-            let preview = entry.notes.clone();
-            hits.push(VaultSearchHit {
-                summary: VaultEntrySummary {
-                    entry,
-                    tags,
-                    preview,
-                },
-                score,
-                sources: vec![SearchSource::Local],
-            });
-        }
-    }
-    Ok(hits)
-}
-
-/// LLM 自然语言搜索（独立端点）：脱敏查询 → 调 LLM 生成结构化查询计划
-/// → 用计划在本地做检索 → 返回匹配条目。
-///
-/// Task 8 之后：脱敏改用请求局部 `TokenMap`；自动调用前查询门控状态，
-/// 被阻断时直接降级为本地 FTS5 搜索。
-#[tauri::command]
-pub async fn ipc_vault_llm_search(
-    state: State<'_, crate::AppState>,
-    app: AppHandle,
-    query: String,
-    limit: Option<usize>,
-) -> Result<Vec<VaultSearchHit>, String> {
-    let limit = limit.unwrap_or(20);
-
-    let vault_state = app.state::<VaultRuntimeState>();
-
-    // 门控：被阻断/冷却 → 直接降级为本地搜索
-    if vault_state.should_skip_automatic_call().is_some() {
-        return local_search(&state, &query, limit);
-    }
-
-    // 1) 取 LLM 配置
-    let config = {
-        let guard = vault_state.config.lock().unwrap();
-        guard.clone()
-    };
-    let config = match config {
-        Some(c) => c,
-        None => return Ok(vec![]),
-    };
-
-    // 2) 脱敏查询：本请求专属 TokenMap
-    let mut token_map = TokenMap::new();
-    let masked_query = desensitize_raw_text(&query, &[], &mut token_map);
-    // token_map 在本函数后续不再使用（LLM 只返回 keywords），直接 drop
-    drop(token_map);
-    let now_rfc3339 = chrono::Utc::now().to_rfc3339();
-
-    // 3) 调 LLM 生成查询计划
-    let adapter = match OpenAiCompatAdapter::new(config.base_url, config.api_key, config.model) {
-        Ok(a) => a,
-        Err(_) => return Ok(vec![]),
-    };
-    let req = LlmRequest {
-        messages: query_plan_prompt(&masked_query, &now_rfc3339),
-        json_mode: true,
-        temperature: 0.0,
-        max_tokens: Some(256),
-    };
-    let resp = match adapter.complete(req).await {
-        Ok(r) => {
-            vault_state.record_success();
-            r
-        }
-        Err(e) => {
-            vault_state.record_failure(&e);
-            let _ = app.emit("vault-llm-error", llm_error_event(e));
-            // 网络错误降级为本地搜索
-            return local_search(&state, &query, limit);
-        }
-    };
-
-    // 4) 解析计划 —— 无效整次降级
-    let plan = match crate::vault::ai::parse_query_plan(&resp.content) {
-        Ok(p) => p,
-        Err(e) => {
-            let _ = app.emit("vault-llm-error", llm_error_event(e));
-            return local_search(&state, &query, limit);
-        }
-    };
-
-    // 5) 本地检索：优先用 plan.keywords 联合查询，没有就用原查询做 FTS5
-    let effective_query = if plan.keywords.is_empty() {
-        query.clone()
-    } else {
-        plan.keywords.join(" ")
-    };
-    local_search(&state, &effective_query, limit)
-}
-
-/// 本地 FTS5 搜索的统一封装。结果统一标记 `SearchSource::AiExpanded`，
-/// 表示这是"经过 AI 查询理解后触发的检索"（即使 LLM 失败降级到这里也保持一致）。
-fn local_search(
-    state: &State<'_, crate::AppState>,
-    query: &str,
-    limit: usize,
-) -> Result<Vec<VaultSearchHit>, String> {
-    let fts_hits: Vec<(String, f64)> = {
-        let conn = state.db.lock().map_err(|e| e.to_string())?;
-        vstore::fts5_search(&conn, query, limit).map_err(|e| e.to_string())?
-    };
-    let conn = state.db.lock().map_err(|e| e.to_string())?;
-    let mut hits = Vec::with_capacity(fts_hits.len());
-    for (id, score) in fts_hits {
-        if let Ok(Some(entry)) = vstore::get_entry_by_id(&conn, &id) {
-            let tags = vstore::list_tags_with_source(&conn, &id).unwrap_or_default();
-            let preview = entry.notes.clone();
-            hits.push(VaultSearchHit {
-                summary: VaultEntrySummary {
-                    entry,
-                    tags,
-                    preview,
-                },
-                score,
-                sources: vec![SearchSource::AiExpanded],
-            });
-        }
-    }
+    let hits = crate::vault::search::search_local(&conn, &query, None, limit)
+        .map_err(|e| e.to_string())?;
     Ok(hits)
 }
 
@@ -879,6 +769,18 @@ mod runtime_tests {
         assert!(runtime.should_skip_automatic_call().is_none());
     }
 
+    /// Task 9: Cancelled 是用户主动取消，绝不应触发 cooldown 或 auth-blocked。
+    #[test]
+    fn cancelled_does_not_trigger_cooldown_or_auth_block() {
+        let conn = open_db();
+        let runtime = VaultRuntimeState::load(&conn);
+        runtime.record_failure(&LlmError::Cancelled);
+        runtime.record_failure(&LlmError::Cancelled);
+        assert!(!runtime.has_cooldown());
+        assert!(!runtime.is_auth_blocked());
+        assert!(runtime.should_skip_automatic_call().is_none());
+    }
+
     // ---- user_error_code ----------------------------------------------------
 
     #[test]
@@ -915,6 +817,14 @@ mod runtime_tests {
         assert_eq!(
             VaultRuntimeState::user_error_code(&LlmError::Parse("x".into())),
             "parse"
+        );
+        assert_eq!(
+            VaultRuntimeState::user_error_code(&LlmError::InvalidConfig("x".into())),
+            "config"
+        );
+        assert_eq!(
+            VaultRuntimeState::user_error_code(&LlmError::Cancelled),
+            "cancelled"
         );
     }
 }

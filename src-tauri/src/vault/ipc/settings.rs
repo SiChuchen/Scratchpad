@@ -43,6 +43,7 @@ fn llm_error_message(error: &LlmError) -> String {
         LlmError::Server(status, _) => format!("服务端返回 HTTP {status}"),
         LlmError::Parse(_) => "响应解析失败".to_string(),
         LlmError::InvalidConfig(_) => "配置无效".to_string(),
+        LlmError::Cancelled => "请求已取消".to_string(),
     }
 }
 
@@ -266,6 +267,7 @@ mod tests {
         let _ = llm_error_message(&LlmError::Server(503, "x".into()));
         let _ = llm_error_message(&LlmError::Parse("x".into()));
         let _ = llm_error_message(&LlmError::InvalidConfig("x".into()));
+        let _ = llm_error_message(&LlmError::Cancelled);
     }
 
     // 注意：完整的 IPC 命令集成测试需要 tauri runtime + AppState，这里不便构造。

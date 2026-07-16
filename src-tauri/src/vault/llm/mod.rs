@@ -63,6 +63,10 @@ pub enum LlmError {
     Parse(String),
     #[error("invalid config: {0}")]
     InvalidConfig(String),
+    /// Task 9: 用户取消（例如发起了新的搜索，或显式取消）。
+    /// Cancelled 不计入 cooldown、不弹 toast，仅供 `tokio::select!` 提前返回。
+    #[error("cancelled")]
+    Cancelled,
 }
 
 #[async_trait]

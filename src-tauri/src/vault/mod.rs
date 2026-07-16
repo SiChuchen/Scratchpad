@@ -9,3 +9,4 @@ pub mod config;
 pub mod ipc;
 pub mod capture;
 pub mod ai;
+pub mod search;
