@@ -22,6 +22,7 @@
   import { HybridSearchController, type HybridSearchApi, type HybridSearchState } from '$lib/state/vault-search'
   import {
     LibraryViewController,
+    type DeletePendingEntry,
     type LibraryFilter,
     type LibraryNotify,
   } from '$lib/state/library-view'
@@ -68,11 +69,11 @@
     },
   })
 
-  const ctrl = new LibraryViewController({
-    onDelete: (id) => vaultApi.deleteEntry(id),
-    notify,
-    deleteDelayMs: 3000,
-  })
+  // ---- library view controller ----
+  //
+  // allEntries 是 Svelte `$state`，作为渲染层的真相数据源。controller
+  // 只读 snapshot + 维护 pendingDeletes / committingIds。删除/恢复通过
+  // 回调修改本组件的 $state，保证 derived 能正确追踪。
 
   // 暴露给模板用的派生状态
   let allEntries = $state<VaultEntrySummary[]>([])
@@ -80,14 +81,51 @@
   let searchStarted = $state(false)
   let searchHits = $state<VaultSearchHit[] | null>(null)
 
+  /**
+   * pendingDeleteVersion 用于在 $derived 中建立对 controller.pendingDeletes
+   * 变化的依赖：每次 requestDelete/undoDelete/commitDelete 通过
+   * $effect 同步到本 $state，进而触发 derived 重算。
+   */
+  let pendingVersion = $state(0)
+
+  function bumpPendingVersion() {
+    pendingVersion = ctrl.pendingDeleteVersion()
+  }
+
+  function restorePendingToAllEntries(pending: DeletePendingEntry) {
+    // 重新插入到 allEntries 的对应位置；如果位置超出当前长度则插到末尾。
+    const next = allEntries.slice()
+    const insertAt = Math.min(pending.originalIndex, next.length)
+    next.splice(insertAt, 0, pending.summary)
+    allEntries = next
+    ctrl.syncAllEntries(next)
+  }
+
+  const ctrl = new LibraryViewController({
+    onDelete: (id) => vaultApi.deleteEntry(id),
+    notify,
+    deleteDelayMs: 3000,
+    onRestoreFailedDelete: (pending) => {
+      restorePendingToAllEntries(pending)
+      bumpPendingVersion()
+    },
+    onRestoreUndo: (pending) => {
+      restorePendingToAllEntries(pending)
+      bumpPendingVersion()
+    },
+  })
+
   // ---- data load ----
 
   async function reload() {
     loading = true
     try {
       const list = await vaultApi.listEntries()
-      allEntries = list
-      ctrl.setAllEntries(list)
+      // I2: 过滤掉当前处于 pending-delete 窗口的条目，避免 reload
+      // 把乐观删除的条目复活（3s 提交窗口内）。
+      const filtered = list.filter((e) => !ctrl.isPendingDelete(e.entry.id))
+      allEntries = filtered
+      ctrl.setAllEntries(filtered)
     } finally {
       loading = false
     }
@@ -109,15 +147,28 @@
   }
 
   // ---- derived ----
+  //
+  // C1 fix: derived 直接读 $state（allEntries / pendingVersion / activeFilter），
+  // 这样 Svelte 5 能正确追踪变化。pendingVersion 是 $state，由
+  // handleDelete / undo / commit-fail / commit-success 显式 bump。
+  // controller 是 plain class，其内部字段不会被 Svelte 追踪。
 
-  const counts = $derived(ctrl.counts())
-  // 当处于搜索态时使用 hits；否则使用 filtered()。
+  const counts = $derived.by(() => {
+    // 读 pendingVersion 建立 reactivity 依赖。
+    void pendingVersion
+    return ctrl.countsFrom(allEntries)
+  })
+
+  // 当处于搜索态时使用 hits；否则使用 allEntries 按 filter 过滤。
   const visibleSummaries = $derived.by<VaultEntrySummary[]>(() => {
+    // 触发依赖追踪
+    void pendingVersion
     if (searchStarted && searchHits !== null) {
-      return searchHits.map((h) => h.summary)
+      return searchHits
+        .map((h) => h.summary)
+        .filter((s) => !ctrl.isPendingDelete(s.entry.id))
     }
-    ctrl.setFilter(activeFilter)
-    return ctrl.filtered()
+    return ctrl.filterEntries(allEntries, activeFilter)
   })
 
   const emptyState = $derived.by<{ kind: 'loading' | 'empty' | 'no-results' | 'list' }>(() => {
@@ -134,31 +185,25 @@
 
   function selectFilter(f: LibraryFilter) {
     activeFilter = f
-    ctrl.setFilter(f)
   }
 
   function onSearchStarted(started: boolean) {
     searchStarted = started
     if (!started) {
       searchHits = null
-      ctrl.setSearchHits(null)
-      ctrl.setSearchStarted(false)
-    } else {
-      ctrl.setSearchStarted(true)
     }
   }
 
-  function onSearchQueryChange(q: string) {
-    ctrl.setSearchQuery(q)
+  function onSearchQueryChange(_q: string) {
+    // query 现在由 HybridSearchController 自己持有；VaultView 不再镜像。
   }
 
-  // hybridState 变化时把 hits 同步到 controller
+  // hybridState 变化时把 hits 同步到 $state
   $effect(() => {
     if (!hybridState) return
     if (!searchStarted) return
     const hits = hybridState.hits
     searchHits = hits.slice()
-    ctrl.setSearchHits(hits.slice())
   })
 
   function openNewMenu() {
@@ -231,7 +276,12 @@
   }
 
   function handleDelete(id: string) {
+    // 在 requestDelete 前 sync 当前 allEntries snapshot，让 controller
+    // 能找到 originalIndex 用于后续 undo / commit-fail 恢复。
+    ctrl.syncAllEntries(allEntries)
     ctrl.requestDelete(id)
+    // 立即 bump pendingVersion，触发 derived 重算。
+    bumpPendingVersion()
   }
 
   function handleNewMenuKeydown(e: KeyboardEvent) {
@@ -297,15 +347,25 @@
           onQueryChange={onSearchQueryChange}
         />
       </div>
-      <div class="new-menu">
+      <div class="new-menu" data-new-menu>
         <button
           type="button"
           class="new-btn"
           aria-haspopup="menu"
           aria-expanded={showNewMenu}
-          onclick={openNewMenu}
+          onclick={() => (showNewMenu ? closeNewMenu() : openNewMenu())}
         >+ 新建</button>
         {#if showNewMenu}
+          <!-- I4: 透明全屏 backdrop 拦截外部点击，关闭菜单。
+               backdrop 在 popover 之下（z-index 较低），点击它关闭；
+               点击 popover 内部不传播到 backdrop。 -->
+          <button
+            type="button"
+            class="new-menu-backdrop"
+            aria-label="关闭新建菜单"
+            tabindex="-1"
+            onclick={closeNewMenu}
+          ></button>
           <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
           <div
             class="new-menu-popover"
@@ -499,8 +559,20 @@
     padding: 0.25rem;
     min-width: 5rem;
     box-shadow: var(--shadow-default);
-    z-index: 50;
+    z-index: 60;
     outline: none;
+  }
+
+  /* I4: 透明全屏 backdrop，捕获 popover 外部的点击以关闭菜单。 */
+  .new-menu-backdrop {
+    position: fixed;
+    inset: 0;
+    background: transparent;
+    border: none;
+    padding: 0;
+    margin: 0;
+    cursor: default;
+    z-index: 55;
   }
 
   .new-menu-item {

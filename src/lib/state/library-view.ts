@@ -3,15 +3,17 @@
 // LibraryViewController —— 主窗口"资料库"视图的前端状态协调器。
 //
 // 职责：
-//   * 持有 all-entries 单一数据源，并在前端按 kind 过滤；
-//   * 维护 searchQuery / searchStarted / searchHits 三态（区分"未搜索"
-//     与"空结果"）；
-//   * 提供 counts（all/credential/bookmark/note 来自同一列表）；
-//   * 删除采用乐观 UI + 3 秒延迟提交后端 + 撤销；失败时恢复条目并
+//   * 协调删除的乐观 UI + 3 秒延迟提交后端 + 撤销；失败时恢复条目并
 //     通知错误。
+//   * 暴露纯函数 helper（countsFrom / filterFrom）让调用方在自己的
+//     Svelte `$state` 数组上派生 UI（解决 reactivity 桥接问题）。
+//   * 维护 pendingDeletes / committingIds 两组 ID 集合，确保：
+//       - 渲染层可通过 isPendingDelete(id) 过滤掉待删除项；
+//       - undoDelete 在 commit 进行中时拒绝，避免双重恢复导致重复条目。
 //
 // 该类不持有 Svelte store —— 由调用方传入 `notify` 回调驱动外部 UI；
-// 这样便于单元测试（不依赖 Svelte runtime）。
+// 这样便于单元测试（不依赖 Svelte runtime）。all-entries 的真相数据源
+// 由调用方（VaultView）以 `$state` 持有，本类只读 snapshot。
 
 import type {
   EntryKind,
@@ -49,15 +51,34 @@ export type LibraryNotify = (
   actionLabel?: string,
 ) => void
 
+/**
+ * 当 commit 失败需要把条目恢复到调用方 $state 时调用。调用方实现：
+ * 把 summary 插入其 allEntries（位置由 originalIndex 决定）。
+ *
+ * 若调用方仅关心通知而不需要恢复（如测试），可省略该回调。
+ */
+export type LibraryRestoreEntry = (pending: DeletePendingEntry) => void
+
 export interface LibraryViewControllerOptions {
   /**
-   * 实际提交删除的后端调用。失败时由 controller 恢复条目并通知错误。
+   * 实际提交删除的后端调用。失败时由 controller 通过 onRestoreFailedDelete
+   * 恢复条目并 notify 错误。
    */
   onDelete: (id: string) => Promise<void>
   /**
    * 用户可见通知回调（撤销 toast、错误 toast 等）。
    */
   notify: LibraryNotify
+  /**
+   * commit 失败时由 controller 调用；调用方据此把 pending.summary
+   * 恢复回 $state 的 allEntries。
+   */
+  onRestoreFailedDelete?: LibraryRestoreEntry
+  /**
+   * undoDelete 成功时由 controller 调用；调用方据此把 pending.summary
+   * 恢复回 $state 的 allEntries。若未提供，undo 不恢复（仅取消 timer）。
+   */
+  onRestoreUndo?: LibraryRestoreEntry
   /** 删除延迟，默认 3000ms。 */
   deleteDelayMs?: number
 }
@@ -78,48 +99,54 @@ const DEFAULT_DELETE_DELAY_MS = 3000
 
 /**
  * 资料库视图协调器。一个实例只服务一个 VaultView。
+ *
+ * 注意：本类不再持有 `allEntries` 真相数据源 —— 该数据源由调用方
+ * （VaultView）以 Svelte `$state` 持有，这样 `$derived` 才能正确追踪
+ * 变化。本类只读 snapshot + 维护删除事务。
  */
 export class LibraryViewController {
+  /** 由调用方维护并随时可被替换的 snapshot；用于 commit/undo 的恢复操作。 */
   private allEntries: VaultEntrySummary[] = []
-  private filter: LibraryFilter = 'all'
-  private searchQuery = ''
-  private searchStarted = false
-  private searchHits: VaultSearchHit[] | null = null
   private pendingDeletes = new Map<string, DeletePendingEntry>()
+  /**
+   * 已经进入 commitDelete 的 id；undoDelete 见到则拒绝，防止 race
+   * 条件下双重恢复导致条目重复。
+   */
+  private committingIds = new Set<string>()
+  /**
+   * 版本号，调用方可在 $derived 中读取以强制重算（即便使用了 plain
+   * 字段，外部读 pendingDeletes 的 size 仍可作为依赖触发器）。
+   */
+  private pendingVersion = 0
   private onDelete: (id: string) => Promise<void>
   private notify: LibraryNotify
+  private onRestoreFailedDelete: LibraryRestoreEntry | undefined
+  private onRestoreUndo: LibraryRestoreEntry | undefined
   private deleteDelayMs: number
   private disposed = false
 
   constructor(opts: LibraryViewControllerOptions) {
     this.onDelete = opts.onDelete
     this.notify = opts.notify
+    this.onRestoreFailedDelete = opts.onRestoreFailedDelete
+    this.onRestoreUndo = opts.onRestoreUndo
     this.deleteDelayMs = opts.deleteDelayMs ?? DEFAULT_DELETE_DELAY_MS
   }
 
   // ---- setters ------------------------------------------------------------
 
-  /** 设置 all-entries 数据源（用于 listEntries / 事件刷新）。 */
+  /**
+   * 同步当前 all-entries snapshot（由调用方的 $state 注入）。
+   * 注意：调用方负责过滤掉 `isPendingDelete(id)` 的条目，避免 reload
+   * 把乐观删除的条目复活。
+   */
   setAllEntries(entries: VaultEntrySummary[]): void {
     this.allEntries = entries
   }
 
-  setFilter(filter: LibraryFilter): void {
-    this.filter = filter
-  }
-
-  setSearchQuery(query: string): void {
-    this.searchQuery = query
-  }
-
-  /** 标记用户已开始搜索（首次提交非空 query 时为 true）。 */
-  setSearchStarted(started: boolean): void {
-    this.searchStarted = started
-  }
-
-  /** 设置当前搜索命中。null 表示退出搜索态（如清空）。 */
-  setSearchHits(hits: VaultSearchHit[] | null): void {
-    this.searchHits = hits
+  /** 显式让 controller 知道当前 all-entries（用于 undo 恢复时插入）。 */
+  syncAllEntries(entries: VaultEntrySummary[]): void {
+    this.allEntries = entries
   }
 
   // ---- queries ------------------------------------------------------------
@@ -128,20 +155,32 @@ export class LibraryViewController {
   getState(): LibraryState {
     return {
       allEntries: this.allEntries.slice(),
-      filter: this.filter,
-      searchQuery: this.searchQuery,
-      searchStarted: this.searchStarted,
-      searchHits: this.searchHits ? this.searchHits.slice() : null,
+      filter: 'all',
+      searchQuery: '',
+      searchStarted: false,
+      searchHits: null,
       pendingDeletes: new Map(this.pendingDeletes),
     }
   }
 
   /**
-   * all/credential/bookmark/note 计数，全部来自同一 all-entries 列表
-   * （已经乐观移除的待删除项不参与计数）。
+   * 给定 all-entries 列表，返回过滤掉 pending-delete 后的可见条目。
+   * 让调用方在 $state 上派生 UI。
    */
-  counts(): LibraryCounts {
-    const visible = this.visibleEntries()
+  filterPending(entries: VaultEntrySummary[]): VaultEntrySummary[] {
+    return entries.filter((e) => !this.isPendingDelete(e.entry.id))
+  }
+
+  /** 给定 all-entries 列表与 filter，返回按 kind 过滤后的可见条目。 */
+  filterEntries(entries: VaultEntrySummary[], filter: LibraryFilter): VaultEntrySummary[] {
+    const visible = this.filterPending(entries)
+    if (filter === 'all') return visible
+    return visible.filter((e) => e.entry.kind === filter)
+  }
+
+  /** 给定 all-entries 列表，返回 all/credential/bookmark/note 计数（排除 pending）。 */
+  countsFrom(entries: VaultEntrySummary[]): LibraryCounts {
+    const visible = this.filterPending(entries)
     let credential = 0
     let bookmark = 0
     let note = 0
@@ -158,65 +197,82 @@ export class LibraryViewController {
     }
   }
 
-  /**
-   * 返回当前应渲染的条目列表：
-   *   * 搜索态（searchHits 非 null）→ 返回 hits 中 summary 的数组（前端
-   *     不再按 filter 过滤，因为 hits 已经是相关性结果）；
-   *   * 非搜索态 → 按 filter 过滤后的 all-entries。
-   *
-   * 不返回 searchHits 本身是为了让渲染层始终拿到 VaultEntrySummary[]；
-   * 调用方需要 score 时另行读取 hits。
-   */
-  filtered(): VaultEntrySummary[] {
-    const visible = this.visibleEntries()
-    if (this.filter === 'all') return visible
-    return visible.filter((e) => e.entry.kind === this.filter)
+  /** 该 id 当前是否在 pending-delete 窗口内（渲染时用于过滤）。 */
+  isPendingDelete(id: string): boolean {
+    return this.pendingDeletes.has(id)
   }
 
-  /** 是否处于"已开始搜索"且 hits 非 null 的状态。 */
-  isSearching(): boolean {
-    return this.searchStarted && this.searchHits !== null
+  /** 该 id 是否正处于 commitDelete 进行中（用于 race guard）。 */
+  isCommitting(id: string): boolean {
+    return this.committingIds.has(id)
+  }
+
+  /**
+   * 版本号；调用方可在 $derived 中读取该值以建立对 pendingDeletes 变化的
+   * 依赖（即便不直接读 Map）。
+   */
+  pendingDeleteVersion(): number {
+    return this.pendingVersion
+  }
+
+  /**
+   * 返回当前 pending-delete 的 id 集合（不可变副本）。调用方可在
+   * Svelte `$state` 中存储以便 derived 追踪。
+   */
+  pendingDeleteIds(): string[] {
+    return Array.from(this.pendingDeletes.keys())
   }
 
   // ---- delete / undo ------------------------------------------------------
 
   /**
-   * 乐观删除：立即从 allEntries 中移除条目，并在 `deleteDelayMs` 后调用
-   * 后端；同时通过 notify 触发"撤销"toast。
+   * 乐观删除：立即把 id 加入 pendingDeletes（渲染层据此过滤），并在
+   * `deleteDelayMs` 后调用后端；同时通过 notify 触发"撤销"toast。
    *
-   * 在延迟窗口内调用 undoDelete(id) 可取消提交并恢复条目。
+   * 在延迟窗口内调用 undoDelete(id) 可取消提交。
+   *
+   * 调用方负责从其 `$state` 的 allEntries 中过滤掉 pending id 以驱动
+   * UI 重渲染；本方法不直接修改 allEntries。
    */
   requestDelete(id: string): void {
     if (this.disposed) return
     if (this.pendingDeletes.has(id)) return
+    if (this.committingIds.has(id)) return
     const idx = this.allEntries.findIndex((e) => e.entry.id === id)
     if (idx === -1) return
     const summary = this.allEntries[idx]!
-    // 立即从 UI 移除
-    this.allEntries = this.allEntries.filter((e) => e.entry.id !== id)
     const timer = setTimeout(() => {
       void this.commitDelete(id)
     }, this.deleteDelayMs)
     const pending: DeletePendingEntry = { id, summary, originalIndex: idx, timer }
     this.pendingDeletes.set(id, pending)
+    this.pendingVersion++
 
     const undo = () => this.undoDelete(id)
     this.notify('已删除', 'success', undo, '撤销')
   }
 
   /**
-   * 撤销删除：取消 pending timer，恢复条目到原位置，不调用后端。
+   * 撤销删除：取消 pending timer，从 pendingDeletes 移除 id；通过
+   * `onRestoreUndo` 回调让调用方把条目恢复到其 $state。本方法不直接
+   * 修改 allEntries —— 恢复语义由调用方实现（它持有 $state）。
+   *
+   * 返回被撤销的 pending 信息（含 originalIndex）；若 id 已不在 pending
+   * 或正在 commit（race guard），返回 null。
    */
-  undoDelete(id: string): void {
+  undoDelete(id: string): DeletePendingEntry | null {
+    // Race guard: 若 commit 已经在飞行中，拒绝 undo（避免 commit 失败
+    // 恢复 + undo 恢复 = 重复）。
+    if (this.committingIds.has(id)) return null
     const pending = this.pendingDeletes.get(id)
-    if (!pending) return
+    if (!pending) return null
     clearTimeout(pending.timer)
     this.pendingDeletes.delete(id)
-    // 恢复到 originalIndex（如果越界则插到末尾）
-    const insertAt = Math.min(pending.originalIndex, this.allEntries.length)
-    const next = this.allEntries.slice()
-    next.splice(insertAt, 0, pending.summary)
-    this.allEntries = next
+    this.pendingVersion++
+    if (this.onRestoreUndo) {
+      this.onRestoreUndo(pending)
+    }
+    return pending
   }
 
   /**
@@ -229,41 +285,48 @@ export class LibraryViewController {
       clearTimeout(pending.timer)
     }
     this.pendingDeletes.clear()
+    this.committingIds.clear()
   }
 
   // ---- internal -----------------------------------------------------------
 
   /**
-   * 真正提交删除；失败时恢复条目并 notify 错误。
+   * 真正提交删除；失败时通知调用方恢复条目。
+   *
+   * Race-safe 实现：
+   *   1. 同步把 id 从 pendingDeletes 移到 committingIds（在 await 之前），
+   *      这样 undoDelete 在 await 期间被调用会被 race guard 拒绝。
+   *   2. await onDelete(id)。
+   *   3. 成功：从 committingIds 移除即可。
+   *   4. 失败：通过 onRestoreFailedDelete 回调把 pending.summary 交回调用方
+   *      插入 $state；同时 notify 错误 toast。
    */
   private async commitDelete(id: string): Promise<void> {
     if (this.disposed) return
     const pending = this.pendingDeletes.get(id)
     if (!pending) return
+
+    // 同步：从 pending 移到 committing，避免 undo 在 await 期间命中。
+    this.pendingDeletes.delete(id)
+    this.pendingVersion++
+    this.committingIds.add(id)
+
     try {
       await this.onDelete(id)
-      // 成功：仅清理 pending（条目已在 UI 移除）
-      this.pendingDeletes.delete(id)
+      if (this.disposed) return
+      // 成功：条目早已不在调用方 $state（pending-delete 过滤掉了）。
     } catch (err) {
       if (this.disposed) return
-      // 失败：恢复到原位置
-      this.pendingDeletes.delete(id)
-      const insertAt = Math.min(pending.originalIndex, this.allEntries.length)
-      const next = this.allEntries.slice()
-      next.splice(insertAt, 0, pending.summary)
-      this.allEntries = next
+      // 失败：通知错误 + 把恢复责任交给调用方。
       const msg = err instanceof Error && err.message
         ? err.message
         : typeof err === 'string' ? err : '未知错误'
+      if (this.onRestoreFailedDelete) {
+        this.onRestoreFailedDelete(pending)
+      }
       this.notify(`删除失败：${msg}`, 'error')
+    } finally {
+      this.committingIds.delete(id)
     }
-  }
-
-  /**
-   * 返回未被乐观删除的条目（allEntries 已经是过滤后的列表，这里只是
-   * 一个语义清晰的内部别名）。
-   */
-  private visibleEntries(): VaultEntrySummary[] {
-    return this.allEntries
   }
 }

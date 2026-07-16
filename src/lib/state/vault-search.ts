@@ -87,6 +87,9 @@ export class HybridSearchController {
    *   - 同步发布 `phase: 'local'` 占位状态（query 更新、hits 清空）；
    *   - 微任务结束后发布本地结果；
    *   - delayMs 后触发 planSearch + 扩展检索。
+   *
+   * I3: 若调用方已知不应启用 AI 扩展（autoHybridSearch=false），请改用
+   * searchLocalOnly 以跳过 planTimer，避免浪费一次必然失败的 plan 请求。
    */
   search(query: string): Promise<void> {
     if (this.disposed) return Promise.resolve()
@@ -162,6 +165,66 @@ export class HybridSearchController {
         void this.runPlanAndExpand(query, requestId)
       })
     }, this.delayMs)
+
+    return Promise.resolve()
+  }
+
+  /**
+   * 仅本地搜索版本：取消旧请求，发起 searchLocal，**不**触发 planSearch。
+   * 当 UI 已知 autoHybridSearch=false 或 AI 未配置时调用，避免浪费一次
+   * 必然失败的 plan 请求。
+   */
+  searchLocalOnly(query: string): Promise<void> {
+    if (this.disposed) return Promise.resolve()
+
+    // Cancel any in-flight search.
+    const previousRequestId = this.currentRequestId
+    if (previousRequestId !== null) {
+      void this.api.cancelSearch(previousRequestId).catch(() => {})
+    }
+    if (this.planTimer !== null) {
+      clearTimeout(this.planTimer)
+      this.planTimer = null
+    }
+
+    const requestId = crypto.randomUUID()
+    this.currentQuery = query
+    this.currentRequestId = requestId
+
+    this.publish({
+      query,
+      phase: 'local',
+      hits: [],
+      understoodTerms: [],
+      selectedId: this.currentSelectedId,
+      error: null,
+    })
+
+    void this.api
+      .searchLocal(query, null, this.limit)
+      .then((hits) => {
+        if (this.currentRequestId !== requestId || this.disposed) return
+        this.currentSelectedId = pickSelected(hits, this.currentSelectedId)
+        this.publish({
+          query,
+          phase: 'local',
+          hits,
+          understoodTerms: [],
+          selectedId: this.currentSelectedId,
+          error: null,
+        })
+      })
+      .catch((err) => {
+        if (this.currentRequestId !== requestId || this.disposed) return
+        this.publish({
+          query,
+          phase: 'error',
+          hits: [],
+          understoodTerms: [],
+          selectedId: null,
+          error: errorMessage(err),
+        })
+      })
 
     return Promise.resolve()
   }

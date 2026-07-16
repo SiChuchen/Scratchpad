@@ -14,6 +14,7 @@
   // 只负责驱动 controller.search() + 把 controller 发布的 state 翻译成
   // 用户可见字符串。
 
+  import { onMount } from 'svelte'
   import type { HybridSearchController, HybridSearchState } from '$lib/state/vault-search'
 
   interface Props {
@@ -59,18 +60,26 @@
     }
     notifyStarted(true)
     notifyQuery(trimmed)
-    void controller.search(trimmed)
+    // I3: 当 autoHybridSearch=false 时只走本地搜索，跳过 planSearch。
+    // 这避免了一次必然失败的 plan 请求与 700ms 延迟。
+    if (autoHybridSearch) {
+      void controller.search(trimmed)
+    } else {
+      void controller.searchLocalOnly(trimmed)
+    }
   }
 
   function onInput() {
     if (inputTimer) clearTimeout(inputTimer)
     inputTimer = setTimeout(() => {
+      inputTimer = null
       commitSearch()
     }, 300)
   }
 
   function onKeydown(e: KeyboardEvent) {
     // Ctrl+Enter 立即触发 planSearch（跳过 700ms 延迟）。
+    // 当 autoHybridSearch=false 时降级为本地即时搜索。
     if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
       e.preventDefault()
       if (inputTimer) {
@@ -81,9 +90,11 @@
       if (trimmed.length === 0) return
       notifyStarted(true)
       notifyQuery(trimmed)
-      // 直接调 search；controller 内部会按 delayMs 触发 plan，但因为
-      // 我们希望"立即"扩展，这里手动再调一次（覆盖默认延迟）。
-      void controller.search(trimmed)
+      if (autoHybridSearch) {
+        void controller.search(trimmed)
+      } else {
+        void controller.searchLocalOnly(trimmed)
+      }
     }
   }
 
@@ -96,6 +107,16 @@
     notifyStarted(false)
     notifyQuery('')
   }
+
+  // I6: 卸载时清理未触发的 inputTimer，避免组件销毁后回调访问已释放状态。
+  onMount(() => {
+    return () => {
+      if (inputTimer) {
+        clearTimeout(inputTimer)
+        inputTimer = null
+      }
+    }
+  })
 
   // 父组件需要把 controller 发布的最新 state 同步过来；通过 prop 注入
   // 即可（Svelte 5 中 reactive prop 会自动重算 derived）。

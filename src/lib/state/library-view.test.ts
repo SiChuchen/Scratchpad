@@ -1,18 +1,24 @@
 // src/lib/state/library-view.test.ts
 //
-// LibraryViewController 行为测试 —— Task 13 Step 1。
+// LibraryViewController 行为测试 —— Task 13 + 修复 C1/C2/I2。
 //
-// 覆盖六个必测场景：
-//   1. all / credential / bookmark / note 计数来自同一 all entries 列表。
-//   2. filter 切换不会清除 searchQuery。
-//   3. 空搜索结果 vs 未开始搜索是不同状态。
-//   4. 删除先从 UI 移除，3 秒后才调用后端。
-//   5. 撤销点击恢复原位置且不调用后端删除。
-//   6. 后端删除失败时恢复条目并通知错误。
+// 覆盖场景：
+//   1. countsFrom / filterEntries 等纯函数 helper（调用方 $state 列表
+//      驱动，过滤 pending-delete）。
+//   2. 删除先把 id 标记为 pending；3 秒后才调用后端。
+//   3. 撤销点击通过 onRestoreUndo 恢复条目且不调用后端删除。
+//   4. 后端删除失败时通过 onRestoreFailedDelete 把 pending.summary
+//      交回调用方，并 notify 错误。
+//   5. C1: 模拟 Svelte $state 模式 —— 调用方拥有 entries 数组，
+//      filterEntries 正确排除 pending-delete。
+//   6. C2: undoDelete 在 commitDelete 进行中被 race-guard 拒绝，
+//      不会与 commit-fail 的 onRestoreFailedDelete 重复恢复条目。
+//   7. dispose 取消 pending delete timers。
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   LibraryViewController,
+  type DeletePendingEntry,
   type LibraryFilter,
   type LibraryNotify,
 } from './library-view'
@@ -53,22 +59,41 @@ interface NotifyCalls {
   notify: ReturnType<typeof vi.fn>
 }
 
+interface RestoreSpies {
+  onRestoreFailedDelete: ReturnType<typeof vi.fn>
+  onRestoreUndo: ReturnType<typeof vi.fn>
+}
+
 function makeController(opts?: {
   entries?: VaultEntrySummary[]
   deleteDelayMs?: number
   deleteResult?: 'reject' | 'resolve'
-}): { ctrl: LibraryViewController; delSpy: DeleteApi; notifySpy: NotifyCalls } {
+  /** 控制 onDelete 何时 resolve；用于 race 测试。 */
+  deleteBlock?: () => Promise<void>
+}): {
+  ctrl: LibraryViewController
+  delSpy: DeleteApi
+  notifySpy: NotifyCalls
+  restoreSpies: RestoreSpies
+} {
   const delSpy: DeleteApi = {
     onDelete: vi.fn(async (_id: string) => {
+      if (opts?.deleteBlock) await opts.deleteBlock()
       if (opts?.deleteResult === 'reject') throw new Error('backend-failed')
     }),
   }
   const notifySpy: NotifyCalls = {
     notify: vi.fn(),
   }
+  const restoreSpies: RestoreSpies = {
+    onRestoreFailedDelete: vi.fn(),
+    onRestoreUndo: vi.fn(),
+  }
   const ctrl = new LibraryViewController({
     onDelete: delSpy.onDelete as (id: string) => Promise<void>,
     notify: notifySpy.notify as LibraryNotify,
+    onRestoreFailedDelete: restoreSpies.onRestoreFailedDelete as (p: DeletePendingEntry) => void,
+    onRestoreUndo: restoreSpies.onRestoreUndo as (p: DeletePendingEntry) => void,
     deleteDelayMs: opts?.deleteDelayMs ?? 3000,
   })
   if (opts?.entries !== undefined) {
@@ -76,7 +101,7 @@ function makeController(opts?: {
   } else {
     ctrl.setAllEntries(makeEntries())
   }
-  return { ctrl, delSpy, notifySpy }
+  return { ctrl, delSpy, notifySpy, restoreSpies }
 }
 
 // ---- tests ----------------------------------------------------------------
@@ -90,74 +115,49 @@ describe('LibraryViewController', () => {
     vi.restoreAllMocks()
   })
 
-  it('counts all/credential/bookmark/note from the same all-entries list', () => {
+  it('countsFrom counts all/credential/bookmark/note from a caller-supplied list', () => {
     const { ctrl } = makeController()
-    const counts = ctrl.counts()
+    const counts = ctrl.countsFrom(makeEntries())
     expect(counts).toEqual({ all: 5, credential: 2, bookmark: 1, note: 2 })
   })
 
-  it('switching filter does not clear searchQuery', () => {
+  it('filterEntries filters by kind when filter is not "all"', () => {
     const { ctrl } = makeController()
-    ctrl.setSearchQuery('foo')
-    expect(ctrl.getState().searchQuery).toBe('foo')
-
-    ctrl.setFilter('credential' as LibraryFilter)
-    expect(ctrl.getState().searchQuery).toBe('foo')
-
-    ctrl.setFilter('note' as LibraryFilter)
-    expect(ctrl.getState().searchQuery).toBe('foo')
-
-    ctrl.setFilter('all' as LibraryFilter)
-    expect(ctrl.getState().searchQuery).toBe('foo')
+    const entries = makeEntries()
+    const allFiltered = ctrl.filterEntries(entries, 'all' as LibraryFilter)
+    expect(allFiltered.length).toBe(5)
+    const credFiltered = ctrl.filterEntries(entries, 'credential' as LibraryFilter)
+    expect(credFiltered.length).toBe(2)
+    expect(credFiltered.every((e) => e.entry.kind === 'credential')).toBe(true)
   })
 
-  it('distinguishes empty search results from not-started-search', () => {
-    const { ctrl } = makeController()
-    // Initial: search not started
-    expect(ctrl.isSearching()).toBe(false)
-    expect(ctrl.getState().searchHits).toBeNull()
-    expect(ctrl.getState().searchStarted).toBe(false)
-
-    // Empty hits — still a "started" search
-    ctrl.setSearchStarted(true)
-    ctrl.setSearchHits([])
-    expect(ctrl.isSearching()).toBe(true)
-    expect(ctrl.getState().searchHits).toEqual([])
-    expect(ctrl.getState().searchStarted).toBe(true)
-
-    // No hits vs null are observably different states
-    ctrl.setSearchHits(null)
-    expect(ctrl.getState().searchHits).toBeNull()
-    ctrl.setSearchStarted(false)
-    expect(ctrl.isSearching()).toBe(false)
-  })
-
-  it('delete removes from UI immediately and calls backend after 3 seconds', async () => {
+  it('requestDelete marks id as pending and commits to backend after delay', async () => {
     const { ctrl, delSpy } = makeController()
-    expect(ctrl.counts().all).toBe(5)
+    expect(ctrl.isPendingDelete('a')).toBe(false)
 
     ctrl.requestDelete('a')
-    // UI removed immediately
-    expect(ctrl.counts().all).toBe(4)
-    expect(ctrl.filtered().find((e) => e.entry.id === 'a')).toBeUndefined()
-    // Backend not called yet
+    // Immediately pending
+    expect(ctrl.isPendingDelete('a')).toBe(true)
     expect(delSpy.onDelete).not.toHaveBeenCalled()
 
-    // Advance 3 seconds
-    await vi.advanceTimersByTimeAsync(3000)
+    // Backend not called yet
+    await vi.advanceTimersByTimeAsync(2999)
+    expect(delSpy.onDelete).not.toHaveBeenCalled()
+
+    // After 3 seconds
+    await vi.advanceTimersByTimeAsync(1)
     expect(delSpy.onDelete).toHaveBeenCalledTimes(1)
     expect(delSpy.onDelete.mock.calls[0]![0]).toBe('a')
+    // No longer pending after commit success
+    expect(ctrl.isPendingDelete('a')).toBe(false)
   })
 
-  it('undo click restores original position and does not call backend', () => {
-    const { ctrl, delSpy, notifySpy } = makeController()
-    const original = ctrl.filtered().slice()
-    expect(original[0]!.entry.id).toBe('a')
+  it('undoDelete restores via onRestoreUndo and skips backend', () => {
+    const { ctrl, delSpy, restoreSpies, notifySpy } = makeController()
+    expect(ctrl.isPendingDelete('a')).toBe(false)
 
     ctrl.requestDelete('a')
-    expect(ctrl.filtered().find((e) => e.entry.id === 'a')).toBeUndefined()
-
-    // Notify should have been called with an undo callback
+    expect(ctrl.isPendingDelete('a')).toBe(true)
     expect(notifySpy.notify).toHaveBeenCalledTimes(1)
     const notifyArgs = notifySpy.notify.mock.calls[0]!
     const undoFn = notifyArgs[2] as (() => void) | undefined
@@ -165,46 +165,32 @@ describe('LibraryViewController', () => {
 
     undoFn!()
 
-    // Restored to original position (first)
-    const restored = ctrl.filtered()
-    expect(restored[0]!.entry.id).toBe('a')
-    // Backend must NOT have been called
+    // No longer pending
+    expect(ctrl.isPendingDelete('a')).toBe(false)
+    // onRestoreUndo invoked once
+    expect(restoreSpies.onRestoreUndo).toHaveBeenCalledTimes(1)
+    const pending = restoreSpies.onRestoreUndo.mock.calls[0]![0] as DeletePendingEntry
+    expect(pending.id).toBe('a')
+    expect(pending.summary.entry.id).toBe('a')
+    // Backend NOT called
     expect(delSpy.onDelete).not.toHaveBeenCalled()
-
-    // Flushing timers also must not invoke delete (timer cancelled)
+    // Flushing timers also does not call backend
     vi.runAllTimers()
     expect(delSpy.onDelete).not.toHaveBeenCalled()
   })
 
-  it('backend delete failure restores entry and notifies error', async () => {
-    const { ctrl, delSpy, notifySpy } = makeController({ deleteResult: 'reject' })
-    expect(ctrl.counts().all).toBe(5)
+  it('backend delete failure invokes onRestoreFailedDelete and notifies error', async () => {
+    const { ctrl, delSpy, notifySpy, restoreSpies } = makeController({ deleteResult: 'reject' })
 
     ctrl.requestDelete('a')
-    expect(ctrl.counts().all).toBe(4)
-
     await vi.advanceTimersByTimeAsync(3000)
 
-    // Backend was called
     expect(delSpy.onDelete).toHaveBeenCalledTimes(1)
-    // Entry restored
-    expect(ctrl.counts().all).toBe(5)
-    expect(ctrl.filtered().find((e) => e.entry.id === 'a')).toBeDefined()
-    // Error notified
-    const errorCall = notifySpy.notify.mock.calls.find(
-      (c) => c[1] === 'error',
-    )
+    expect(restoreSpies.onRestoreFailedDelete).toHaveBeenCalledTimes(1)
+    const pending = restoreSpies.onRestoreFailedDelete.mock.calls[0]![0] as DeletePendingEntry
+    expect(pending.id).toBe('a')
+    const errorCall = notifySpy.notify.mock.calls.find((c) => c[1] === 'error')
     expect(errorCall).toBeDefined()
-  })
-
-  // --- additional safety tests for filter + counts combinations ---
-
-  it('filter "credential" only shows credential entries', () => {
-    const { ctrl } = makeController()
-    ctrl.setFilter('credential')
-    const filtered = ctrl.filtered()
-    expect(filtered.length).toBe(2)
-    expect(filtered.every((e) => e.entry.kind === 'credential')).toBe(true)
   })
 
   it('dispose cancels pending delete timers', async () => {
@@ -213,5 +199,71 @@ describe('LibraryViewController', () => {
     ctrl.dispose()
     await vi.advanceTimersByTimeAsync(5000)
     expect(delSpy.onDelete).not.toHaveBeenCalled()
+  })
+
+  // --- C1 regression: pending-delete filtering via $state-driven helper ---
+
+  it('C1: clicking delete immediately removes entry from filterEntries output', () => {
+    // Simulate VaultView: caller owns entries array, derived reads via
+    // filterEntries + isPendingDelete. After requestDelete, the entry
+    // should NOT appear in filterEntries output (without modifying the
+    // caller's array).
+    const { ctrl } = makeController()
+    const entries = makeEntries()
+    // Initial: 'a' visible
+    expect(ctrl.filterEntries(entries, 'all').find((e) => e.entry.id === 'a')).toBeDefined()
+
+    ctrl.requestDelete('a')
+
+    // After delete: 'a' filtered out, but entries array untouched.
+    const visibleAfter = ctrl.filterEntries(entries, 'all')
+    expect(visibleAfter.find((e) => e.entry.id === 'a')).toBeUndefined()
+    expect(visibleAfter.length).toBe(4)
+    // Underlying array not mutated
+    expect(entries.length).toBe(5)
+
+    // countsFrom reflects the filtered set
+    const counts = ctrl.countsFrom(entries)
+    expect(counts.all).toBe(4)
+    expect(counts.credential).toBe(1) // 'd' only; 'a' excluded
+  })
+
+  // --- C2 regression: undo during commit does not duplicate ---
+
+  it('C2: undoDelete during commitDelete is refused (no duplicate restore)', async () => {
+    // Setup: onDelete blocks on a deferred we control.
+    let resolveDelete: () => void = () => {}
+    const deleteBlock = new Promise<void>((resolve) => {
+      resolveDelete = resolve
+    })
+    const { ctrl, delSpy, restoreSpies } = makeController({
+      deleteResult: 'reject',
+      deleteBlock: () => deleteBlock,
+    })
+
+    ctrl.requestDelete('a')
+    expect(ctrl.isPendingDelete('a')).toBe(true)
+
+    // Fire the commit timer; this enters commitDelete which awaits onDelete.
+    await vi.advanceTimersByTimeAsync(3000)
+    // Now commit is in flight (onDelete pending). undo should be refused.
+    expect(ctrl.isCommitting('a')).toBe(true)
+    const undoResult = ctrl.undoDelete('a')
+    expect(undoResult).toBeNull()
+    expect(restoreSpies.onRestoreUndo).not.toHaveBeenCalled()
+
+    // Now let onDelete reject. commit-fail path should fire onRestoreFailedDelete
+    // exactly once (not twice from a duplicate undo).
+    resolveDelete()
+    // Allow microtasks to flush
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(delSpy.onDelete).toHaveBeenCalledTimes(1)
+    expect(restoreSpies.onRestoreFailedDelete).toHaveBeenCalledTimes(1)
+    // Undo never restored
+    expect(restoreSpies.onRestoreUndo).not.toHaveBeenCalled()
+    // No longer committing
+    expect(ctrl.isCommitting('a')).toBe(false)
   })
 })
