@@ -37,7 +37,7 @@ describe('computeThemeTokens', () => {
   it('returns dark-glass tokens when theme_mode is preset and id is dark-glass', () => {
     const tokens = computeThemeTokens(makePrefs({ themeMode: 'preset', themePresetId: 'dark-glass' }), true)
     expect(tokens['--color-primary']).toBe('rgba(125, 211, 252, 0.9)')
-    expect(tokens['--surface-0']).toBe('rgba(42, 53, 72, 0.85)')
+    expect(tokens['--surface-0']).toBe('rgba(42, 53, 72, 0.95)')
   })
 
   it('returns light-frosted tokens when theme_mode is preset and id is light-frosted', () => {
@@ -63,7 +63,7 @@ describe('computeThemeTokens', () => {
     }), true)
     expect(tokens['--color-primary']).toBe('#ff0000')
     // Other tokens still from dark-glass base
-    expect(tokens['--surface-0']).toBe('rgba(42, 53, 72, 0.85)')
+    expect(tokens['--surface-0']).toBe('rgba(42, 53, 72, 0.95)')
   })
 
   it('includes spacing tokens from spacingPreset', () => {
