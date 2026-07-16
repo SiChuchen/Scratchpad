@@ -21,6 +21,7 @@
     }
     loading = true
     try {
+      // FTS5-only，LLM 搜索走单独的「智能搜索」tab
       const hits = await vaultApi.search(query.trim(), 20)
       onResults(hits)
     } finally {
@@ -32,6 +33,11 @@
     if (timer) clearTimeout(timer)
     timer = setTimeout(runSearch, 300)
   }
+
+  function clear() {
+    query = ''
+    onClear()
+  }
 </script>
 
 <div class="search-box">
@@ -42,11 +48,15 @@
   <input
     class="search-input"
     type="search"
-    placeholder="搜索标题 / 用户名 / 标签"
+    placeholder="搜索"
     bind:value={query}
     oninput={onInput}
   />
-  {#if loading}<span class="search-status">...</span>{/if}
+  {#if query}
+    <button class="search-clear" onclick={clear} title="清空" aria-label="清空">✕</button>
+  {:else if loading}
+    <span class="search-status">...</span>
+  {/if}
 </div>
 
 <style>
@@ -59,8 +69,8 @@
     border: 1px solid var(--border-default);
     border-radius: var(--radius-md, 0.3rem);
     padding: 0 0.35rem;
-    height: 1.75rem;
-    flex-shrink: 0;
+    height: 1.4rem;
+    min-width: 0;
   }
 
   .search-icon {
@@ -87,6 +97,21 @@
 
   .search-input::-webkit-search-cancel-button {
     -webkit-appearance: none;
+  }
+
+  .search-clear {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    font-size: 0.65rem;
+    cursor: pointer;
+    padding: 0;
+    line-height: 1;
+    font-family: inherit;
+  }
+
+  .search-clear:hover {
+    color: var(--text-primary);
   }
 
   .search-status {

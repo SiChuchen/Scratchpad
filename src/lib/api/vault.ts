@@ -31,6 +31,8 @@ export const vaultApi = {
     invoke<void>('ipc_vault_retag', { id }),
   search: (query: string, limit = 20) =>
     invoke<VaultSearchHit[]>('ipc_vault_search', { query, limit }),
+  llmSearch: (query: string, limit = 20) =>
+    invoke<VaultSearchHit[]>('ipc_vault_llm_search', { query, limit }),
   getLlmPresets: () =>
     invoke<ProviderPreset[]>('ipc_vault_get_llm_presets'),
   getLlmConfig: () =>

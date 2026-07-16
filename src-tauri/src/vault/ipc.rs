@@ -213,34 +213,42 @@ const LLM_SEARCH_MAX_CANDIDATES: usize = 100;
 #[tauri::command]
 pub async fn ipc_vault_search(
     state: State<'_, crate::AppState>,
+    query: String,
+    limit: Option<usize>,
+) -> Result<Vec<VaultSearchHit>, String> {
+    // FTS5-only：用于 Vault header 的快速关键词搜索
+    let limit = limit.unwrap_or(20);
+
+    let fts_hits: Vec<(String, f64)> = {
+        let conn = state.db.lock().map_err(|e| e.to_string())?;
+        vstore::fts5_search(&conn, &query, limit).map_err(|e| e.to_string())?
+    };
+
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let mut hits = Vec::with_capacity(fts_hits.len());
+    for (id, score) in fts_hits {
+        if let Ok(Some(entry)) = vstore::get_entry_by_id(&conn, &id) {
+            hits.push(VaultSearchHit {
+                entry,
+                score,
+                source: "fts5".into(),
+            });
+        }
+    }
+    Ok(hits)
+}
+
+/// LLM 自然语言搜索（独立端点）：构造脱敏 catalog → 调 LLM → 返回匹配条目
+#[tauri::command]
+pub async fn ipc_vault_llm_search(
+    state: State<'_, crate::AppState>,
     app: AppHandle,
     query: String,
     limit: Option<usize>,
 ) -> Result<Vec<VaultSearchHit>, String> {
     let limit = limit.unwrap_or(20);
 
-    // 1) FTS5（lock db → query → drop）
-    let fts_hits: Vec<(String, f64)> = {
-        let conn = state.db.lock().map_err(|e| e.to_string())?;
-        vstore::fts5_search(&conn, &query, limit).map_err(|e| e.to_string())?
-    };
-
-    if !fts_hits.is_empty() {
-        let conn = state.db.lock().map_err(|e| e.to_string())?;
-        let mut hits = Vec::with_capacity(fts_hits.len());
-        for (id, score) in fts_hits {
-            if let Ok(Some(entry)) = vstore::get_entry_by_id(&conn, &id) {
-                hits.push(VaultSearchHit {
-                    entry,
-                    score,
-                    source: "fts5".into(),
-                });
-            }
-        }
-        return Ok(hits);
-    }
-
-    // 2) LLM 兜底——通过 app 重新拿 VaultRuntimeState，避免 State<'_, T> 跨 await
+    // 1) 取 LLM 配置（lock → clone → drop）
     let config = {
         let vault_state = app.state::<VaultRuntimeState>();
         let guard = vault_state.llm_config.lock().unwrap();
@@ -251,10 +259,8 @@ pub async fn ipc_vault_search(
         None => return Ok(vec![]),
     };
 
-    // 3) 构造脱敏 catalog
-    //    锁顺序：db 先、token_map 后；两段临界区分别 drop，不嵌套、不跨 await
+    // 2) 构造脱敏 catalog（db 先、token_map 后；两段临界区分别 drop）
     let catalog = {
-        // 段 A：lock db → 拉数据到本地 vec → drop
         let (entries, fields_map, tags_map) = {
             let conn = state.db.lock().map_err(|e| e.to_string())?;
             let entries = vstore::list_entries(&conn, None).map_err(|e| e.to_string())?;
@@ -266,7 +272,6 @@ pub async fn ipc_vault_search(
             }
             (entries, fm, tm)
         };
-        // 段 B：lock token_map → 脱敏 → drop
         let vault_state = app.state::<VaultRuntimeState>();
         let mut map = vault_state.token_map.lock().unwrap();
         entries
@@ -280,7 +285,7 @@ pub async fn ipc_vault_search(
             .collect::<Vec<_>>()
     };
 
-    // 4) 调 LLM（无锁）
+    // 3) 调 LLM（无锁）
     let adapter = match OpenAiCompatAdapter::new(config.base_url, config.api_key, config.model) {
         Ok(a) => a,
         Err(_) => return Ok(vec![]),
@@ -299,7 +304,7 @@ pub async fn ipc_vault_search(
         }
     };
 
-    // 5) 解析 + 取回完整条目（lock db → query → drop）
+    // 4) 解析 + 取回完整条目
     #[derive(serde::Deserialize)]
     struct SearchResp {
         #[serde(default)]
