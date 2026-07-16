@@ -7,3 +7,4 @@ pub mod desensitize;
 pub mod llm;
 pub mod ipc;
 pub mod capture;
+pub mod ai;

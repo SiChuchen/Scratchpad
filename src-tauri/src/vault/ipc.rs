@@ -6,10 +6,10 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::storage::error::{StorageError, StorageResult};
-use crate::vault::desensitize::{desensitize_entry, TokenMap};
+use crate::vault::desensitize::{desensitize_entry, desensitize_raw_text, TokenMap};
 use crate::vault::llm::openai_compat::OpenAiCompatAdapter;
 use crate::vault::llm::presets::{find_preset, ProviderPreset, PRESETS};
-use crate::vault::llm::prompt::{search_prompt, tag_prompt};
+use crate::vault::llm::prompt::{capture_enrichment_prompt, query_plan_prompt};
 use crate::vault::llm::{LlmAdapter, LlmError, LlmRequest};
 use crate::vault::models::{
     EntryKind, SearchSource, VaultEntryDetail, VaultEntryInput, VaultEntrySummary,
@@ -76,6 +76,12 @@ pub async fn ipc_vault_create_entry(
 }
 
 /// 异步打标——所有 state 通过 app.state() 重新获取
+///
+/// Task 7 之后改走结构化 capture enrichment：把脱敏后的 entry 文本交给
+/// `capture_enrichment_prompt`，LLM 返回的 JSON 由 `parse_capture_response`
+/// 严格校验（title/notes/fields detokenize_strict；tags/summary/aliases
+/// 走 validate_non_sensitive_metadata）。本函数只取其中的 `ai_tags` 写回，
+/// 但同样的 suggestion 后续可以被 Task 10 用来生成 aliases / summary。
 async fn suggest_tags_for_entry(entry_id: String, app: AppHandle) -> Result<Vec<String>, ()> {
     // 1) 取 entry 详情（lock db → 取 → drop guard）
     let (entry, fields, tags) = {
@@ -99,10 +105,52 @@ async fn suggest_tags_for_entry(entry_id: String, app: AppHandle) -> Result<Vec<
     };
 
     // 3) 脱敏（lock token_map → 处理 → drop，**不跨 await**）
-    let d_entry = {
+    //    同时把脱敏后的 entry 展平成自由文本，交给 capture_enrichment_prompt。
+    //    masked_text 是 LLM 实际会看到的全部用户数据。
+    let (masked_text, draft) = {
         let vault_state = app.state::<VaultRuntimeState>();
         let mut map = vault_state.token_map.lock().unwrap();
-        desensitize_entry(&entry, &fields, &tags, &mut map)
+        let d_entry = desensitize_entry(&entry, &fields, &tags, &mut map);
+        // 构造 LLM 看到的"用户数据"：title / notes / fields 拼成一段
+        let mut buf = String::new();
+        buf.push_str("title: ");
+        buf.push_str(&d_entry.title);
+        buf.push('\n');
+        if !d_entry.notes.is_empty() {
+            buf.push_str("notes: ");
+            buf.push_str(&d_entry.notes);
+            buf.push('\n');
+        }
+        for f in &d_entry.fields {
+            buf.push_str(&format!("{}: {}\n", f.key, f.value));
+        }
+        if !d_entry.tags.is_empty() {
+            buf.push_str(&format!("tags: {}\n", d_entry.tags.join(", ")));
+        }
+        // CaptureDraft 仅作为参考给 LLM，这里把已知的 kind/title 传过去，
+        // 让 LLM 能基于本地解析结果微调（例如纠正 kind）。
+        let draft = crate::vault::models::CaptureDraft {
+            kind: entry.kind,
+            title: entry.title.clone(),
+            notes: entry.notes.clone(),
+            fields: fields
+                .iter()
+                .enumerate()
+                .map(|(i, f)| crate::vault::models::CaptureField {
+                    draft_id: format!("capture-field-{i}"),
+                    key: f.key.clone(),
+                    value: f.value.clone(),
+                    is_sensitive: f.is_sensitive,
+                })
+                .collect(),
+            manual_tags: tags.clone(),
+            ai_tags: vec![],
+            ai_summary: None,
+            search_aliases: vec![],
+            ai_provenance: None,
+            warnings: vec![],
+        };
+        (buf, draft)
     };
 
     // 4) 调 LLM（不持任何 lock）
@@ -113,10 +161,10 @@ async fn suggest_tags_for_entry(entry_id: String, app: AppHandle) -> Result<Vec<
         Err(_) => return Err(()),
     };
     let req = LlmRequest {
-        messages: tag_prompt(&d_entry),
+        messages: capture_enrichment_prompt(&masked_text, &draft),
         json_mode: true,
         temperature: 0.3,
-        max_tokens: Some(256),
+        max_tokens: Some(512),
     };
     let resp = match adapter.complete(req).await {
         Ok(r) => r,
@@ -126,19 +174,32 @@ async fn suggest_tags_for_entry(entry_id: String, app: AppHandle) -> Result<Vec<
         }
     };
 
-    // 5) 解析 + 写回（lock db → 写 → drop）
-    #[derive(serde::Deserialize)]
-    struct TagResp { #[serde(default)] tags: Vec<String> }
-    let parsed: TagResp = serde_json::from_str(&resp.content).unwrap_or(TagResp { tags: vec![] });
-    if parsed.tags.is_empty() {
+    // 5) 结构化解析 —— 在 token_map 的锁内执行 parse，因为
+    //    parse_capture_response 需要按需 detokenize_strict 回填占位符。
+    //    TokenMap 的内部字段是私有的，且 token 是请求级随机生成的，所以
+    //    必须用与脱敏时同一个 map 实例，不能 clone 一份新的。
+    //    解析是纯 CPU 操作，不会跨 await，可以安全持锁。
+    let suggestion = {
+        let vault_state = app.state::<VaultRuntimeState>();
+        let map = vault_state.token_map.lock().unwrap();
+        crate::vault::ai::parse_capture_response(&resp.content, &map)
+    };
+    let suggestion = match suggestion {
+        Ok(s) => s,
+        Err(e) => {
+            let _ = app.emit("vault-llm-error", llm_error_event(e));
+            return Err(());
+        }
+    };
+    if suggestion.ai_tags.is_empty() {
         return Err(()); // 空标签视为不可用
     }
     {
         let app_state = app.state::<crate::AppState>();
         let mut conn = app_state.db.lock().map_err(|_| ())?;
-        let _ = vstore::replace_ai_tags(&mut conn, &entry_id, &parsed.tags);
+        let _ = vstore::replace_ai_tags(&mut conn, &entry_id, &suggestion.ai_tags);
     }
-    Ok(parsed.tags)
+    Ok(suggestion.ai_tags)
 }
 
 pub(crate) fn llm_error_event(e: LlmError) -> LlmErrorEvent {
@@ -212,8 +273,6 @@ pub async fn ipc_vault_retag(app: AppHandle, id: String) -> Result<(), String> {
     Ok(())
 }
 
-const LLM_SEARCH_MAX_CANDIDATES: usize = 100;
-
 #[tauri::command]
 pub async fn ipc_vault_search(
     state: State<'_, crate::AppState>,
@@ -248,7 +307,15 @@ pub async fn ipc_vault_search(
     Ok(hits)
 }
 
-/// LLM 自然语言搜索（独立端点）：构造脱敏 catalog → 调 LLM → 返回匹配条目
+/// LLM 自然语言搜索（独立端点）：脱敏查询 → 调 LLM 生成结构化查询计划
+/// → 用计划在本地做检索 → 返回匹配条目。
+///
+/// Task 7 之后这里不再把整份 catalog 喂给 LLM（之前通过 `search_prompt`
+/// 把脱敏后的全部 entry 字段塞进 prompt，泄露面太大）。新流程：
+///   1) 把查询本身脱敏，只把脱敏查询交给 `query_plan_prompt`；
+///   2) LLM 返回结构化 AiQueryPlan，由 `parse_query_plan` 严格校验；
+///   3) 计划无效 → 整次降级为本地 FTS5 搜索；
+///   4) 计划有效 → 用 keywords 在 FTS5 上做联合检索。
 #[tauri::command]
 pub async fn ipc_vault_llm_search(
     state: State<'_, crate::AppState>,
@@ -258,7 +325,7 @@ pub async fn ipc_vault_llm_search(
 ) -> Result<Vec<VaultSearchHit>, String> {
     let limit = limit.unwrap_or(20);
 
-    // 1) 取 LLM 配置（lock → clone → drop）
+    // 1) 取 LLM 配置
     let config = {
         let vault_state = app.state::<VaultRuntimeState>();
         let guard = vault_state.llm_config.lock().unwrap();
@@ -269,42 +336,21 @@ pub async fn ipc_vault_llm_search(
         None => return Ok(vec![]),
     };
 
-    // 2) 构造脱敏 catalog（db 先、token_map 后；两段临界区分别 drop）
-    let catalog = {
-        let (entries, fields_map, tags_map) = {
-            let conn = state.db.lock().map_err(|e| e.to_string())?;
-            let summaries = vstore::list_entries(&conn, None).map_err(|e| e.to_string())?;
-            let entries: Vec<crate::vault::models::VaultEntry> = summaries.into_iter().map(|s| s.entry).collect();
-            let mut fm = std::collections::HashMap::new();
-            let mut tm = std::collections::HashMap::new();
-            for e in &entries {
-                fm.insert(e.id.clone(), vstore::list_fields(&conn, &e.id).unwrap_or_default());
-                let vault_tags = vstore::list_tags(&conn, &e.id).unwrap_or_default();
-                let tag_strings: Vec<String> = vault_tags.into_iter().map(|t| t.tag).collect();
-                tm.insert(e.id.clone(), tag_strings);
-            }
-            (entries, fm, tm)
-        };
+    // 2) 脱敏查询（lock token_map → 处理 → drop）
+    let masked_query = {
         let vault_state = app.state::<VaultRuntimeState>();
         let mut map = vault_state.token_map.lock().unwrap();
-        entries
-            .iter()
-            .take(LLM_SEARCH_MAX_CANDIDATES)
-            .map(|e| {
-                let f = fields_map.get(&e.id).cloned().unwrap_or_default();
-                let t = tags_map.get(&e.id).cloned().unwrap_or_default();
-                desensitize_entry(e, &f, &t, &mut map)
-            })
-            .collect::<Vec<_>>()
+        desensitize_raw_text(&query, &[], &mut map)
     };
+    let now_rfc3339 = chrono::Utc::now().to_rfc3339();
 
-    // 3) 调 LLM（无锁）
+    // 3) 调 LLM 生成查询计划
     let adapter = match OpenAiCompatAdapter::new(config.base_url, config.api_key, config.model) {
         Ok(a) => a,
         Err(_) => return Ok(vec![]),
     };
     let req = LlmRequest {
-        messages: search_prompt(&query, &catalog),
+        messages: query_plan_prompt(&masked_query, &now_rfc3339),
         json_mode: true,
         temperature: 0.0,
         max_tokens: Some(256),
@@ -313,22 +359,43 @@ pub async fn ipc_vault_llm_search(
         Ok(r) => r,
         Err(e) => {
             let _ = app.emit("vault-llm-error", llm_error_event(e));
-            return Ok(vec![]);
+            // 网络错误降级为本地搜索
+            return local_search(&state, &query, limit);
         }
     };
 
-    // 4) 解析 + 取回完整条目
-    #[derive(serde::Deserialize)]
-    struct SearchResp {
-        #[serde(default)]
-        matches: Vec<String>,
-    }
-    let parsed: SearchResp =
-        serde_json::from_str(&resp.content).unwrap_or(SearchResp { matches: vec![] });
+    // 4) 解析计划 —— 无效整次降级
+    let plan = match crate::vault::ai::parse_query_plan(&resp.content) {
+        Ok(p) => p,
+        Err(e) => {
+            let _ = app.emit("vault-llm-error", llm_error_event(e));
+            return local_search(&state, &query, limit);
+        }
+    };
 
+    // 5) 本地检索：优先用 plan.keywords 联合查询，没有就用原查询做 FTS5
+    let effective_query = if plan.keywords.is_empty() {
+        query.clone()
+    } else {
+        plan.keywords.join(" ")
+    };
+    local_search(&state, &effective_query, limit)
+}
+
+/// 本地 FTS5 搜索的统一封装。结果统一标记 `SearchSource::AiExpanded`，
+/// 表示这是"经过 AI 查询理解后触发的检索"（即使 LLM 失败降级到这里也保持一致）。
+fn local_search(
+    state: &State<'_, crate::AppState>,
+    query: &str,
+    limit: usize,
+) -> Result<Vec<VaultSearchHit>, String> {
+    let fts_hits: Vec<(String, f64)> = {
+        let conn = state.db.lock().map_err(|e| e.to_string())?;
+        vstore::fts5_search(&conn, query, limit).map_err(|e| e.to_string())?
+    };
     let conn = state.db.lock().map_err(|e| e.to_string())?;
-    let mut hits = Vec::new();
-    for id in parsed.matches.into_iter().take(limit) {
+    let mut hits = Vec::with_capacity(fts_hits.len());
+    for (id, score) in fts_hits {
         if let Ok(Some(entry)) = vstore::get_entry_by_id(&conn, &id) {
             let tags = vstore::list_tags_with_source(&conn, &id).unwrap_or_default();
             let preview = entry.notes.clone();
@@ -338,7 +405,7 @@ pub async fn ipc_vault_llm_search(
                     tags,
                     preview,
                 },
-                score: 0.0,
+                score,
                 sources: vec![SearchSource::AiExpanded],
             });
         }
