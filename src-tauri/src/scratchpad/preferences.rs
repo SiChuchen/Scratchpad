@@ -6,7 +6,6 @@ use crate::storage::error::StorageResult;
 
 pub fn save_preferences(conn: &mut Connection, prefs: &DockPreferences) -> StorageResult<()> {
     let tx = conn.transaction()?;
-    tx.execute("DELETE FROM preferences", [])?;
 
     let overrides_json =
         serde_json::to_string(&prefs.theme_overrides).unwrap_or_else(|_| "{}".to_string());
@@ -40,7 +39,8 @@ pub fn save_preferences(conn: &mut Connection, prefs: &DockPreferences) -> Stora
         ("auto_cleanup_days", prefs.auto_cleanup_days.to_string()),
     ] {
         tx.execute(
-            "INSERT INTO preferences(key, value) VALUES (?1, ?2)",
+            "INSERT INTO preferences(key, value) VALUES (?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value=excluded.value",
             params![key, value],
         )?;
     }
@@ -220,5 +220,27 @@ mod preference_tests {
         .unwrap();
 
         assert_eq!(loaded.font_family_zh, "Microsoft YaHei");
+    }
+
+    #[test]
+    fn saving_dock_preferences_preserves_foreign_keys() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        ensure_dock_schema(&mut conn, 0).unwrap();
+        conn.execute(
+            "INSERT INTO preferences(key, value) VALUES ('vault_llm_config', 'secret-config')",
+            [],
+        )
+        .unwrap();
+
+        save_preferences(&mut conn, &DockPreferences::default()).unwrap();
+
+        let value: String = conn
+            .query_row(
+                "SELECT value FROM preferences WHERE key='vault_llm_config'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(value, "secret-config");
     }
 }
