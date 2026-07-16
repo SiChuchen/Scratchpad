@@ -8,6 +8,7 @@
   import { open } from '@tauri-apps/plugin-dialog'
   import { relaunch } from '@tauri-apps/plugin-process'
   import VaultLlmConfig from '$lib/components/vault/VaultLlmConfig.svelte'
+  import { captureShortcutFromEvent } from '$lib/utils/shortcut-capture'
 
   interface Props {
     preferences: DockPreferences
@@ -71,29 +72,6 @@
   let quickAccessShortcutStatus = $state<'idle' | 'ok' | 'failed'>('idle')
   let shortcutConflictMsg = $state('')
 
-  function modifiersToString(mods: { alt: boolean; ctrl: boolean; shift: boolean; meta: boolean }): string {
-    const parts: string[] = []
-    if (mods.ctrl) parts.push('Ctrl')
-    if (mods.alt) parts.push('Alt')
-    if (mods.shift) parts.push('Shift')
-    if (mods.meta) parts.push('Meta')
-    return parts.join('+')
-  }
-
-  function keyEventToShortcutString(e: KeyboardEvent): string | null {
-    // 不接收普通 Tab（避免破坏焦点导航）
-    if (e.key === 'Tab') return null
-    const mods = { alt: e.altKey, ctrl: e.ctrlKey, shift: e.shiftKey, meta: e.metaKey }
-    const hasMod = mods.alt || mods.ctrl || mods.shift || mods.meta
-    // 忽略单独的修饰键或未知键
-    const ignored = ['Alt', 'Control', 'Shift', 'Meta']
-    if (!hasMod) return null
-    if (ignored.includes(e.key)) return null
-    if (e.key.length > 1 && !e.key.startsWith('F') && e.key !== 'Space' && e.key !== 'Enter' && e.key !== 'Tab') return null
-    const key = e.key === 'Space' ? 'Space' : (e.key.length === 1 ? e.key.toUpperCase() : e.key)
-    return `${modifiersToString(mods)}+${key}`
-  }
-
   function startRecordingMain() {
     recordingTarget = 'main'
     shortcutConflictMsg = ''
@@ -108,13 +86,14 @@
     e.preventDefault()
     e.stopPropagation()
 
-    const sc = keyEventToShortcutString(e)
-    if (!sc) return
+    // 使用结构化的 {modifiers, key}，避免多修饰键下字符串拆分错误。
+    // 详见 src/lib/utils/shortcut-capture.ts。
+    const captured = captureShortcutFromEvent(e)
+    if (!captured) return
 
     const target = recordingTarget
     recordingTarget = null
-    const [modifiers, ...keyParts] = sc.split('+')
-    const key = keyParts.join('+')
+    const { modifiers, key } = captured
     dockApi.updateShortcut(target, modifiers, key).then((status) => {
       shortcutConflictMsg = ''
       if (target === 'main') {
