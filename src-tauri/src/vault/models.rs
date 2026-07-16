@@ -102,6 +102,25 @@ pub enum AiMetadataStatus {
     Error,
 }
 
+impl AiMetadataStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            AiMetadataStatus::Ready => "ready",
+            AiMetadataStatus::Pending => "pending",
+            AiMetadataStatus::Error => "error",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "ready" => Some(Self::Ready),
+            "pending" => Some(Self::Pending),
+            "error" => Some(Self::Error),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VaultAiMetadata {

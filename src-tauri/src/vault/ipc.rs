@@ -12,7 +12,7 @@ use crate::vault::llm::presets::{find_preset, ProviderPreset, PRESETS};
 use crate::vault::llm::prompt::{search_prompt, tag_prompt};
 use crate::vault::llm::{LlmAdapter, LlmError, LlmRequest};
 use crate::vault::models::{
-    EntryKind, SearchSource, VaultEntry, VaultEntryDetail, VaultEntryInput, VaultEntrySummary,
+    EntryKind, SearchSource, VaultEntryDetail, VaultEntryInput, VaultEntrySummary,
     VaultSearchHit,
 };
 use crate::vault::storage as vstore;
@@ -51,15 +51,15 @@ pub async fn ipc_vault_create_entry(
     state: State<'_, crate::AppState>,
     app: AppHandle,
     input: VaultEntryInput,
-) -> Result<VaultEntry, String> {
-    let entry = {
+) -> Result<VaultEntryDetail, String> {
+    let detail = {
         let mut conn = state.db.lock().map_err(|e| e.to_string())?;
         vstore::create_entry(&mut conn, &input).map_err(|e| e.to_string())?
     };
 
     // spawn 内通过 app.state::<T>() 重新获取——State<'_, T> 不是 'static 不能 move
     let app_for_spawn = app.clone();
-    let entry_id = entry.id.clone();
+    let entry_id = detail.entry.id.clone();
     tauri::async_runtime::spawn(async move {
         match suggest_tags_for_entry(entry_id.clone(), app_for_spawn.clone()).await {
             Ok(tags) => {
@@ -72,7 +72,7 @@ pub async fn ipc_vault_create_entry(
         }
     });
 
-    Ok(entry)
+    Ok(detail)
 }
 
 /// 异步打标——所有 state 通过 app.state() 重新获取
@@ -136,7 +136,7 @@ async fn suggest_tags_for_entry(entry_id: String, app: AppHandle) -> Result<Vec<
     {
         let app_state = app.state::<crate::AppState>();
         let mut conn = app_state.db.lock().map_err(|_| ())?;
-        let _ = vstore::set_tags(&mut conn, &entry_id, &parsed.tags);
+        let _ = vstore::replace_ai_tags(&mut conn, &entry_id, &parsed.tags);
     }
     Ok(parsed.tags)
 }
@@ -159,10 +159,9 @@ pub async fn ipc_vault_update_entry(
     state: State<'_, crate::AppState>,
     id: String,
     input: VaultEntryInput,
-) -> Result<(), String> {
+) -> Result<VaultEntryDetail, String> {
     let mut conn = state.db.lock().map_err(|e| e.to_string())?;
-    vstore::update_entry(&mut conn, &id, &input).map_err(|e| e.to_string())?;
-    Ok(())
+    vstore::update_entry(&mut conn, &id, &input).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -179,7 +178,7 @@ pub async fn ipc_vault_delete_entry(
 pub async fn ipc_vault_list_entries(
     state: State<'_, crate::AppState>,
     kind: Option<EntryKind>,
-) -> Result<Vec<VaultEntry>, String> {
+) -> Result<Vec<VaultEntrySummary>, String> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
     vstore::list_entries(&conn, kind).map_err(|e| e.to_string())
 }
@@ -200,7 +199,7 @@ pub async fn ipc_vault_update_tags(
     tags: Vec<String>,
 ) -> Result<(), String> {
     let mut conn = state.db.lock().map_err(|e| e.to_string())?;
-    vstore::set_tags(&mut conn, &id, &tags).map_err(|e| e.to_string())?;
+    vstore::set_manual_tags(&mut conn, &id, &tags).map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -274,12 +273,15 @@ pub async fn ipc_vault_llm_search(
     let catalog = {
         let (entries, fields_map, tags_map) = {
             let conn = state.db.lock().map_err(|e| e.to_string())?;
-            let entries = vstore::list_entries(&conn, None).map_err(|e| e.to_string())?;
+            let summaries = vstore::list_entries(&conn, None).map_err(|e| e.to_string())?;
+            let entries: Vec<crate::vault::models::VaultEntry> = summaries.into_iter().map(|s| s.entry).collect();
             let mut fm = std::collections::HashMap::new();
             let mut tm = std::collections::HashMap::new();
             for e in &entries {
                 fm.insert(e.id.clone(), vstore::list_fields(&conn, &e.id).unwrap_or_default());
-                tm.insert(e.id.clone(), vstore::list_tags(&conn, &e.id).unwrap_or_default());
+                let vault_tags = vstore::list_tags(&conn, &e.id).unwrap_or_default();
+                let tag_strings: Vec<String> = vault_tags.into_iter().map(|t| t.tag).collect();
+                tm.insert(e.id.clone(), tag_strings);
             }
             (entries, fm, tm)
         };
