@@ -11,7 +11,7 @@
 //
 // 除空输入返回 Err 外，其它输入都能产生可保存的 draft。
 
-use crate::vault::models::{CaptureDraft, EntryKind};
+use crate::vault::models::{is_default_sensitive_key, CaptureDraft, EntryKind};
 
 /// 识别为连接 URL 的 scheme（小写）。
 const CONNECTION_SCHEMES: &[&str] = &[
@@ -30,8 +30,18 @@ const CONNECTION_SCHEMES: &[&str] = &[
 /// bookmark 候选 scheme。
 const BOOKMARK_SCHEMES: &[&str] = &["http://", "https://", "ftp://", "file://"];
 
-/// 多行 KV 解析中默认视为敏感的字段名（小写比较）。
-const SENSITIVE_KEYS: &[&str] = &[
+/// 多行 KV 解析中用于判定整体是否像凭据的字段名（小写比较）。
+///
+/// 只要解析出的 key 中至少有一个命中此列表，就把 draft 标为 Credential；
+/// 否则保留为 Note（但仍填充字段）。此列表与 `is_default_sensitive_key`
+/// 是两个独立的关注点：这里关心的是 "整体是否凭据"，而后者关心 "该字段是否敏感"。
+const CREDENTIAL_KEYS: &[&str] = &[
+    "host",
+    "hostname",
+    "user",
+    "username",
+    "login",
+    "account",
     "password",
     "passwd",
     "pwd",
@@ -39,7 +49,25 @@ const SENSITIVE_KEYS: &[&str] = &[
     "token",
     "api_key",
     "apikey",
+    "api-key",
+    "access_key",
+    "accesskey",
+    "private_key",
+    "privatekey",
+    "database",
+    "db",
+    "port",
+    "url",
+    "endpoint",
+    "server",
+    "service",
 ];
+
+/// 判定 key 是否出现在 `CREDENTIAL_KEYS` 中（大小写不敏感）。
+fn is_credential_key(key: &str) -> bool {
+    let lower = key.to_lowercase();
+    CREDENTIAL_KEYS.iter().any(|k| lower == *k)
+}
 
 /// 公共入口：把任意粘贴文本转换成 `CaptureDraft`。
 ///
@@ -115,9 +143,10 @@ fn push_field(draft: &mut CaptureDraft, key: &str, value: impl Into<String>, sen
 }
 
 /// 判断是否敏感字段名（大小写不敏感）。
+///
+/// 统一委托到 `models::is_default_sensitive_key`，避免两份发散的列表。
 fn is_sensitive_key(key: &str) -> bool {
-    let lower = key.to_lowercase();
-    SENSITIVE_KEYS.iter().any(|k| lower == *k)
+    is_default_sensitive_key(key)
 }
 
 /// 把 `host[:port]` 形式的字符串拆成 (host, Option<port>)。
@@ -303,7 +332,7 @@ fn try_user_pass_host_port(text: &str) -> Option<CaptureDraft> {
     let looks_like_host = host.contains('.')
         || host == "localhost"
         || host.starts_with('[')
-        || host.chars().all(|c| c.is_ascii_digit() || c == '.' || c == ':');
+        || host.chars().all(|c| c.is_ascii_digit() || c == '.');
     if !looks_like_host && port.is_none() {
         return None;
     }
@@ -354,6 +383,11 @@ fn try_multiline_key_value(text: &str) -> Option<CaptureDraft> {
         return None;
     }
 
+    // 整体是否像凭据：至少一个 key 命中 CREDENTIAL_KEYS 才视为 Credential，
+    // 否则降级为 Note（仍保留解析出的字段）。这样可以避免把菜谱 / 日志这类
+    // 多行 key:value 文本误判为凭据。
+    let looks_like_credential = pairs.iter().any(|(k, _)| is_credential_key(k));
+
     // 推导 title：优先 host/hostname，其次 URL，再退回首字段 value
     let title = pairs
         .iter()
@@ -370,7 +404,12 @@ fn try_multiline_key_value(text: &str) -> Option<CaptureDraft> {
         })
         .unwrap_or_else(|| pairs[0].1.clone());
 
-    let mut draft = new_draft(EntryKind::Credential, title);
+    let kind = if looks_like_credential {
+        EntryKind::Credential
+    } else {
+        EntryKind::Note
+    };
+    let mut draft = new_draft(kind, title);
     for (k, v) in pairs {
         push_field(&mut draft, &k, v, is_sensitive_key(&k));
     }
@@ -388,7 +427,6 @@ fn try_single_url_bookmark(text: &str) -> Option<CaptureDraft> {
     }
     let lower = first_line.to_lowercase();
     let scheme = BOOKMARK_SCHEMES.iter().find(|s| lower.starts_with(*s))?;
-    // bookmark：不应有 userinfo（含 `@` 的情况会被 connection URL 或 user:pass 分支接住）
     let after_scheme = &first_line[scheme.len()..];
 
     // 推导 host：从 scheme 后到第一个 `/`、`?`、`#` 之间
@@ -396,8 +434,48 @@ fn try_single_url_bookmark(text: &str) -> Option<CaptureDraft> {
         .find(|c: char| c == '/' || c == '?' || c == '#')
         .unwrap_or(after_scheme.len());
     let authority = &after_scheme[..authority_end];
-    let (host, _port) = split_host_port(authority);
 
+    // 安全检查：authority 中若含 `@`，说明 URL 嵌入了 userinfo（HTTP basic auth）。
+    // 此时绝不能把整段 URL 当作非敏感 bookmark，否则 alice:hunter2@... 中的凭据
+    // 会被以明文形式存进 url 字段（FTS5 索引、UI 直接展示、可能进入 LLM 上下文）。
+    // 这种情况重新按连接 URL 的方式解析为 Credential，密码标为敏感。
+    if let Some(at_idx) = authority.rfind('@') {
+        let userinfo = &authority[..at_idx];
+        let hostport = &authority[at_idx + 1..];
+
+        // userinfo: user[:password]
+        let (user, password) = match userinfo.find(':') {
+            Some(idx) => (
+                userinfo[..idx].to_string(),
+                Some(userinfo[idx + 1..].to_string()),
+            ),
+            None => (userinfo.to_string(), None),
+        };
+
+        let (host, port) = split_host_port(hostport);
+        if !host.is_empty() {
+            let mut draft = new_draft(EntryKind::Credential, host.clone());
+            if !user.is_empty() {
+                push_field(&mut draft, "user", user, false);
+            }
+            if let Some(p) = password {
+                if !p.is_empty() {
+                    push_field(&mut draft, "password", p, true);
+                }
+            }
+            push_field(&mut draft, "host", host, false);
+            if let Some(p) = port {
+                push_field(&mut draft, "port", p, false);
+            }
+            // 完整 URL 保留一份供用户参考（非敏感 —— 但 userinfo 中真正的密码
+            // 已经抽出来标敏感了，剩下的 url 字段保留以便用户能复制原始链接）。
+            push_field(&mut draft, "url", first_line, false);
+            return Some(draft);
+        }
+        // 解析失败则 fall through 到 bookmark 分支，至少不会丢用户输入
+    }
+
+    let (host, _port) = split_host_port(authority);
     let title: String = if host.is_empty() {
         first_line.to_string()
     } else {
@@ -603,6 +681,101 @@ mod tests {
     fn email_is_not_treated_as_credential() {
         // user@host 但无冒号 password：不应被 try_user_pass_host_port 误判
         let draft = parse_capture_local("alice@example.com").unwrap();
+        assert_eq!(draft.kind, EntryKind::Note);
+    }
+
+    // ----- 新增回归测试（C1 / I2 / 边界） -----------------------------------
+
+    #[test]
+    fn http_url_with_embedded_credentials_becomes_credential() {
+        // C1 修复：`https://alice:hunter2@example.com/path` 之前会落到 bookmark
+        // 分支，整段 URL（含凭据）被当作非敏感 url 字段保存。现在必须重新
+        // 解析为 Credential，并把 password 标记为敏感。
+        let draft = parse_capture_local("https://alice:hunter2@example.com/path").unwrap();
+        assert_eq!(draft.kind, EntryKind::Credential);
+        assert_eq!(field(&draft, "user").value, "alice");
+        assert_eq!(field(&draft, "password").value, "hunter2");
+        assert!(field(&draft, "password").is_sensitive);
+        assert_eq!(field(&draft, "host").value, "example.com");
+        // 原始 URL 也应作为非敏感字段保留供用户参考
+        assert_eq!(
+            field(&draft, "url").value,
+            "https://alice:hunter2@example.com/path"
+        );
+        assert!(!field(&draft, "url").is_sensitive);
+    }
+
+    #[test]
+    fn http_url_with_user_only_no_password() {
+        // 嵌入了 userinfo 但没有密码：仍应识别为 Credential，user 字段保留。
+        let draft = parse_capture_local("https://alice@example.com/path").unwrap();
+        assert_eq!(draft.kind, EntryKind::Credential);
+        assert_eq!(field(&draft, "user").value, "alice");
+        assert_eq!(field(&draft, "host").value, "example.com");
+        // 没有 password 字段
+        assert!(draft.fields.iter().all(|f| f.key != "password"));
+    }
+
+    #[test]
+    fn multiline_kv_without_credential_keys_falls_back_to_note() {
+        // I2 修复：没有命中最小凭据关键字的 KV 文本应保留为 Note，但字段仍填充。
+        let draft = parse_capture_local("ingredient: salt\ntime: 30 minutes").unwrap();
+        assert_eq!(draft.kind, EntryKind::Note);
+        // 字段仍然解析出来
+        assert_eq!(draft.fields.len(), 2);
+        assert_eq!(field(&draft, "ingredient").value, "salt");
+        assert_eq!(field(&draft, "time").value, "30 minutes");
+    }
+
+    #[test]
+    fn multiline_kv_with_host_still_classified_as_credential() {
+        // I2 回归保护：只要至少一个 key 命中 CREDENTIAL_KEYS（这里是 host），
+        // 就应当分类为 Credential，即便其它 key 是任意字段名。
+        let draft =
+            parse_capture_local("host: db.internal\nfree_form_field: whatever").unwrap();
+        assert_eq!(draft.kind, EntryKind::Credential);
+        assert_eq!(field(&draft, "host").value, "db.internal");
+    }
+
+    #[test]
+    fn postgres_url_with_empty_userinfo_falls_through_to_note() {
+        // 边界：`postgres://@host` 的 userinfo 为空，connection URL 分支不应
+        // 触发，整段文本应兜底到 Note（避免把空凭据伪装成 Credential）。
+        let draft = parse_capture_local("postgres://@host").unwrap();
+        assert_eq!(draft.kind, EntryKind::Note);
+    }
+
+    #[test]
+    fn more_than_thirty_two_fields_triggers_warning() {
+        // 35 行 key:value：超过 32 字段上限，应截断到 32 并产生 too_many_fields 警告。
+        let mut raw = String::new();
+        for i in 0..35 {
+            if i > 0 {
+                raw.push('\n');
+            }
+            raw.push_str(&format!("host{i}: value{i}"));
+        }
+        let draft = parse_capture_local(&raw).unwrap();
+        assert_eq!(draft.fields.len(), 32);
+        assert!(
+            draft
+                .warnings
+                .iter()
+                .any(|w| w == "too_many_fields"),
+            "expected too_many_fields warning, got {:?}",
+            draft.warnings
+        );
+    }
+
+    #[test]
+    fn colon_separated_host_is_rejected() {
+        // I4 修复：`1:2:3` 这样的裸数字冒号串不应被当作合法 host。
+        // 输入 `bob:secret@1:2:3:abc`：userinfo=`bob:secret`，
+        // split_host_port(`1:2:3:abc`) 因为最后一段 `abc` 非纯数字 →
+        // 返回 (host=`1:2:3`, port=None)。旧代码会因为 `1:2:3` 字符全部
+        // 是 digit/`.`/`:` 而误判为合法 host → 错误识别为 Credential；
+        // I4 修复后 `:` 不再计入允许字符，应当 fall through 到 Note。
+        let draft = parse_capture_local("bob:secret@1:2:3:abc").unwrap();
         assert_eq!(draft.kind, EntryKind::Note);
     }
 }
