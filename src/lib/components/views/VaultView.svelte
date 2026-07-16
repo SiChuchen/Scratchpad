@@ -101,7 +101,13 @@
         {:else}
           <div class="entry-list">
             {#each searchResults as hit (hit.summary.entry.id)}
-              <EntryCard entryId={hit.summary.entry.id} />
+              <EntryCard
+                summary={hit.summary}
+                onCopy={(p) => navigator.clipboard.writeText(p.value).catch(() => {})}
+                onLoadDetail={(id) => vaultApi.getEntry(id)}
+                onEdit={(id) => {}}
+                onDelete={(id) => { void vaultApi.deleteEntry(id) }}
+              />
             {/each}
           </div>
         {/if}
@@ -117,7 +123,13 @@
       {:else}
         <div class="entry-list">
           {#each entries as e (e.entry.id)}
-            <EntryCard entryId={e.entry.id} />
+            <EntryCard
+              summary={e}
+              onCopy={(p) => navigator.clipboard.writeText(p.value).catch(() => {})}
+              onLoadDetail={(id) => vaultApi.getEntry(id)}
+              onEdit={(id) => {}}
+              onDelete={(id) => { void vaultApi.deleteEntry(id) }}
+            />
           {/each}
         </div>
       {/if}

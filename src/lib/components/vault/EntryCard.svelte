@@ -1,91 +1,236 @@
 <script lang="ts">
-  import TagEditor from './TagEditor.svelte'
-  import { vaultApi } from '$lib/api/vault'
-  import type { VaultEntryDetail } from '$lib/types/vault'
+  // src/lib/components/vault/EntryCard.svelte
+  //
+  // 窄窗口下 Vault 条目的折叠卡片。点击 header（或键盘 Enter/Space）后
+  // 调用 onLoadDetail 取得完整 detail 并内联展开 VaultEntryDetail。
+  //
+  // 关键 UX 要点：
+  //   * 折叠状态下只显示 kind / title / preview / tags (chips, 最多 3 个)；
+  //   * 切换条目或折叠时递增 resetToken，强制 CopyableValue 重新掩码；
+  //   * 编辑按钮调 onEdit；删除按钮调 onDelete，绝不用 confirm()。
 
-  let { entryId }: { entryId: string } = $props()
+  import type {
+    VaultEntryDetail as VaultEntryDetailType,
+    VaultEntrySummary,
+  } from '$lib/types/vault'
+  import VaultEntryDetail from './VaultEntryDetail.svelte'
 
-  let detail = $state<VaultEntryDetail | null>(null)
-  let showSecret = $state<Record<string, boolean>>({})
-
-  async function load() {
-    detail = await vaultApi.getEntry(entryId)
+  interface Props {
+    summary: VaultEntrySummary
+    resetToken?: number | string
+    onLoadDetail?: (id: string) => Promise<VaultEntryDetailType>
+    onCopy: (payload: {
+      label: string
+      value: string
+      sensitive: boolean
+    }) => void | Promise<void>
+    onEdit?: (id: string) => void | Promise<void>
+    onDelete?: (id: string) => void | Promise<void>
+    onRemoveAiTag?: (id: string, normalizedTag: string) => Promise<void>
   }
 
-  async function copy(text: string) {
-    await navigator.clipboard.writeText(text).catch(() => {})
+  let {
+    summary,
+    resetToken = 0,
+    onLoadDetail,
+    onCopy,
+    onEdit,
+    onDelete,
+    onRemoveAiTag,
+  }: Props = $props()
+
+  let expanded = $state(false)
+  let detail = $state<VaultEntryDetailType | null>(null)
+  let loading = $state(false)
+  let error = $state<string | null>(null)
+  // 本地 resetToken：在 expand/collapse/entry 切换时递增以强制掩码
+  let localReset = $state(0)
+  // 跟踪已加载的 entryId，避免重复加载 / 切换时残留
+  let loadedId = $state<string | null>(null)
+
+  const kindLabel = $derived(
+    summary.entry.kind === 'credential'
+      ? '凭据'
+      : summary.entry.kind === 'bookmark'
+        ? '书签'
+        : '笔记',
+  )
+
+  const tags = $derived(summary.tags.slice(0, 3))
+
+  async function toggleExpand() {
+    if (expanded) {
+      expanded = false
+      localReset += 1
+      return
+    }
+    if (!onLoadDetail) {
+      expanded = true
+      return
+    }
+    if (loadedId !== summary.entry.id || !detail) {
+      loading = true
+      error = null
+      try {
+        detail = await onLoadDetail(summary.entry.id)
+        loadedId = summary.entry.id
+      } catch (e) {
+        error = e instanceof Error ? e.message : String(e)
+      } finally {
+        loading = false
+      }
+    }
+    expanded = true
   }
 
-  async function remove() {
-    if (!confirm('确认删除？')) return
-    await vaultApi.deleteEntry(entryId)
-    window.dispatchEvent(new CustomEvent('vault-entry-deleted', { detail: entryId }))
+  function onKeydown(e: KeyboardEvent) {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault()
+      void toggleExpand()
+    }
   }
 
+  function handleRemoveAiTag(normalizedTag: string) {
+    if (!onRemoveAiTag) return
+    return onRemoveAiTag(summary.entry.id, normalizedTag)
+  }
+
+  // 切换条目时清空本地 detail（让下次 expand 重新加载）+ 递增 reset
   $effect(() => {
-    void entryId
-    load()
+    void summary.entry.id
+    if (loadedId !== null && loadedId !== summary.entry.id) {
+      detail = null
+      loadedId = null
+      expanded = false
+      localReset += 1
+    }
   })
+
+  const combinedReset = $derived(`${resetToken}:${localReset}`)
 </script>
 
-{#if detail}
-  <div class="entry-card">
-    <div class="entry-header">
-      <span class="title">{detail.entry.title}</span>
-      <span class="kind-badge">{detail.entry.kind}</span>
-      <div class="spacer"></div>
-      <button class="icon-btn danger" onclick={remove} title="删除" aria-label="删除">
-        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <polyline points="3 6 5 6 21 6"></polyline>
-          <path d="M19 6l-2 14a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2L5 6"></path>
-        </svg>
-      </button>
+<div class="entry-card" data-expanded={expanded}>
+  <div
+    class="entry-header"
+    role="button"
+    tabindex="0"
+    aria-expanded={expanded}
+    aria-label="{kindLabel} {summary.entry.title}"
+    onclick={() => void toggleExpand()}
+    onkeydown={onKeydown}
+  >
+    <span class="kind-badge">{kindLabel}</span>
+    <span class="title">{summary.entry.title}</span>
+    <div class="spacer"></div>
+    <div class="header-actions">
+      {#if onEdit}
+        <button
+          type="button"
+          class="icon-btn"
+          aria-label="编辑 {summary.entry.title}"
+          title="编辑"
+          onclick={(e) => {
+            e.stopPropagation()
+            void onEdit(summary.entry.id)
+          }}
+        >
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+          </svg>
+        </button>
+      {/if}
+      {#if onDelete}
+        <button
+          type="button"
+          class="icon-btn danger"
+          aria-label="删除 {summary.entry.title}"
+          title="删除"
+          onclick={(e) => {
+            e.stopPropagation()
+            void onDelete(summary.entry.id)
+          }}
+        >
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <polyline points="3 6 5 6 21 6"></polyline>
+            <path d="M19 6l-2 14a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2L5 6"></path>
+          </svg>
+        </button>
+      {/if}
+      <span class="chevron" aria-hidden="true">{expanded ? '▾' : '▸'}</span>
     </div>
-
-    {#if detail.fields.length > 0}
-      <div class="fields">
-        {#each detail.fields as f (f.key)}
-          <div class="field">
-            <span class="field-key">{f.key}</span>
-            <code class="field-value">
-              {#if f.isSensitive && !showSecret[f.key]}••••••••{:else}{f.value}{/if}
-            </code>
-            <div class="field-actions">
-              {#if f.isSensitive}
-                <button class="mini-btn" onclick={() => showSecret[f.key] = !showSecret[f.key]} title={showSecret[f.key] ? '隐藏' : '显示'}>
-                  {showSecret[f.key] ? '隐藏' : '显示'}
-                </button>
-              {/if}
-              <button class="mini-btn" onclick={() => copy(f.value)} title="拷贝">拷贝</button>
-            </div>
-          </div>
-        {/each}
-      </div>
-    {/if}
-
-    {#if detail.entry.notes}
-      <div class="notes">{detail.entry.notes}</div>
-    {/if}
-
-    <TagEditor entryId={entryId} tags={detail.tags.map(t => t.tag)} />
   </div>
-{/if}
+
+  {#if !expanded && (summary.preview || tags.length > 0)}
+    <div class="preview-row">
+      {#if summary.preview}
+        <span class="preview">{summary.preview}</span>
+      {/if}
+      {#if tags.length > 0}
+        <div class="tag-chips">
+          {#each tags as t (t.normalizedTag)}
+            <span class="tag-chip {t.source}">{t.tag}</span>
+          {/each}
+          {#if summary.tags.length > 3}
+            <span class="tag-more">+{summary.tags.length - 3}</span>
+          {/if}
+        </div>
+      {/if}
+    </div>
+  {/if}
+
+  {#if expanded}
+    <div class="detail-wrap">
+      {#if loading}
+        <div class="loading">加载中…</div>
+      {:else if error}
+        <div class="error">加载失败：{error}</div>
+      {:else if detail}
+        <VaultEntryDetail
+          {detail}
+          resetToken={combinedReset}
+          {onCopy}
+          onRemoveAiTag={onRemoveAiTag ? handleRemoveAiTag : undefined}
+        />
+      {/if}
+    </div>
+  {/if}
+</div>
 
 <style>
   .entry-card {
     background: var(--surface-1);
     border: 1px solid var(--border-default);
     border-radius: var(--radius-lg, 0.5rem);
-    padding: 0.5rem 0.6rem;
+    padding: 0.4rem 0.55rem;
     display: flex;
     flex-direction: column;
-    gap: 0.35rem;
+    gap: 0.3rem;
   }
 
   .entry-header {
     display: flex;
     align-items: center;
     gap: 0.4rem;
+    cursor: pointer;
+    border-radius: var(--radius-md, 0.25rem);
+    padding: 0.1rem 0;
+    outline: none;
+  }
+
+  .entry-header:focus-visible {
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-primary) 40%, transparent);
+  }
+
+  .kind-badge {
+    font-size: 0.55rem;
+    color: var(--text-muted);
+    padding: 0.1rem 0.35rem;
+    background: var(--surface-2);
+    border-radius: var(--radius-md, 0.2rem);
+    flex-shrink: 0;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
   }
 
   .title {
@@ -98,19 +243,15 @@
     min-width: 0;
   }
 
-  .kind-badge {
-    font-size: 0.6rem;
-    color: var(--text-muted);
-    padding: 0.1rem 0.4rem;
-    background: var(--surface-2);
-    border-radius: var(--radius-md, 0.25rem);
-    flex-shrink: 0;
-    text-transform: uppercase;
-    letter-spacing: 0.03em;
-  }
-
   .spacer {
     flex: 1;
+  }
+
+  .header-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.15rem;
+    flex-shrink: 0;
   }
 
   .icon-btn {
@@ -119,7 +260,7 @@
     color: var(--text-muted);
     cursor: pointer;
     padding: 0.2rem;
-    border-radius: var(--radius-md, 0.25rem);
+    border-radius: var(--radius-md, 0.2rem);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -136,67 +277,66 @@
     background: color-mix(in srgb, #ff6b6b 15%, transparent);
   }
 
-  .fields {
+  .chevron {
+    font-size: 0.65rem;
+    color: var(--text-muted);
+    padding: 0 0.15rem;
+  }
+
+  .preview-row {
     display: flex;
     flex-direction: column;
     gap: 0.2rem;
+    padding-left: 0.1rem;
   }
 
-  .field {
-    display: flex;
-    align-items: center;
-    gap: 0.4rem;
-    min-height: 1.4rem;
-  }
-
-  .field-key {
-    width: 5rem;
-    flex-shrink: 0;
-    color: var(--text-muted);
+  .preview {
     font-size: var(--font-sm, 0.65rem);
-  }
-
-  .field-value {
-    flex: 1;
-    color: var(--text-primary);
-    font-size: var(--font-sm, 0.7rem);
-    font-family: var(--font-family-mono, "Cascadia Code", "Consolas", monospace);
+    color: var(--text-muted);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    min-width: 0;
   }
 
-  .field-actions {
+  .tag-chips {
     display: flex;
+    flex-wrap: wrap;
     gap: 0.2rem;
-    flex-shrink: 0;
+    align-items: center;
   }
 
-  .mini-btn {
+  .tag-chip {
+    font-size: 0.55rem;
+    padding: 0.05rem 0.3rem;
     background: var(--surface-2);
     border: 1px solid var(--border-default);
+    border-radius: var(--radius-md, 0.2rem);
     color: var(--text-muted);
-    font-size: 0.6rem;
-    padding: 0.15rem 0.4rem;
-    border-radius: var(--radius-md, 0.25rem);
-    cursor: pointer;
-    font-family: inherit;
-    transition: color 0.12s, background 0.12s, border-color 0.12s;
   }
 
-  .mini-btn:hover {
-    color: var(--color-primary);
-    border-color: color-mix(in srgb, var(--color-primary) 30%, transparent);
-    background: color-mix(in srgb, var(--color-primary) 10%, transparent);
+  .tag-chip.ai {
+    color: var(--color-primary, #6c8cff);
+    border-color: color-mix(in srgb, var(--color-primary, #6c8cff) 25%, transparent);
+    background: color-mix(in srgb, var(--color-primary, #6c8cff) 8%, transparent);
   }
 
-  .notes {
+  .tag-more {
+    font-size: 0.55rem;
+    color: var(--text-faint, var(--text-muted));
+  }
+
+  .detail-wrap {
+    padding-top: 0.1rem;
+  }
+
+  .loading,
+  .error {
     font-size: var(--font-sm, 0.65rem);
     color: var(--text-muted);
-    white-space: pre-wrap;
-    line-height: 1.45;
-    padding-top: 0.1rem;
-    border-top: 1px solid var(--border-subtle);
+    padding: 0.2rem 0.1rem;
+  }
+
+  .error {
+    color: #ff6b6b;
   }
 </style>

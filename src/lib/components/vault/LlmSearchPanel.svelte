@@ -73,7 +73,13 @@
         <div class="result-meta">找到 {results.length} 条匹配</div>
         <div class="entry-list">
           {#each results as hit (hit.summary.entry.id)}
-            <EntryCard entryId={hit.summary.entry.id} />
+            <EntryCard
+              summary={hit.summary}
+              onCopy={(p) => navigator.clipboard.writeText(p.value).catch(() => {})}
+              onLoadDetail={(id) => vaultApi.getEntry(id)}
+              onEdit={(id) => {}}
+              onDelete={(id) => { void vaultApi.deleteEntry(id) }}
+            />
           {/each}
         </div>
       {/if}
