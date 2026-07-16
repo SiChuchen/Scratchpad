@@ -5,6 +5,7 @@ pub mod storage;
 pub mod migrations;
 pub mod desensitize;
 pub mod llm;
+pub mod config;
 pub mod ipc;
 pub mod capture;
 pub mod ai;

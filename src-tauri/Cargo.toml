@@ -33,6 +33,11 @@ regex = "1"
 sha2 = "0.10"
 hex = "0.4"
 rand = "0.8"
+# Task 8: 显式声明 tokio features（Tauri 2 间接依赖 tokio，但默认未启用全部 features）。
+# `sync` 用于运行时同步原语，`time` 用于 cooldown 计算；`tokio-util` 提供
+# `CancellationToken`（Task 9 用于可取消搜索）。
+tokio = { version = "1", features = ["sync", "time"] }
+tokio-util = "0.7"
 
 [features]
 devtools = ["tauri/devtools"]

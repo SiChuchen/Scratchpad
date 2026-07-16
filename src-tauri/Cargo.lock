@@ -3736,6 +3736,8 @@ dependencies = [
  "tauri-plugin-process",
  "tauri-plugin-updater",
  "thiserror 1.0.69",
+ "tokio",
+ "tokio-util",
  "windows-sys 0.59.0",
  "winreg 0.52.0",
 ]

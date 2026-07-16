@@ -537,6 +537,12 @@ fn init_db() -> Connection {
 // --- App entry ---
 
 pub fn run() {
+    // Task 8: 在 Builder 之前初始化 DB 连接并从中加载 vault runtime
+    // （LLM 配置 + AI 设置 + 失败门控初始状态），让 AI 功能在用户打开
+    // Settings 之前就可用。
+    let conn = init_db();
+    let vault_runtime = vault::ipc::VaultRuntimeState::load(&conn);
+
     tauri::Builder::default()
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_autostart::Builder::new().build())
@@ -544,11 +550,11 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())
         .manage(AppState {
-            db: Mutex::new(init_db()),
+            db: Mutex::new(conn),
             main_geometry: Mutex::new(None),
             current_shortcut: Mutex::new(None),
         })
-        .manage(vault::ipc::VaultRuntimeState::default())
+        .manage(vault_runtime)
         .invoke_handler(tauri::generate_handler![
             ipc_entries_create_text,
             ipc_entries_list,
@@ -586,9 +592,12 @@ pub fn run() {
             vault::ipc::ipc_vault_search,
             vault::ipc::ipc_vault_llm_search,
             vault::ipc::ipc_vault_get_llm_presets,
-            vault::ipc::ipc_vault_get_llm_config,
-            vault::ipc::ipc_vault_set_llm_config,
-            vault::ipc::ipc_vault_test_llm,
+            vault::ipc::settings::ipc_vault_get_llm_config,
+            vault::ipc::settings::ipc_vault_verify_and_save_llm,
+            vault::ipc::settings::ipc_vault_test_saved_llm,
+            vault::ipc::settings::ipc_vault_delete_llm_config,
+            vault::ipc::settings::ipc_vault_get_ai_settings,
+            vault::ipc::settings::ipc_vault_set_ai_settings,
         ])
         .setup(|app| {
             // System tray menu
