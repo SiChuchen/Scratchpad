@@ -186,8 +186,13 @@ export class CaptureDraftController {
   /**
    * 调用 enrichCapture 并把 suggestion 合并到 draft。dirty 路径不会被覆盖。
    * 成功后从 audit 写入 aiProvenance；失败抛出原错误，draft 不变。
+   *
+   * 返回合并后的 enrichment（含 audit），便于调用方展示审计弹窗。
    */
-  async enrich(rawText: string, manualSensitiveValues: string[]): Promise<void> {
+  async enrich(
+    rawText: string,
+    manualSensitiveValues: string[],
+  ): Promise<CaptureEnrichment> {
     if (this._requestId === null) {
       // 自动开 session（方便单测和简单调用方）。
       this.startSession()
@@ -200,6 +205,7 @@ export class CaptureDraftController {
       this._requestId!,
     )
     this.applyEnrichment(enr)
+    return enr
   }
 
   /**

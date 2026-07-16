@@ -23,11 +23,12 @@
   import type { DockPreferences } from '$lib/types/dock'
   import type { QuickAccessState } from '$lib/types/quick-access'
   import { handleKeydown } from '$lib/state/quick-access'
+  import CaptureMode from '$lib/components/quick-access/CaptureMode.svelte'
+  import type { VaultEntryDetail } from '$lib/types/vault'
 
   const win = getCurrentWindow()
 
   // Element refs
-  let recordInputEl = $state<HTMLTextAreaElement | null>(null)
   let searchInputEl = $state<HTMLInputElement | null>(null)
   let unlisteners: UnlistenFn[] = []
 
@@ -38,6 +39,37 @@
   let selectedId = $state<string | null>(null)
   let preferences = $state<DockPreferences | null>(null)
   let systemDark = $state(true)
+
+  // Inline toast notification (simple ephemeral banner).
+  let noticeText = $state('')
+  let noticeKind = $state<'success' | 'error'>('success')
+  let noticeTimer: ReturnType<typeof setTimeout> | null = null
+
+  function notify(
+    text: string,
+    kind: 'success' | 'error' = 'success',
+    _undo?: () => void,
+    _actionLabel?: string,
+  ) {
+    noticeText = text
+    noticeKind = kind
+    if (noticeTimer) clearTimeout(noticeTimer)
+    noticeTimer = setTimeout(() => {
+      noticeText = ''
+    }, kind === 'error' ? 6000 : 3000)
+  }
+
+  function onCaptureSaved(_entry: VaultEntryDetail) {
+    // Future Task 17 / 18 could route this to a recent-entries list.
+    // For now we just rely on the success notification.
+  }
+
+  function onOpenAiSettings() {
+    // Task 17+ will wire this to open the main window's vault settings panel
+    // via a Tauri command. For now we emit a no-op event so behavior remains
+    // local; the quick-access window itself does not host the settings UI.
+    notify('请到主窗口资料库设置中配置 AI', 'success')
+  }
 
   onMount(async () => {
     // Sync initial system dark mode
@@ -114,7 +146,11 @@
   function focusActiveModeInput() {
     queueMicrotask(() => {
       if (mode === 'record') {
-        recordInputEl?.focus()
+        // CaptureMode owns its textarea; focus via DOM query.
+        const ta = document.querySelector<HTMLTextAreaElement>(
+          '.capture-mode .raw-textarea',
+        )
+        ta?.focus()
       } else {
         searchInputEl?.focus()
       }
@@ -140,20 +176,16 @@
 <svelte:window onkeydown={onKeydown} />
 
 <main class="quick-shell">
+  {#if noticeText}
+    <div class="notice" class:error={noticeKind === 'error'}>{noticeText}</div>
+  {/if}
+
   {#if mode === 'record'}
-    <!-- Task 16: CaptureMode.svelte will replace this placeholder -->
-    <section class="mode mode-record">
-      <header class="mode-header">
-        <h2>录入</h2>
-        <span class="hint">Ctrl+Tab → 搜索</span>
-      </header>
-      <textarea
-        bind:this={recordInputEl}
-        class="record-textarea"
-        placeholder="粘贴或输入内容…"
-        bind:value={draft}
-      ></textarea>
-    </section>
+    <CaptureMode
+      {notify}
+      onSaved={onCaptureSaved}
+      onOpenSettings={onOpenAiSettings}
+    />
   {:else}
     <!-- Task 17: SearchMode.svelte will replace this placeholder -->
     <section class="mode mode-search">
@@ -221,24 +253,20 @@
     color: var(--text-muted);
   }
 
-  .record-textarea {
-    flex: 1;
-    width: 100%;
-    resize: none;
-    border: 1px solid var(--border-default);
+  .notice {
+    padding: 0.4rem 0.65rem;
+    margin: 0.5rem 0.5rem 0;
     border-radius: var(--radius-md, 6px);
-    padding: 0.5rem;
-    background: var(--surface-1);
-    color: var(--text-primary);
-    font-family: var(--font-family-en, 'Segoe UI'), var(--font-family-zh, 'Microsoft YaHei'),
-      sans-serif;
-    font-size: var(--font-body, 14px);
-    line-height: 1.5;
-    outline: none;
+    font-size: var(--font-sm, 13px);
+    background: color-mix(in srgb, var(--color-primary, #4f46e5) 12%, transparent);
+    color: var(--color-primary, #4f46e5);
+    border: 1px solid color-mix(in srgb, var(--color-primary, #4f46e5) 30%, transparent);
   }
 
-  .record-textarea:focus {
-    border-color: var(--color-primary);
+  .notice.error {
+    background: color-mix(in srgb, var(--color-danger, #ef4444) 12%, transparent);
+    color: var(--color-danger, #ef4444);
+    border-color: color-mix(in srgb, var(--color-danger, #ef4444) 30%, transparent);
   }
 
   .search-input {
