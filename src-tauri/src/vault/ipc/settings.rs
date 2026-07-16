@@ -13,7 +13,7 @@
 // `LlmTestResult` 沿用既有定义；只是不再让消息中包含 reqwest 错误原文。
 
 use serde::Serialize;
-use tauri::State;
+use tauri::{AppHandle, State};
 
 use crate::vault::config::{
     apply_preset_base_url, resolve_input, LlmConfigInput, LlmConfigSummary, LlmConfigStored,
@@ -63,6 +63,7 @@ pub async fn ipc_vault_verify_and_save_llm(
     config: LlmConfigInput,
     state: State<'_, crate::AppState>,
     vault: State<'_, VaultRuntimeState>,
+    app: AppHandle,
 ) -> Result<LlmTestResult, String> {
     // 1) 取已存配置（lock → clone → drop）
     let saved: Option<LlmConfigStored> = {
@@ -143,6 +144,9 @@ pub async fn ipc_vault_verify_and_save_llm(
         let mut conn = state.db.lock().map_err(|e| e.to_string())?;
         vault.save_config(&mut conn, to_test).map_err(|e| e.to_string())?;
     }
+
+    // Task 10: 配置保存成功后启动一次 backfill（worker mutex 保证只一个）
+    crate::vault::jobs::try_start_backfill(&app);
 
     Ok(test_result)
 }

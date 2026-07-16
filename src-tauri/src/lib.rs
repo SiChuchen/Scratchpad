@@ -582,13 +582,18 @@ pub fn run() {
             ipc_window_clear_region,
             ipc_dock_restore_from_tab,
             ipc_dock_minimize_to_tab,
-            vault::ipc::ipc_vault_create_entry,
-            vault::ipc::ipc_vault_update_entry,
-            vault::ipc::ipc_vault_delete_entry,
-            vault::ipc::ipc_vault_list_entries,
-            vault::ipc::ipc_vault_get_entry,
-            vault::ipc::ipc_vault_update_tags,
-            vault::ipc::ipc_vault_retag,
+            vault::ipc::entries::ipc_vault_create_entry,
+            vault::ipc::entries::ipc_vault_update_entry,
+            vault::ipc::entries::ipc_vault_delete_entry,
+            vault::ipc::entries::ipc_vault_list_entries,
+            vault::ipc::entries::ipc_vault_get_entry,
+            vault::ipc::entries::ipc_vault_update_manual_tags,
+            vault::ipc::entries::ipc_vault_remove_ai_tag,
+            vault::ipc::entries::ipc_vault_refresh_ai_metadata,
+            vault::ipc::entries::ipc_vault_ai_backfill_status,
+            vault::ipc::capture::ipc_vault_parse_capture_local,
+            vault::ipc::capture::ipc_vault_enrich_capture,
+            vault::ipc::capture::ipc_vault_create_from_capture,
             vault::ipc::ipc_vault_search,
             vault::ipc::search::ipc_vault_search_hybrid_local,
             vault::ipc::search::ipc_vault_plan_search,
@@ -704,6 +709,10 @@ pub fn run() {
                     }
                 }
             }
+
+            // Task 10: 启动 AI metadata backfill worker（仅当 config 存在
+            // 且 auto_enrich 开启时；否则 try_start_backfill 内部不会启动）。
+            vault::jobs::try_start_backfill(app.handle());
 
             Ok(())
         })

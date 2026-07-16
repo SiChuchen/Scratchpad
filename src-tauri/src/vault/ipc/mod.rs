@@ -15,26 +15,22 @@
 
 pub mod settings;
 pub mod search;
+pub mod capture;
+pub mod entries;
 
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use rusqlite::Connection;
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::State;
 use tokio_util::sync::CancellationToken;
 
 use crate::vault::config::{
     self, load_ai_settings, load_stored_config, LlmConfigStored, VaultAiSettings,
 };
-use crate::vault::desensitize::{desensitize_entry, TokenMap};
-use crate::vault::llm::openai_compat::OpenAiCompatAdapter;
-use crate::vault::llm::prompt::capture_enrichment_prompt;
-use crate::vault::llm::{LlmAdapter, LlmError, LlmRequest};
-use crate::vault::models::{
-    EntryKind, VaultEntryDetail, VaultEntryInput, VaultEntrySummary, VaultSearchHit,
-};
-use crate::vault::storage as vstore;
+use crate::vault::llm::LlmError;
+use crate::vault::models::VaultSearchHit;
 
 // ---- 失败门控常量 -----------------------------------------------------------
 
@@ -213,6 +209,11 @@ impl VaultRuntimeState {
         *self.auth_blocked.lock().unwrap()
     }
 
+    /// 公共版本：jobs worker 在判断"是否应当启动 / 继续"时使用。
+    pub fn is_auth_blocked_pub(&self) -> bool {
+        *self.auth_blocked.lock().unwrap()
+    }
+
     // ---- 活跃搜索 token（Task 9 使用） ------------------------------------
 
     /// 注册一个活跃搜索的取消 token。如果已有活跃搜索，旧 token **不会**
@@ -274,13 +275,6 @@ impl Default for VaultRuntimeState {
 
 #[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
-pub struct TagUpdateEvent {
-    pub id: String,
-    pub tags: Vec<String>,
-}
-
-#[derive(Debug, Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
 pub struct LlmErrorEvent {
     pub kind: String,
     pub code: String,
@@ -306,195 +300,10 @@ pub(crate) fn llm_error_event(e: LlmError) -> LlmErrorEvent {
 }
 
 // ---- Entry / search commands -----------------------------------------------
-
-#[tauri::command]
-pub async fn ipc_vault_create_entry(
-    state: State<'_, crate::AppState>,
-    app: AppHandle,
-    input: VaultEntryInput,
-) -> Result<VaultEntryDetail, String> {
-    let detail = {
-        let mut conn = state.db.lock().map_err(|e| e.to_string())?;
-        vstore::create_entry(&mut conn, &input).map_err(|e| e.to_string())?
-    };
-
-    // spawn 内通过 app.state::<T>() 重新获取——State<'_, T> 不是 'static 不能 move
-    let app_for_spawn = app.clone();
-    let entry_id = detail.entry.id.clone();
-    tauri::async_runtime::spawn(async move {
-        if let Ok(tags) = suggest_tags_for_entry(entry_id.clone(), app_for_spawn.clone()).await {
-            let _ = app_for_spawn.emit(
-                "vault-tags-updated",
-                TagUpdateEvent { id: entry_id, tags },
-            );
-        }
-    });
-
-    Ok(detail)
-}
-
-/// 异步打标——所有 state 通过 app.state() 重新获取。
-///
-/// Task 7 之后改走结构化 capture enrichment；Task 8 之后 `TokenMap`
-/// 改成请求局部变量，不再常驻 `VaultRuntimeState`。门控：自动调用前查询
-/// `should_skip_automatic_call`，被阻断时直接放弃。
-async fn suggest_tags_for_entry(entry_id: String, app: AppHandle) -> Result<Vec<String>, ()> {
-    let vault_state = app.state::<VaultRuntimeState>();
-
-    // 门控：被 auth-blocked 或处于 cooldown → 直接放弃自动调用
-    if vault_state.should_skip_automatic_call().is_some() {
-        return Err(());
-    }
-
-    // 1) 取 entry 详情（lock db → 取 → drop guard）
-    let (entry, fields, tags) = {
-        let app_state = app.state::<crate::AppState>();
-        let conn = app_state.db.lock().map_err(|_| ())?;
-        let detail = vstore::get_entry_detail(&conn, &entry_id).map_err(|_| ())?;
-        // desensitize_entry 仍需要 Vec<String>；这里取 tag 的显示文本
-        let tag_strings: Vec<String> = detail.tags.iter().map(|t| t.tag.clone()).collect();
-        (detail.entry, detail.fields, tag_strings)
-    };
-
-    // 2) 取 LLM 配置（lock → clone → drop）
-    let config: Option<LlmConfigStored> = {
-        let guard = vault_state.config.lock().unwrap();
-        guard.clone()
-    };
-    let config = match config {
-        Some(c) => c,
-        None => return Err(()),
-    };
-
-    // 3) 脱敏：本请求专属 `TokenMap`，不跨请求、不跨 IPC 命令。
-    //    masked_text 是 LLM 实际会看到的全部用户数据 ——
-    //    title / notes / fields 都经过 desensitize_entry 处理。
-    let mut token_map = TokenMap::new();
-    let masked_text = {
-        let d_entry =
-            desensitize_entry(&entry, &fields, &tags, &mut token_map);
-        let mut buf = String::new();
-        buf.push_str("title: ");
-        buf.push_str(&d_entry.title);
-        buf.push('\n');
-        if !d_entry.notes.is_empty() {
-            buf.push_str("notes: ");
-            buf.push_str(&d_entry.notes);
-            buf.push('\n');
-        }
-        for f in &d_entry.fields {
-            buf.push_str(&format!("{}: {}\n", f.key, f.value));
-        }
-        if !d_entry.tags.is_empty() {
-            buf.push_str(&format!("tags: {}\n", d_entry.tags.join(", ")));
-        }
-        buf
-    };
-
-    // 4) 调 LLM（不持任何 lock）
-    let adapter = match OpenAiCompatAdapter::new(
-        config.base_url, config.api_key, config.model,
-    ) {
-        Ok(a) => a,
-        Err(_) => return Err(()),
-    };
-    let req = LlmRequest {
-        messages: capture_enrichment_prompt(&masked_text),
-        json_mode: true,
-        temperature: 0.3,
-        max_tokens: Some(512),
-    };
-    let resp = match adapter.complete(req).await {
-        Ok(r) => {
-            vault_state.record_success();
-            r
-        }
-        Err(e) => {
-            // 失败门控：根据错误类型更新 runtime
-            vault_state.record_failure(&e);
-            let _ = app.emit("vault-llm-error", llm_error_event(e));
-            return Err(());
-        }
-    };
-
-    // 5) 结构化解析：token_map 是请求局部变量，跨步骤共享同一实例
-    let suggestion = crate::vault::ai::parse_capture_response(&resp.content, &token_map);
-    let suggestion = match suggestion {
-        Ok(s) => s,
-        Err(e) => {
-            // parse 错误不影响门控，但仍通知前端
-            let _ = app.emit("vault-llm-error", llm_error_event(e));
-            return Err(());
-        }
-    };
-    if suggestion.ai_tags.is_empty() {
-        return Err(()); // 空标签视为不可用
-    }
-    {
-        let app_state = app.state::<crate::AppState>();
-        let mut conn = app_state.db.lock().map_err(|_| ())?;
-        let _ = vstore::replace_ai_tags(&mut conn, &entry_id, &suggestion.ai_tags);
-    }
-    Ok(suggestion.ai_tags)
-}
-
-#[tauri::command]
-pub async fn ipc_vault_update_entry(
-    state: State<'_, crate::AppState>,
-    id: String,
-    input: VaultEntryInput,
-) -> Result<VaultEntryDetail, String> {
-    let mut conn = state.db.lock().map_err(|e| e.to_string())?;
-    vstore::update_entry(&mut conn, &id, &input).map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub async fn ipc_vault_delete_entry(
-    state: State<'_, crate::AppState>,
-    id: String,
-) -> Result<(), String> {
-    let mut conn = state.db.lock().map_err(|e| e.to_string())?;
-    vstore::delete_entry(&mut conn, &id).map_err(|e| e.to_string())?;
-    Ok(())
-}
-
-#[tauri::command]
-pub async fn ipc_vault_list_entries(
-    state: State<'_, crate::AppState>,
-    kind: Option<EntryKind>,
-) -> Result<Vec<VaultEntrySummary>, String> {
-    let conn = state.db.lock().map_err(|e| e.to_string())?;
-    vstore::list_entries(&conn, kind).map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub async fn ipc_vault_get_entry(
-    state: State<'_, crate::AppState>,
-    id: String,
-) -> Result<VaultEntryDetail, String> {
-    let conn = state.db.lock().map_err(|e| e.to_string())?;
-    vstore::get_entry_detail(&conn, &id).map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub async fn ipc_vault_update_tags(
-    state: State<'_, crate::AppState>,
-    id: String,
-    tags: Vec<String>,
-) -> Result<(), String> {
-    let mut conn = state.db.lock().map_err(|e| e.to_string())?;
-    vstore::set_manual_tags(&mut conn, &id, &tags).map_err(|e| e.to_string())?;
-    Ok(())
-}
-
-#[tauri::command]
-pub async fn ipc_vault_retag(app: AppHandle, id: String) -> Result<(), String> {
-    let app_clone = app.clone();
-    tauri::async_runtime::spawn(async move {
-        let _ = suggest_tags_for_entry(id, app_clone).await;
-    });
-    Ok(())
-}
+//
+// Task 10 之后所有 entry 命令迁移到 `entries.rs` 子模块；`ipc_vault_search`
+// 与 preset 仍保留在本模块（前者只读 + 走 search_local，不涉及 LLM；
+// 后者是无状态常量）。
 
 #[tauri::command]
 pub async fn ipc_vault_search(

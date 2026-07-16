@@ -6,8 +6,8 @@ use sha2::{Digest, Sha256};
 
 use crate::storage::error::{StorageError, StorageResult};
 use crate::vault::models::{
-    AiMetadataStatus, CaptureDraft, EntryKind, TagSource, VaultAiMetadata, VaultEntry,
-    VaultEntryDetail, VaultEntryInput, VaultEntrySummary, VaultField, VaultTag,
+    AiMetadataStatus, BackfillStatus, CaptureDraft, EntryKind, TagSource, VaultAiMetadata,
+    VaultEntry, VaultEntryDetail, VaultEntryInput, VaultEntrySummary, VaultField, VaultTag,
     is_default_sensitive_key,
 };
 
@@ -503,6 +503,38 @@ pub fn list_pending_ai_entries(conn: &Connection, limit: usize) -> StorageResult
     )?;
     let rows = stmt.query_map(params![limit as i64], |r| r.get::<_, String>(0))?;
     rows.collect::<rusqlite::Result<Vec<_>>>().map_err(StorageError::from)
+}
+
+/// 统计当前各 AI metadata 状态的条目数。
+/// `processing` 字段始终为 0（worker 没有显式 processing 状态，pending 即"待处理"）。
+pub fn backfill_status(conn: &Connection) -> StorageResult<BackfillStatus> {
+    let total: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM vault_ai_metadata",
+        [],
+        |r| r.get(0),
+    )?;
+    let ready: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM vault_ai_metadata WHERE status='ready'",
+        [],
+        |r| r.get(0),
+    )?;
+    let pending: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM vault_ai_metadata WHERE status='pending'",
+        [],
+        |r| r.get(0),
+    )?;
+    let error: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM vault_ai_metadata WHERE status='error'",
+        [],
+        |r| r.get(0),
+    )?;
+    Ok(BackfillStatus {
+        total: total as usize,
+        pending: pending as usize,
+        processing: 0,
+        ready: ready as usize,
+        error: error as usize,
+    })
 }
 
 /// 读取某条目当前 AI 内容哈希（来自 metadata 行），若不存在返回空串。
