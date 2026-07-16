@@ -6,7 +6,7 @@ pub mod vault;
 
 use rusqlite::Connection;
 use std::sync::Mutex;
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut};
 
 pub struct AppState {
@@ -46,6 +46,80 @@ impl ShortcutTarget {
             ),
         }
     }
+}
+
+// --- Win32 helpers (quick-access positioning) ---
+
+/// 返回鼠标当前所在点的物理屏幕坐标 (x, y)。
+#[cfg(target_os = "windows")]
+fn win_cursor_pos() -> (i32, i32) {
+    use windows_sys::Win32::Foundation::POINT;
+    use windows_sys::Win32::UI::WindowsAndMessaging::GetCursorPos;
+
+    let mut pt = POINT { x: 0, y: 0 };
+    unsafe {
+        if GetCursorPos(&mut pt) != 0 {
+            (pt.x, pt.y)
+        } else {
+            (0, 0)
+        }
+    }
+}
+
+/// 返回包含 `(x, y)` 的显示器的工作区（rcWork），失败时退回到主屏。
+#[cfg(target_os = "windows")]
+fn win_monitor_work_area(x: i32, y: i32) -> system::window::WorkRect {
+    use windows_sys::Win32::Foundation::POINT;
+    use windows_sys::Win32::Graphics::Gdi::{
+        GetMonitorInfoW, MonitorFromPoint, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+    };
+
+    let monitor = unsafe {
+        MonitorFromPoint(
+            POINT { x, y },
+            MONITOR_DEFAULTTONEAREST,
+        )
+    };
+    let mut mi = MONITORINFO {
+        cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+        ..unsafe { std::mem::zeroed() }
+    };
+    unsafe {
+        GetMonitorInfoW(monitor, &mut mi);
+    }
+    system::window::WorkRect::new(
+        mi.rcWork.left,
+        mi.rcWork.top,
+        mi.rcWork.right,
+        mi.rcWork.bottom,
+    )
+}
+
+#[cfg(not(target_os = "windows"))]
+fn win_cursor_pos() -> (i32, i32) {
+    (0, 0)
+}
+
+#[cfg(not(target_os = "windows"))]
+fn win_monitor_work_area(_x: i32, _y: i32) -> system::window::WorkRect {
+    system::window::WorkRect::new(0, 0, 1920, 1080)
+}
+
+/// 把 quick-access 窗口移动到鼠标所在显示器的工作区中心并 show/set_focus/emit。
+fn show_quick_access_centered(app: &tauri::AppHandle) {
+    use tauri::{PhysicalPosition as PhysPos, PhysicalSize as PhysSize};
+
+    let Some(quick) = app.get_webview_window("quick-access") else {
+        return;
+    };
+    let (cx, cy) = win_cursor_pos();
+    let work = win_monitor_work_area(cx, cy);
+    let (x, y, w, h) = system::window::fit_and_center_quick_access(cx, cy, work);
+    let _ = quick.set_position(PhysPos::new(x as f64, y as f64));
+    let _ = quick.set_size(PhysSize::new(w as f64, h as f64));
+    let _ = quick.show();
+    let _ = quick.set_focus();
+    let _ = app.emit("quick-access-focus-input", ());
 }
 
 // --- Shortcut helpers ---
@@ -351,16 +425,14 @@ fn ipc_shortcut_update(
                 .on_shortcut(new_shortcut, move |app, _sc, event| {
                     use tauri_plugin_global_shortcut::ShortcutState;
                     if event.state == ShortcutState::Pressed {
-                        // Task 15 会创建 quick-access 窗口；当前先复用 main 窗口的
-                        // toggle 行为，让快捷键不至于"无反应"。
                         if let Some(w) = app.get_webview_window("quick-access") {
                             if w.is_visible().unwrap_or(false) {
                                 let _ = w.hide();
                             } else {
-                                let _ = w.show();
-                                let _ = w.set_focus();
+                                show_quick_access_centered(app);
                             }
                         } else if let Some(w) = app.get_webview_window("main") {
+                            // 兜底：quick-access 窗口尚未创建（旧配置）时退回 main。
                             if w.is_visible().unwrap_or(false) {
                                 let _ = w.hide();
                             } else {
@@ -729,6 +801,14 @@ pub fn run() {
             vault::ipc::settings::ipc_vault_get_ai_settings,
             vault::ipc::settings::ipc_vault_set_ai_settings,
         ])
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::Focused(false) = event {
+                if window.label() == "quick-access" {
+                    let _ = window.emit("vault-sensitive-reset", ());
+                    let _ = window.hide();
+                }
+            }
+        })
         .setup(|app| {
             // System tray menu
             let show_item =
@@ -800,13 +880,11 @@ pub fn run() {
                         .on_shortcut(qa_shortcut, move |app, _sc, event| {
                             use tauri_plugin_global_shortcut::ShortcutState;
                             if event.state == ShortcutState::Pressed {
-                                // Task 15 创建 quick-access 窗口；当前先复用 main 窗口。
                                 if let Some(w) = app.get_webview_window("quick-access") {
                                     if w.is_visible().unwrap_or(false) {
                                         let _ = w.hide();
                                     } else {
-                                        let _ = w.show();
-                                        let _ = w.set_focus();
+                                        show_quick_access_centered(app);
                                     }
                                 } else if let Some(w) = app.get_webview_window("main") {
                                     if w.is_visible().unwrap_or(false) {
@@ -866,7 +944,7 @@ pub fn run() {
             })();
 
             if let Some(icon) = icon_result {
-                for label in ["main", "minimized-tab"] {
+                for label in ["main", "minimized-tab", "quick-access"] {
                     if let Some(w) = app.get_webview_window(label) {
                         let _ = w.set_icon(icon.clone());
                     }
