@@ -418,8 +418,13 @@ pub fn validate_non_sensitive_metadata(
         if out.len() >= max_items {
             break;
         }
-        if trimmed.len() > max_len {
-            return Err(format!("value too long ({} > {}): {}", trimmed.len(), max_len, trimmed));
+        if trimmed.chars().count() > max_len {
+            return Err(format!(
+                "value too long ({} > {}): {}",
+                trimmed.chars().count(),
+                max_len,
+                trimmed
+            ));
         }
         if trimmed.contains("[SECRET:") {
             return Err(format!("value contains placeholder: {}", trimmed));

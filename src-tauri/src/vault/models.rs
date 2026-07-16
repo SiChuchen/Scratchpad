@@ -183,7 +183,7 @@ pub struct AiRequestAudit {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SuggestedField {
     pub key: String,
     pub value: String,

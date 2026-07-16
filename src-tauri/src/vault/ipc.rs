@@ -106,8 +106,10 @@ async fn suggest_tags_for_entry(entry_id: String, app: AppHandle) -> Result<Vec<
 
     // 3) 脱敏（lock token_map → 处理 → drop，**不跨 await**）
     //    同时把脱敏后的 entry 展平成自由文本，交给 capture_enrichment_prompt。
-    //    masked_text 是 LLM 实际会看到的全部用户数据。
-    let (masked_text, draft) = {
+    //    masked_text 是 LLM 实际会看到的全部用户数据 ——
+    //    title / notes / fields 都经过 desensitize_entry 处理，
+    //    绝不再把原始 entry 的 title 等敏感字段直接发给 LLM（I3 回归）。
+    let masked_text = {
         let vault_state = app.state::<VaultRuntimeState>();
         let mut map = vault_state.token_map.lock().unwrap();
         let d_entry = desensitize_entry(&entry, &fields, &tags, &mut map);
@@ -127,30 +129,7 @@ async fn suggest_tags_for_entry(entry_id: String, app: AppHandle) -> Result<Vec<
         if !d_entry.tags.is_empty() {
             buf.push_str(&format!("tags: {}\n", d_entry.tags.join(", ")));
         }
-        // CaptureDraft 仅作为参考给 LLM，这里把已知的 kind/title 传过去，
-        // 让 LLM 能基于本地解析结果微调（例如纠正 kind）。
-        let draft = crate::vault::models::CaptureDraft {
-            kind: entry.kind,
-            title: entry.title.clone(),
-            notes: entry.notes.clone(),
-            fields: fields
-                .iter()
-                .enumerate()
-                .map(|(i, f)| crate::vault::models::CaptureField {
-                    draft_id: format!("capture-field-{i}"),
-                    key: f.key.clone(),
-                    value: f.value.clone(),
-                    is_sensitive: f.is_sensitive,
-                })
-                .collect(),
-            manual_tags: tags.clone(),
-            ai_tags: vec![],
-            ai_summary: None,
-            search_aliases: vec![],
-            ai_provenance: None,
-            warnings: vec![],
-        };
-        (buf, draft)
+        buf
     };
 
     // 4) 调 LLM（不持任何 lock）
@@ -161,7 +140,7 @@ async fn suggest_tags_for_entry(entry_id: String, app: AppHandle) -> Result<Vec<
         Err(_) => return Err(()),
     };
     let req = LlmRequest {
-        messages: capture_enrichment_prompt(&masked_text, &draft),
+        messages: capture_enrichment_prompt(&masked_text),
         json_mode: true,
         temperature: 0.3,
         max_tokens: Some(512),
