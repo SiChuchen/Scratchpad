@@ -299,6 +299,23 @@
     draft = cloneDraft(controller.draft)
   }
 
+  function onConvertAiTag(tag: string) {
+    if (!draft) return
+    // Spec: modifying AI tag = remove original + add new value to manualTags.
+    // "→ 手动" affordance: move the tag value verbatim from aiTags into
+    // manualTags, then drop it from aiTags so it is no longer tied to AI
+    // provenance (and won't be overwritten by a future enrich cycle).
+    if (!draft.aiTags.includes(tag)) return
+    if (!draft.manualTags.includes(tag)) {
+      draft.manualTags = [...draft.manualTags, tag]
+    }
+    draft.aiTags = draft.aiTags.filter((t) => t !== tag)
+    controller.setLocalDraft(draft)
+    controller.setManualTags(draft.manualTags)
+    markDirty('manualTags')
+    draft = cloneDraft(controller.draft)
+  }
+
   // ---- Sensitive marking --------------------------------------------------
 
   function onMarkSensitive() {
@@ -335,10 +352,10 @@
       resetDirty()
     } catch (e) {
       saveError = e instanceof Error ? e.message : String(e)
-      // rawText, draft preserved. Rotate requestId for next retry attempt
-      // (so each save attempt has a unique tracking id; previous failure's
-      // id is not reused).
-      requestId = controller.startSession()
+      // rawText, draft, requestId all preserved — the storage layer's
+      // vault_capture_requests idempotency check guarantees the retry of the
+      // SAME requestId won't create a duplicate entry if the first attempt
+      // actually persisted before the failure surfaced.
     } finally {
       saving = false
     }
@@ -497,6 +514,13 @@
             {#each draft.aiTags as tag (tag)}
               <span class="tag ai-tag">
                 {tag}
+                <button
+                  type="button"
+                  class="tag-convert"
+                  aria-label="将 AI 标签 {tag} 转为手动标签"
+                  title="转为手动标签"
+                  onclick={() => onConvertAiTag(tag)}
+                >→手动</button>
                 <button
                   type="button"
                   class="tag-remove"
@@ -760,6 +784,20 @@
     font-size: inherit;
     padding: 0;
     line-height: 1;
+  }
+  .tag-convert {
+    background: none;
+    border: none;
+    color: inherit;
+    opacity: 0.75;
+    cursor: pointer;
+    font-size: inherit;
+    padding: 0;
+    line-height: 1;
+  }
+  .tag-convert:hover {
+    opacity: 1;
+    text-decoration: underline;
   }
 
   .actions-row {

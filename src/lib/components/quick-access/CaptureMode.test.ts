@@ -480,14 +480,42 @@ describe('CaptureMode', () => {
     const firstRequestId = mockVaultApi.createFromCapture.mock.calls[0]![1]
     expect(firstRequestId).toBeTruthy()
 
-    // Second save: succeeds.
+    // Second save attempt: still failing — requestId must NOT have rotated,
+    // so the retry hits the same storage-side idempotency key on
+    // vault_capture_requests.
+    await fireEvent.click(saveBtn)
+    await waitFor(() => expect(mockVaultApi.createFromCapture).toHaveBeenCalledTimes(2))
+    const retryRequestId = mockVaultApi.createFromCapture.mock.calls[1]![1]
+    expect(retryRequestId).toBe(firstRequestId)
+
+    // Third save: succeeds.
     shouldFail = false
     const saveBtn2 = screen.getByRole('button', { name: /保存到资料库/ })
     await fireEvent.click(saveBtn2)
-    await waitFor(() => expect(mockVaultApi.createFromCapture).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(mockVaultApi.createFromCapture).toHaveBeenCalledTimes(3))
 
-    const secondRequestId = mockVaultApi.createFromCapture.mock.calls[1]![1]
-    expect(secondRequestId).not.toBe(firstRequestId)
+    // Success path rotates requestId internally; the rotation happens AFTER
+    // the createFromCapture call resolves. The third call's argument was
+    // still the pre-success id. To verify rotation we trigger a NEW save
+    // and inspect what id it passes.
+    await waitFor(() =>
+      expect(notify).toHaveBeenCalledWith('已保存到资料库', 'success'),
+    )
+    // After success the draft is cleared and raw textarea reset, so type a
+    // new payload and parse again before saving.
+    mockVaultApi.parseCaptureLocal.mockResolvedValue(baseDraft({ title: '第二条' }))
+    await typeRawText('bar')
+    await vi.advanceTimersByTimeAsync(LOCAL_PARSE_DELAY_MS)
+    await waitFor(() =>
+      expect(mockVaultApi.parseCaptureLocal).toHaveBeenCalledWith('bar'),
+    )
+
+    const saveBtn3 = screen.getByRole('button', { name: /保存到资料库/ })
+    await fireEvent.click(saveBtn3)
+    await waitFor(() => expect(mockVaultApi.createFromCapture).toHaveBeenCalledTimes(4))
+
+    const afterSuccessRequestId = mockVaultApi.createFromCapture.mock.calls[3]![1]
+    expect(afterSuccessRequestId).not.toBe(firstRequestId)
 
     // On success: notify called, raw + draft cleared.
     await waitFor(() =>
@@ -497,5 +525,58 @@ describe('CaptureMode', () => {
     const taAfter = screen.getByPlaceholderText('粘贴或输入要保存的内容') as HTMLTextAreaElement
     expect(taAfter.value).toBe('')
     expect(screen.queryByDisplayValue('保留草稿')).not.toBeInTheDocument()
+    expect(screen.queryByDisplayValue('第二条')).not.toBeInTheDocument()
+  })
+
+  it('AI tag → manual conversion removes from aiTags and adds to manualTags', async () => {
+    configureAISetup(CONFIGURED, AI_SETTINGS_OFF)
+    mockVaultApi.parseCaptureLocal.mockResolvedValue(
+      baseDraft({ title: 'X', aiTags: ['work', 'meeting'], manualTags: [] }),
+    )
+
+    render(CaptureMode, {
+      notify: vi.fn(),
+      onSaved: vi.fn(),
+      onOpenSettings: vi.fn(),
+    })
+    await vi.advanceTimersByTimeAsync(0)
+    await waitFor(() => expect(mockVaultApi.getLlmConfig).toHaveBeenCalled())
+
+    await typeRawText('foo')
+    await vi.advanceTimersByTimeAsync(LOCAL_PARSE_DELAY_MS)
+    await waitFor(() => expect(mockVaultApi.parseCaptureLocal).toHaveBeenCalled())
+
+    // Wait for the AI tag chip to render.
+    const convertBtn = await screen.findByRole('button', {
+      name: '将 AI 标签 work 转为手动标签',
+    })
+    expect(screen.getByText('work')).toBeInTheDocument()
+    expect(screen.getByText('meeting')).toBeInTheDocument()
+
+    // Convert "work" to manual.
+    await fireEvent.click(convertBtn)
+
+    // "work" disappears from the AI tags section and appears in manual tags.
+    await waitFor(() => {
+      const manualInput = screen.getByPlaceholderText('逗号分隔') as HTMLInputElement
+      expect(manualInput.value).toContain('work')
+    })
+    // AI tag chip for "work" is gone (only "meeting" remains in AI section).
+    expect(
+      screen.queryByRole('button', { name: '将 AI 标签 work 转为手动标签' }),
+    ).not.toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: '将 AI 标签 meeting 转为手动标签' }),
+    ).toBeInTheDocument()
+
+    // Save — manual tags must include "work" and aiTags must not.
+    mockVaultApi.createFromCapture.mockResolvedValue(detail('saved-2'))
+    const saveBtn = screen.getByRole('button', { name: /保存到资料库/ })
+    await fireEvent.click(saveBtn)
+    await waitFor(() => expect(mockVaultApi.createFromCapture).toHaveBeenCalledTimes(1))
+    const savedDraft = mockVaultApi.createFromCapture.mock.calls[0]![0] as CaptureDraft
+    expect(savedDraft.manualTags).toContain('work')
+    expect(savedDraft.aiTags).not.toContain('work')
+    expect(savedDraft.aiTags).toContain('meeting')
   })
 })
