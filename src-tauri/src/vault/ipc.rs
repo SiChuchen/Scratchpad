@@ -11,7 +11,10 @@ use crate::vault::llm::openai_compat::OpenAiCompatAdapter;
 use crate::vault::llm::presets::{find_preset, ProviderPreset, PRESETS};
 use crate::vault::llm::prompt::{search_prompt, tag_prompt};
 use crate::vault::llm::{LlmAdapter, LlmError, LlmRequest};
-use crate::vault::models::{EntryKind, VaultEntry, VaultEntryDetail, VaultEntryInput, VaultSearchHit};
+use crate::vault::models::{
+    EntryKind, SearchSource, VaultEntry, VaultEntryDetail, VaultEntryInput, VaultEntrySummary,
+    VaultSearchHit,
+};
 use crate::vault::storage as vstore;
 
 #[derive(Default)]
@@ -79,7 +82,9 @@ async fn suggest_tags_for_entry(entry_id: String, app: AppHandle) -> Result<Vec<
         let app_state = app.state::<crate::AppState>();
         let conn = app_state.db.lock().map_err(|_| ())?;
         let detail = vstore::get_entry_detail(&conn, &entry_id).map_err(|_| ())?;
-        (detail.entry, detail.fields, detail.tags)
+        // desensitize_entry 仍需要 Vec<String>；这里取 tag 的显示文本
+        let tag_strings: Vec<String> = detail.tags.iter().map(|t| t.tag.clone()).collect();
+        (detail.entry, detail.fields, tag_strings)
     };
 
     // 2) 取 LLM 配置（lock → clone → drop）
@@ -228,10 +233,16 @@ pub async fn ipc_vault_search(
     let mut hits = Vec::with_capacity(fts_hits.len());
     for (id, score) in fts_hits {
         if let Ok(Some(entry)) = vstore::get_entry_by_id(&conn, &id) {
+            let tags = vstore::list_tags_with_source(&conn, &id).unwrap_or_default();
+            let preview = entry.notes.clone();
             hits.push(VaultSearchHit {
-                entry,
+                summary: VaultEntrySummary {
+                    entry,
+                    tags,
+                    preview,
+                },
                 score,
-                source: "fts5".into(),
+                sources: vec![SearchSource::Local],
             });
         }
     }
@@ -317,10 +328,16 @@ pub async fn ipc_vault_llm_search(
     let mut hits = Vec::new();
     for id in parsed.matches.into_iter().take(limit) {
         if let Ok(Some(entry)) = vstore::get_entry_by_id(&conn, &id) {
+            let tags = vstore::list_tags_with_source(&conn, &id).unwrap_or_default();
+            let preview = entry.notes.clone();
             hits.push(VaultSearchHit {
-                entry,
+                summary: VaultEntrySummary {
+                    entry,
+                    tags,
+                    preview,
+                },
                 score: 0.0,
-                source: "llm".into(),
+                sources: vec![SearchSource::AiExpanded],
             });
         }
     }

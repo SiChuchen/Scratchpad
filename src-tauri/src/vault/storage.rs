@@ -5,8 +5,8 @@ use rusqlite::{params, Connection, Row};
 
 use crate::storage::error::{StorageError, StorageResult};
 use crate::vault::models::{
-    EntryKind, FieldInput, VaultEntry, VaultEntryDetail, VaultEntryInput, VaultField,
-    is_default_sensitive_key,
+    AiMetadataStatus, EntryKind, FieldInput, TagSource, VaultAiMetadata, VaultEntry,
+    VaultEntryDetail, VaultEntryInput, VaultField, VaultTag, is_default_sensitive_key,
 };
 
 const VAULT_SCHEMA_SQL: &str = r#"
@@ -50,6 +50,8 @@ CREATE VIRTUAL TABLE IF NOT EXISTS vault_fts USING fts5(
 
 pub fn ensure_vault_schema(conn: &mut Connection) -> StorageResult<()> {
     conn.execute_batch(VAULT_SCHEMA_SQL)?;
+    // v1 表已就绪后，运行版本化迁移（idempotent；已迁移则 no-op）
+    crate::vault::migrations::migrate_vault_schema(conn)?;
     Ok(())
 }
 
@@ -207,18 +209,32 @@ pub fn get_entry_detail(conn: &Connection, id: &str) -> StorageResult<VaultEntry
     let entry = get_entry_by_id(conn, id)?
         .ok_or_else(|| StorageError::Other(format!("entry not found: {id}")))?;
     let fields = list_fields(conn, id)?;
-    let tags = list_tags(conn, id)?;
-    Ok(VaultEntryDetail { entry, fields, tags })
+    let tags = list_tags_with_source(conn, id)?;
+    let ai_metadata = get_ai_metadata(conn, id)?;
+    Ok(VaultEntryDetail {
+        entry,
+        fields,
+        tags,
+        ai_metadata,
+    })
 }
 
 pub fn set_tags(conn: &mut Connection, entry_id: &str, tags: &[String]) -> StorageResult<()> {
     let tx = conn.transaction()?;
-    tx.execute("DELETE FROM vault_tags WHERE entry_id=?1", params![entry_id])?;
+    tx.execute(
+        "DELETE FROM vault_tags WHERE entry_id=?1 AND source='manual'",
+        params![entry_id],
+    )?;
     for t in tags {
-        tx.execute(
-            "INSERT OR IGNORE INTO vault_tags(entry_id, tag) VALUES (?1, ?2)",
-            params![entry_id, t],
-        )?;
+        // 用户手动设置的标签走 manual 来源；归一化失败（空/纯空白）的标签跳过
+        if let Some(norm) = crate::vault::migrations::normalize_tag(t) {
+            let display = t.trim().to_string();
+            tx.execute(
+                "INSERT OR IGNORE INTO vault_tags(entry_id, tag, normalized_tag, source)
+                 VALUES (?1, ?2, ?3, 'manual')",
+                params![entry_id, display, norm],
+            )?;
+        }
     }
     tx.commit()?;
     fts5_upsert(conn, entry_id)?;
@@ -229,6 +245,59 @@ pub fn list_tags(conn: &Connection, entry_id: &str) -> StorageResult<Vec<String>
     let mut stmt = conn.prepare("SELECT tag FROM vault_tags WHERE entry_id=?1 ORDER BY tag")?;
     let rows = stmt.query_map(params![entry_id], |r| r.get::<_, String>(0))?;
     rows.collect::<rusqlite::Result<Vec<_>>>().map_err(StorageError::from)
+}
+
+/// 返回带来源信息的标签列表（供 VaultEntryDetail 等结构化场景使用）。
+pub fn list_tags_with_source(conn: &Connection, entry_id: &str) -> StorageResult<Vec<VaultTag>> {
+    let mut stmt = conn.prepare(
+        "SELECT tag, normalized_tag, source FROM vault_tags
+         WHERE entry_id=?1 ORDER BY tag",
+    )?;
+    let rows = stmt.query_map(params![entry_id], |r| {
+        let source_str: String = r.get(2)?;
+        let source = match source_str.as_str() {
+            "ai" => TagSource::Ai,
+            _ => TagSource::Manual,
+        };
+        Ok(VaultTag {
+            tag: r.get(0)?,
+            normalized_tag: r.get(1)?,
+            source,
+        })
+    })?;
+    rows.collect::<rusqlite::Result<Vec<_>>>().map_err(StorageError::from)
+}
+
+/// 读取一条条目的 AI 元数据；无记录时返回 None。
+pub fn get_ai_metadata(conn: &Connection, entry_id: &str) -> StorageResult<Option<VaultAiMetadata>> {
+    let mut stmt = conn.prepare(
+        "SELECT entry_id, summary, search_aliases_json, content_hash,
+                provider_id, model, generated_at, status
+         FROM vault_ai_metadata WHERE entry_id=?1",
+    )?;
+    let mut rows = stmt.query(params![entry_id])?;
+    let Some(r) = rows.next()? else {
+        return Ok(None);
+    };
+    let aliases_json: String = r.get(2)?;
+    let aliases: Vec<String> =
+        serde_json::from_str(&aliases_json).unwrap_or_default();
+    let status_str: String = r.get(7)?;
+    let status = match status_str.as_str() {
+        "pending" => AiMetadataStatus::Pending,
+        "error" => AiMetadataStatus::Error,
+        _ => AiMetadataStatus::Ready,
+    };
+    Ok(Some(VaultAiMetadata {
+        entry_id: r.get(0)?,
+        summary: r.get(1)?,
+        search_aliases: aliases,
+        content_hash: r.get(3)?,
+        provider_id: r.get(4)?,
+        model: r.get(5)?,
+        generated_at: r.get(6)?,
+        status,
+    }))
 }
 
 fn build_searchable(conn: &Connection, entry_id: &str) -> StorageResult<String> {
@@ -368,6 +437,7 @@ mod tests {
                 FieldInput { key: "password".into(), value: "s3cr3t".into(), is_sensitive: false },
             ],
             notes: Some("prod".into()),
+            manual_tags: Vec::new(),
         };
         let entry = create_entry(&mut conn, &input).unwrap();
         assert_eq!(entry.title, "Prod DB");
@@ -402,6 +472,7 @@ mod tests {
                 is_sensitive: false,
             }],
             notes: None,
+            manual_tags: Vec::new(),
         })
         .unwrap()
     }
@@ -426,6 +497,7 @@ mod tests {
                     is_sensitive: false,
                 }],
                 notes: Some("n".into()),
+                manual_tags: Vec::new(),
             },
         )
         .unwrap();
@@ -471,6 +543,7 @@ mod tests {
                 title: "BM".into(),
                 fields: vec![],
                 notes: None,
+                manual_tags: Vec::new(),
             },
         )
         .unwrap();
@@ -481,6 +554,7 @@ mod tests {
                 title: "Cred".into(),
                 fields: vec![],
                 notes: None,
+                manual_tags: Vec::new(),
             },
         )
         .unwrap();
@@ -517,6 +591,7 @@ mod tests {
                     },
                 ],
                 notes: Some("mysql prod".into()),
+                manual_tags: Vec::new(),
             },
         )
         .unwrap();
