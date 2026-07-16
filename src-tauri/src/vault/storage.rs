@@ -795,7 +795,9 @@ pub fn create_from_capture(
         }
     }
 
-    // 写入 ready metadata（含 AI summary + aliases + provenance）
+    // 写入 metadata（status 取决于 draft 是否携带合法 AI provenance + 至少一个 AI 内容字段）。
+    // - 若有 provenance AND 有 summary/aliases/tags → 直接 ready，不再调 LLM。
+    // - 否则 → pending，留待 backfill worker 拾起。
     let content_hash = compute_content_hash_for_capture(draft);
     let aliases_json = serde_json::to_string(&draft.search_aliases)
         .map_err(|e| StorageError::Other(e.to_string()))?;
@@ -803,12 +805,29 @@ pub fn create_from_capture(
         Some(p) => (Some(p.provider_id.clone()), Some(p.model.clone()), Some(p.generated_at.clone())),
         None => (None, None, None),
     };
+    let has_ai_content = draft.ai_summary.as_ref().is_some_and(|s| !s.trim().is_empty())
+        || !draft.search_aliases.is_empty()
+        || !draft.ai_tags.is_empty();
+    let status_value = if draft.ai_provenance.is_some() && has_ai_content {
+        "ready"
+    } else {
+        "pending"
+    };
     tx.execute(
         "INSERT INTO vault_ai_metadata
             (entry_id, summary, search_aliases_json, content_hash,
              provider_id, model, generated_at, status)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'ready')",
-        params![id, draft.ai_summary, aliases_json, content_hash, provider_id, model, generated_at],
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        params![
+            id,
+            draft.ai_summary,
+            aliases_json,
+            content_hash,
+            provider_id,
+            model,
+            generated_at,
+            status_value
+        ],
     )?;
 
     // 记录 request_id 用于幂等
@@ -1368,6 +1387,82 @@ mod tests {
             )
             .unwrap();
         assert_eq!(n_md, 0, "no metadata row should remain after failed capture");
+    }
+
+    #[test]
+    fn capture_with_provenance_and_content_saved_as_ready() {
+        // spec: capture 若已有合法 AI metadata 则直接保存 ready，不再调 LLM。
+        let mut conn = open_test_db();
+        let draft = make_capture_draft("Ready Capture");
+        // make_capture_draft 默认携带 provenance + summary + alias + ai-tag
+        // → 必须保存为 ready。
+        let saved = create_from_capture(&mut conn, &draft, "req-ready-1").unwrap();
+        let status: String = conn
+            .query_row(
+                "SELECT status FROM vault_ai_metadata WHERE entry_id=?1",
+                params![saved.entry.id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(status, "ready", "draft with provenance + content must be ready");
+        // provider_id 必须落盘
+        let provider: Option<String> = conn
+            .query_row(
+                "SELECT provider_id FROM vault_ai_metadata WHERE entry_id=?1",
+                params![saved.entry.id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(provider.as_deref(), Some("openai"));
+    }
+
+    #[test]
+    fn capture_without_provenance_saved_as_pending() {
+        // 没有 provenance → 必须 pending，等待 backfill worker 拾起。
+        let mut conn = open_test_db();
+        let mut draft = make_capture_draft("Pending Capture");
+        draft.ai_provenance = None;
+        // 即便有 summary 也不行：缺 provenance 必须走 pending
+        let saved = create_from_capture(&mut conn, &draft, "req-pending-1").unwrap();
+        let status: String = conn
+            .query_row(
+                "SELECT status FROM vault_ai_metadata WHERE entry_id=?1",
+                params![saved.entry.id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(status, "pending", "draft without provenance must be pending");
+        // provider_id 必须为 NULL
+        let provider: Option<String> = conn
+            .query_row(
+                "SELECT provider_id FROM vault_ai_metadata WHERE entry_id=?1",
+                params![saved.entry.id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(provider.is_none());
+    }
+
+    #[test]
+    fn capture_with_provenance_but_empty_content_saved_as_pending() {
+        // 有 provenance 但没有 summary/aliases/ai-tags → 仍需 backfill 补全
+        let mut conn = open_test_db();
+        let mut draft = make_capture_draft("Half Capture");
+        draft.ai_summary = None;
+        draft.search_aliases.clear();
+        draft.ai_tags.clear();
+        let saved = create_from_capture(&mut conn, &draft, "req-half-1").unwrap();
+        let status: String = conn
+            .query_row(
+                "SELECT status FROM vault_ai_metadata WHERE entry_id=?1",
+                params![saved.entry.id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            status, "pending",
+            "draft with provenance but no AI content must be pending"
+        );
     }
 
     #[test]

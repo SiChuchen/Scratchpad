@@ -47,6 +47,8 @@ pub struct AiMetadataUpdatedEvent {
     pub entry_id: String,
     pub status: String,
     pub tags: Vec<String>,
+    /// 当前最新 metadata（写回 DB 的快照）。error 路径下为 None。
+    pub metadata: Option<VaultAiMetadata>,
 }
 
 /// 判断"当前是否应当启动 backfill worker"。
@@ -208,7 +210,14 @@ async fn process_one_entry(app: &AppHandle, entry_id: &str) {
         Err(e) => {
             vault.record_failure(&e);
             // 失败：把 metadata 置为 error 并发事件
-            write_status_and_emit(app, entry_id, AiMetadataStatus::Error, Vec::new()).await;
+            write_status_and_emit(
+                app,
+                entry_id,
+                AiMetadataStatus::Error,
+                Vec::new(),
+                None,
+            )
+            .await;
             return;
         }
     };
@@ -218,7 +227,14 @@ async fn process_one_entry(app: &AppHandle, entry_id: &str) {
         Ok(s) => s,
         Err(e) => {
             vault.record_failure(&e);
-            write_status_and_emit(app, entry_id, AiMetadataStatus::Error, Vec::new()).await;
+            write_status_and_emit(
+                app,
+                entry_id,
+                AiMetadataStatus::Error,
+                Vec::new(),
+                None,
+            )
+            .await;
             return;
         }
     };
@@ -227,27 +243,32 @@ async fn process_one_entry(app: &AppHandle, entry_id: &str) {
     let content_hash = vstore::compute_entry_content_hash(&detail.entry, &detail.fields);
 
     // 7) 写入 ready metadata + replace ai tags
+    let metadata = VaultAiMetadata {
+        entry_id: entry_id.to_string(),
+        summary: suggestion.ai_summary.clone(),
+        search_aliases: suggestion.search_aliases.clone(),
+        content_hash,
+        provider_id: Some(config.provider_id.clone()),
+        model: Some(config.model.clone()),
+        generated_at: Some(chrono::Utc::now().to_rfc3339()),
+        status: AiMetadataStatus::Ready,
+    };
     {
         let app_state = app.state::<crate::AppState>();
         let Ok(mut conn) = app_state.db.lock() else { return };
         let _ = vstore::replace_ai_tags(&mut conn, entry_id, &suggestion.ai_tags);
-        let _ = vstore::set_ai_metadata(
-            &mut conn,
-            &VaultAiMetadata {
-                entry_id: entry_id.to_string(),
-                summary: suggestion.ai_summary.clone(),
-                search_aliases: suggestion.search_aliases.clone(),
-                content_hash,
-                provider_id: Some(config.provider_id.clone()),
-                model: Some(config.model.clone()),
-                generated_at: Some(chrono::Utc::now().to_rfc3339()),
-                status: AiMetadataStatus::Ready,
-            },
-        );
+        let _ = vstore::set_ai_metadata(&mut conn, &metadata);
     }
 
     // 8) 发事件
-    write_status_and_emit(app, entry_id, AiMetadataStatus::Ready, suggestion.ai_tags).await;
+    write_status_and_emit(
+        app,
+        entry_id,
+        AiMetadataStatus::Ready,
+        suggestion.ai_tags,
+        Some(metadata),
+    )
+    .await;
 }
 
 /// 把 metadata 状态写回 DB（用于 error 路径），并 emit 两个事件。
@@ -256,6 +277,7 @@ async fn write_status_and_emit(
     entry_id: &str,
     status: AiMetadataStatus,
     tags: Vec<String>,
+    metadata: Option<VaultAiMetadata>,
 ) {
     if status == AiMetadataStatus::Error {
         // 把 metadata 标 error
@@ -271,6 +293,7 @@ async fn write_status_and_emit(
         entry_id: entry_id.to_string(),
         status: status.as_str().to_string(),
         tags: tags.clone(),
+        metadata: metadata.clone(),
     };
     let _ = app.emit("vault-ai-metadata-updated", payload);
 
@@ -440,5 +463,52 @@ mod tests {
         assert_eq!(s.ready, 1);
         assert_eq!(s.pending, 1);
         assert_eq!(s.error, 1);
+    }
+
+    #[test]
+    fn ai_metadata_updated_event_serializes_camel_case_with_metadata() {
+        // spec 要求：payload 是 { entryId, status, tags, metadata }
+        use crate::vault::models::VaultAiMetadata;
+        let metadata = VaultAiMetadata {
+            entry_id: "v1".into(),
+            summary: Some("hello".into()),
+            search_aliases: vec!["al".into()],
+            content_hash: "abc".into(),
+            provider_id: Some("deepseek".into()),
+            model: Some("deepseek-chat".into()),
+            generated_at: Some("2026-07-17T00:00:00Z".into()),
+            status: AiMetadataStatus::Ready,
+        };
+        let evt = AiMetadataUpdatedEvent {
+            entry_id: "v1".into(),
+            status: "ready".into(),
+            tags: vec!["t1".into()],
+            metadata: Some(metadata.clone()),
+        };
+        let json = serde_json::to_value(&evt).unwrap();
+        // camelCase
+        assert!(json.get("entryId").is_some(), "entryId must be camelCase");
+        assert!(json.get("metadata").is_some(), "metadata field required");
+        assert_eq!(json["status"], "ready");
+        assert_eq!(json["tags"][0], "t1");
+        assert_eq!(json["metadata"]["summary"], "hello");
+        assert_eq!(json["metadata"]["entryId"], "v1");
+        assert!(json.get("entry_id").is_none(), "snake_case must not leak");
+        assert!(json.get("search_aliases").is_none());
+    }
+
+    #[test]
+    fn ai_metadata_updated_event_serializes_null_metadata_for_error() {
+        // error 路径 metadata=None → 应序列化为 null
+        let evt = AiMetadataUpdatedEvent {
+            entry_id: "v2".into(),
+            status: "error".into(),
+            tags: Vec::new(),
+            metadata: None,
+        };
+        let json = serde_json::to_value(&evt).unwrap();
+        assert_eq!(json["entryId"], "v2");
+        assert_eq!(json["status"], "error");
+        assert!(json["metadata"].is_null(), "metadata should be null on error");
     }
 }
