@@ -262,7 +262,18 @@ pub struct BackfillStatus {
 
 /// 默认敏感字段名（创建时若 key 命中且未显式指定 is_sensitive，自动标记）
 pub const DEFAULT_SENSITIVE_KEYS: &[&str] = &[
-    "password", "passwd", "secret", "token", "private_key", "privatekey", "api_key", "apikey",
+    "password",
+    "passwd",
+    "pwd",
+    "secret",
+    "token",
+    "private_key",
+    "privatekey",
+    "api_key",
+    "apikey",
+    "api-key",
+    "access_key",
+    "accesskey",
 ];
 
 pub fn is_default_sensitive_key(key: &str) -> bool {
@@ -289,5 +300,19 @@ mod tests {
         assert!(is_default_sensitive_key("privateKey"));
         assert!(!is_default_sensitive_key("username"));
         assert!(!is_default_sensitive_key("url"));
+    }
+
+    #[test]
+    fn default_sensitive_key_includes_restored_variants() {
+        // Task 6 的 M7 统一之后这些 key 一度从默认敏感列表里丢失，
+        // 这里回归保护，确保 pwd / api-key / access_key / accesskey 始终敏感。
+        assert!(is_default_sensitive_key("pwd"));
+        assert!(is_default_sensitive_key("PWD"));
+        assert!(is_default_sensitive_key("api-key"));
+        assert!(is_default_sensitive_key("API-KEY"));
+        assert!(is_default_sensitive_key("access_key"));
+        assert!(is_default_sensitive_key("ACCESS_KEY"));
+        assert!(is_default_sensitive_key("accesskey"));
+        assert!(is_default_sensitive_key("AccessKey"));
     }
 }
