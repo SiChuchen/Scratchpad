@@ -691,7 +691,7 @@
     onCopyPath={copyPath}
   />
 {:else if currentView === 'vault'}
-  <VaultView />
+  <VaultView notify={showToast} />
 {:else if currentView === 'settings' && preferences}
   <SettingsView
     preferences={preferences}
