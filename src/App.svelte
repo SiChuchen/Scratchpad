@@ -670,6 +670,7 @@
     onRename={renameEntry}
     onCopy={copyContent}
     onCopyPath={copyPath}
+    onError={(m) => showToast(m, 'error')}
   />
 {:else if currentView === 'categories'}
   <CategoriesView
@@ -681,6 +682,7 @@
     onRename={renameEntry}
     onCopy={copyContent}
     onCopyPath={copyPath}
+    onError={(m) => showToast(m, 'error')}
   />
 {:else if currentView === 'note'}
   <NoteView
@@ -694,6 +696,7 @@
     onRename={renameEntry}
     onCopy={copyContent}
     onCopyPath={copyPath}
+    onError={(m) => showToast(m, 'error')}
   />
 {:else if currentView === 'vault'}
   <VaultView notify={showToast} />

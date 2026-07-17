@@ -8,6 +8,7 @@
   // a11y：每行使用 role="option" + aria-selected；外层 listbox 由父组件提供。
 
   import type { VaultSearchHit } from '$lib/types/vault'
+  import { messages } from '$lib/i18n'
 
   interface Props {
     hits: VaultSearchHit[]
@@ -18,7 +19,7 @@
   let { hits, selectedId, onSelect }: Props = $props()
 
   const kindLabel = (kind: string) =>
-    kind === 'credential' ? '凭据' : kind === 'bookmark' ? '书签' : '笔记'
+    kind === 'credential' ? messages.library.credential : kind === 'bookmark' ? messages.library.bookmark : messages.library.note
 
   const sourceLabel = (sources: VaultSearchHit['sources']) =>
     sources.includes('aiExpanded') ? 'AI' : 'Local'
@@ -37,7 +38,7 @@
   })
 </script>
 
-<div class="search-result-list" bind:this={listEl} role="listbox" aria-label="搜索结果">
+<div class="search-result-list" bind:this={listEl} role="listbox" aria-label={messages.quickAccess.search}>
   {#each hits as hit (hit.summary.entry.id)}
     <!-- svelte-ignore a11y_click_events_have_key_events -->
     <!-- svelte-ignore a11y_interactive_supports_focus -->

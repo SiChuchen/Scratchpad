@@ -548,7 +548,7 @@ describe('CaptureMode', () => {
 
     // Wait for the AI tag chip to render.
     const convertBtn = await screen.findByRole('button', {
-      name: '将 AI 标签 work 转为手动标签',
+      name: /AI 标签 work/,
     })
     expect(screen.getByText('work')).toBeInTheDocument()
     expect(screen.getByText('meeting')).toBeInTheDocument()
@@ -558,15 +558,15 @@ describe('CaptureMode', () => {
 
     // "work" disappears from the AI tags section and appears in manual tags.
     await waitFor(() => {
-      const manualInput = screen.getByPlaceholderText('逗号分隔') as HTMLInputElement
+      const manualInput = screen.getByPlaceholderText('手动标签') as HTMLInputElement
       expect(manualInput.value).toContain('work')
     })
     // AI tag chip for "work" is gone (only "meeting" remains in AI section).
     expect(
-      screen.queryByRole('button', { name: '将 AI 标签 work 转为手动标签' }),
+      screen.queryByRole('button', { name: /AI 标签 work/ }),
     ).not.toBeInTheDocument()
     expect(
-      screen.getByRole('button', { name: '将 AI 标签 meeting 转为手动标签' }),
+      screen.getByRole('button', { name: /AI 标签 meeting/ }),
     ).toBeInTheDocument()
 
     // Save — manual tags must include "work" and aiTags must not.

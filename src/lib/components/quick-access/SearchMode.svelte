@@ -18,6 +18,7 @@
 
   import { onMount, onDestroy } from 'svelte'
   import { vaultApi } from '$lib/api/vault'
+  import { messages } from '$lib/i18n'
   import {
     HybridSearchController,
     type HybridSearchApi,
@@ -232,41 +233,42 @@
     try {
       // Task 18: 敏感值由后端按设置自动清除。
       await vaultApi.copyText(payload.value, payload.sensitive)
-      notify(`已复制：${payload.label}`, 'success')
+      notify(messages.library.copiedLabel.replace('{label}', payload.label), 'success')
     } catch {
-      notify(`复制失败：${payload.label}`, 'error')
+      notify(messages.toast.copyFailed, 'error')
     }
   }
 
   // ---- Derived view -------------------------------------------------------
 
   const statusText = $derived.by(() => {
-    if (phase === 'planning') return 'AI 理解中…'
+    if (phase === 'planning') return messages.quickAccess.aiEnhancing
     if (phase === 'expanded' && understoodTerms.length > 0) {
-      return `AI 已理解：${understoodTerms.join('、')}`
+      return messages.library.aiUnderstanding.replace('{terms}', understoodTerms.join('、'))
     }
-    if (phase === 'error') return errorMessage ?? '搜索失败'
+    if (phase === 'error') return errorMessage ?? messages.toast.operationFailed
     return ''
   })
 </script>
 
 <section class="mode mode-search">
   <header class="mode-header">
-    <h2>搜索</h2>
-    <span class="hint">Ctrl+Tab → 录入</span>
+    <h2>{messages.quickAccess.search}</h2>
+    <span class="hint">Ctrl+Tab → {messages.quickAccess.record}</span>
   </header>
 
   <input
     class="search-input"
     type="search"
-    placeholder="搜索资料库…"
+    placeholder={messages.quickAccess.searchPlaceholder}
     value={query}
     oninput={onQueryInput}
     onkeydown={onKeydown}
+    aria-label={messages.quickAccess.search}
   />
 
   {#if statusText}
-    <div class="status" class:error={phase === 'error'}>{statusText}</div>
+    <div class="status" class:error={phase === 'error'} aria-live="polite">{statusText}</div>
   {/if}
 
   <div class="dual-pane">
@@ -274,9 +276,9 @@
       {#if hits.length === 0}
         <div class="empty-list">
           {#if query}
-            <p class="muted">没有匹配的资料</p>
+            <p class="muted">{messages.quickAccess.noResults}</p>
           {:else}
-            <p class="muted">输入关键词以开始搜索</p>
+            <p class="muted">{messages.quickAccess.searchPlaceholder}</p>
           {/if}
         </div>
       {:else}
@@ -286,9 +288,9 @@
 
     <div class="right-pane">
       {#if detailLoading}
-        <div class="detail-state">加载中…</div>
+        <div class="detail-state" aria-live="polite">{messages.settings.checking}</div>
       {:else if detailError}
-        <div class="detail-state error">加载失败：{detailError}</div>
+        <div class="detail-state error" aria-live="polite">{messages.toast.loadFailed}: {detailError}</div>
       {:else if selectedDetail}
         <VaultEntryDetail
           detail={selectedDetail}
@@ -296,7 +298,7 @@
           onCopy={handleCopy}
         />
       {:else}
-        <div class="detail-state">选择一条资料查看详情</div>
+        <div class="detail-state">{messages.quickAccess.noSelection}</div>
       {/if}
     </div>
   </div>

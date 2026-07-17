@@ -19,7 +19,7 @@
   import { invoke } from '@tauri-apps/api/core'
 
   import { computeThemeTokens } from '$lib/themes/engine'
-  import { loadLocale, detectLanguage } from '$lib/i18n'
+  import { loadLocale, detectLanguage, messages } from '$lib/i18n'
   import type { DockPreferences } from '$lib/types/dock'
   import type { QuickAccessState } from '$lib/types/quick-access'
   import { handleKeydown } from '$lib/state/quick-access'
@@ -72,7 +72,8 @@
     // Task 17+ will wire this to open the main window's vault settings panel
     // via a Tauri command. For now we emit a no-op event so behavior remains
     // local; the quick-access window itself does not host the settings UI.
-    notify('请到主窗口资料库设置中配置 AI', 'success')
+    const isZh = messages.nav.home === '收纳'
+    notify(isZh ? '请到主窗口资料库设置中配置 AI' : 'Configure AI in the main window settings', 'success')
   }
 
   onMount(async () => {
@@ -196,7 +197,7 @@
 
 <main class="quick-shell">
   {#if noticeText}
-    <div class="notice" class:error={noticeKind === 'error'}>{noticeText}</div>
+    <div class="notice" class:error={noticeKind === 'error'} role="status" aria-live="polite">{noticeText}</div>
   {/if}
 
   {#if mode === 'record'}

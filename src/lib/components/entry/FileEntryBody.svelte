@@ -6,9 +6,10 @@
   interface Props {
     entry: DockEntry
     onCopyPath: (path: string) => void
+    onError?: (message: string) => void
   }
 
-  let { entry, onCopyPath }: Props = $props()
+  let { entry, onCopyPath, onError }: Props = $props()
 
   let sizeLabel = $derived.by(() => {
     const bytes = entry.sizeBytes
@@ -31,7 +32,7 @@
       setTimeout(() => { copyStatus = 'idle' }, 1500)
     } catch (e) {
       console.error('[FileEntryBody] copyFile IPC error:', e)
-      alert(messages.toast.copyFileFailed + ': ' + String(e))
+      onError?.(`${messages.toast.copyFileFailed}: ${String(e)}`)
       copyStatus = 'idle'
     }
   }

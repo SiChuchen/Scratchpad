@@ -51,8 +51,7 @@
     class="nav-btn"
     class:active={currentView === 'vault'}
     onclick={() => onNavigate('vault')}
-  >资料库</button>
-  <!-- TODO(Task 19): migrate to {messages.nav.library} once the i18n key exists. -->
+  >{messages.nav.library}</button>
   <div class="top-bar-spacer"></div>
   <button
     class="nav-btn pin-btn"

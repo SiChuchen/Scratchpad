@@ -15,6 +15,7 @@
   // 用户可见字符串。
 
   import { onMount } from 'svelte'
+  import { messages } from '$lib/i18n'
   import type { HybridSearchController, HybridSearchState } from '$lib/state/vault-search'
 
   interface Props {
@@ -135,15 +136,15 @@
     if (!enabled) return ''
     if (!s) return ''
     if (s.phase === 'expanded' && s.understoodTerms.length > 0) {
-      return `AI 已理解：${s.understoodTerms.join('、')}`
+      return messages.library.aiUnderstanding.replace('{terms}', s.understoodTerms.join('、'))
     }
     if (s.phase === 'planning') {
-      return 'AI 正在理解查询…'
+      return messages.quickAccess.aiEnhancing
     }
     if (s.phase === 'error') {
-      return `AI 搜索失败，正在使用本地搜索`
+      return messages.quickAccess.aiFallback
     }
-    return '正在使用本地搜索'
+    return messages.library.localOnly
   }
 </script>
 
@@ -155,8 +156,8 @@
   <input
     class="search-input"
     type="search"
-    placeholder="搜索标题、主机、用户名、标签"
-    aria-label="搜索资料库"
+    placeholder={messages.library.searchPlaceholder}
+    aria-label={messages.library.title}
     bind:value={query}
     oninput={onInput}
     onkeydown={onKeydown}
@@ -166,8 +167,8 @@
       type="button"
       class="search-clear"
       onclick={clear}
-      title="清空"
-      aria-label="清空搜索"
+      title={messages.settings.clear}
+      aria-label={messages.settings.clear}
     >✕</button>
   {/if}
 </div>

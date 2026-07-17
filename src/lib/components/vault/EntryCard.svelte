@@ -13,6 +13,7 @@
     VaultEntryDetail as VaultEntryDetailType,
     VaultEntrySummary,
   } from '$lib/types/vault'
+  import { messages } from '$lib/i18n'
   import VaultEntryDetail from './VaultEntryDetail.svelte'
 
   interface Props {
@@ -50,10 +51,10 @@
 
   const kindLabel = $derived(
     summary.entry.kind === 'credential'
-      ? '凭据'
+      ? messages.library.credential
       : summary.entry.kind === 'bookmark'
-        ? '书签'
-        : '笔记',
+        ? messages.library.bookmark
+        : messages.library.note,
   )
 
   const tags = $derived(summary.tags.slice(0, 3))
@@ -127,8 +128,8 @@
         <button
           type="button"
           class="icon-btn"
-          aria-label="编辑 {summary.entry.title}"
-          title="编辑"
+          aria-label={`${messages.library.edit} ${summary.entry.title}`}
+          title={messages.library.edit}
           onclick={(e) => {
             e.stopPropagation()
             void onEdit(summary.entry.id)
@@ -144,8 +145,8 @@
         <button
           type="button"
           class="icon-btn danger"
-          aria-label="删除 {summary.entry.title}"
-          title="删除"
+          aria-label={`${messages.library.delete} ${summary.entry.title}`}
+          title={messages.library.delete}
           onclick={(e) => {
             e.stopPropagation()
             void onDelete(summary.entry.id)
@@ -182,9 +183,9 @@
   {#if expanded}
     <div class="detail-wrap">
       {#if loading}
-        <div class="loading">加载中…</div>
+        <div class="loading">{messages.settings.checking}</div>
       {:else if error}
-        <div class="error">加载失败：{error}</div>
+        <div class="error">{messages.toast.loadFailed}: {error}</div>
       {:else if detail}
         <VaultEntryDetail
           {detail}

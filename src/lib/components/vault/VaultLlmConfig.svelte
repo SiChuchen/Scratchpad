@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import { vaultApi } from '$lib/api/vault'
+  import { messages } from '$lib/i18n'
   import type { LlmTestResult, ProviderPreset, VaultAiSettings } from '$lib/types/vault'
 
   // 已保存的 LLM 配置概览（不含 API Key）
@@ -155,39 +156,63 @@
 
   const connectionOk = $derived(!!savedConfig?.hasApiKey)
   const clipboardClearOn = $derived(aiSettings.sensitiveClipboardClearSeconds !== null)
-  const apiKeyPlaceholder = $derived(savedConfig?.hasApiKey ? '已保存；留空保持不变' : 'sk-...')
+  const apiKeyPlaceholder = $derived(savedConfig?.hasApiKey ? messages.aiSettings.savedKeyPlaceholder : 'sk-...')
+
+  // Locale-aware labels for the small bits not covered by aiSettings keys.
+  const isZh = $derived(messages.nav.home === '收纳')
+  const connectedLabel = $derived(isZh ? '已连接' : 'Connected')
+  const unconfiguredLabel = $derived(isZh ? '未配置' : 'Not configured')
+  const verifyingLabel = $derived(isZh ? '验证中...' : 'Verifying...')
+  const deleteConfirmText = $derived(isZh ? '确认删除 LLM 配置？此操作不可撤销。' : 'Delete LLM configuration? This cannot be undone.')
+  const deleteConfirmActionLabel = $derived(isZh ? '确认删除' : 'Confirm delete')
 </script>
 
 <div class="llm-config">
-  <div class="section-label">AI 整理与搜索</div>
+  <div class="section-label">{messages.aiSettings.title}</div>
 
   <!-- 连接状态 -->
   <div class="row">
-    <span class="label">连接状态</span>
-    <span class="status" class:ok={connectionOk} class:fail={!connectionOk}>
-      {connectionOk ? '已连接' : '未配置'}
+    <span class="label">{messages.aiSettings.status}</span>
+    <span class="status" class:ok={connectionOk} class:fail={!connectionOk} aria-live="polite">
+      {connectionOk ? connectedLabel : unconfiguredLabel}
     </span>
   </div>
 
   <!-- 自动整理与标签 -->
   <div class="row">
-    <span class="label">自动整理与标签</span>
-    <div class="toggle" class:active={aiSettings.autoEnrich} onclick={toggleAutoEnrich} role="switch" aria-checked={aiSettings.autoEnrich} tabindex="0">
+    <span class="label">{messages.aiSettings.autoEnrich}</span>
+    <button
+      type="button"
+      class="toggle"
+      class:active={aiSettings.autoEnrich}
+      onclick={toggleAutoEnrich}
+      role="switch"
+      aria-checked={aiSettings.autoEnrich}
+      aria-label={messages.aiSettings.autoEnrich}
+    >
       <div class="toggle-knob"></div>
-    </div>
+    </button>
   </div>
 
   <!-- 自动混合检索 -->
   <div class="row">
-    <span class="label">自动混合检索</span>
-    <div class="toggle" class:active={aiSettings.autoHybridSearch} onclick={toggleAutoHybridSearch} role="switch" aria-checked={aiSettings.autoHybridSearch} tabindex="0">
+    <span class="label">{messages.aiSettings.autoSearch}</span>
+    <button
+      type="button"
+      class="toggle"
+      class:active={aiSettings.autoHybridSearch}
+      onclick={toggleAutoHybridSearch}
+      role="switch"
+      aria-checked={aiSettings.autoHybridSearch}
+      aria-label={messages.aiSettings.autoSearch}
+    >
       <div class="toggle-knob"></div>
-    </div>
+    </button>
   </div>
 
   <!-- 供应商 -->
   <label class="field">
-    <span class="label">供应商</span>
+    <span class="label">{messages.aiSettings.provider}</span>
     <select class="select" value={config.providerId} onchange={e => pickProvider(e.currentTarget.value)}>
       {#each presets as p}
         <option value={p.id}>{p.label}</option>
@@ -197,56 +222,56 @@
 
   <!-- API Key -->
   <label class="field">
-    <span class="label">API Key</span>
+    <span class="label">{messages.aiSettings.apiKey}</span>
     <input class="input" type="password" bind:value={config.apiKey} placeholder={apiKeyPlaceholder} autocomplete="off" />
   </label>
 
   <!-- 操作按钮 -->
   <div class="actions">
     <button class="btn-submit" onclick={saveAndVerify} disabled={testing}>
-      {testing ? '验证中...' : '保存并验证'}
+      {testing ? verifyingLabel : messages.aiSettings.saveAndVerify}
     </button>
     <button class="btn-secondary" onclick={retest} disabled={testing || !connectionOk}>
-      重新测试
+      {messages.aiSettings.retest}
     </button>
     <button class="btn-danger" onclick={requestDelete} disabled={!savedConfig}>
-      删除配置
+      {messages.aiSettings.deleteConfig}
     </button>
   </div>
 
   {#if deleteConfirmOpen}
-    <div class="delete-confirm">
-      <span class="confirm-text">确认删除 LLM 配置？此操作不可撤销。</span>
+    <div class="delete-confirm" role="alertdialog" aria-label={messages.aiSettings.deleteConfig}>
+      <span class="confirm-text">{deleteConfirmText}</span>
       <div class="confirm-actions">
-        <button class="btn-danger" onclick={confirmDelete}>确认删除</button>
-        <button class="btn-secondary" onclick={cancelDelete}>取消</button>
+        <button class="btn-danger" onclick={confirmDelete}>{deleteConfirmActionLabel}</button>
+        <button class="btn-secondary" onclick={cancelDelete}>{messages.home.cancel}</button>
       </div>
     </div>
   {/if}
 
   {#if testResult}
-    <div class="test-result" class:ok={testResult.ok} class:fail={!testResult.ok}>
-      <span class="test-icon">{testResult.ok ? '✓' : '✗'}</span>
+    <div class="test-result" class:ok={testResult.ok} class:fail={!testResult.ok} aria-live="polite">
+      <span class="test-icon" aria-hidden="true">{testResult.ok ? '✓' : '✗'}</span>
       <span class="test-msg">{testResult.message}</span>
     </div>
   {/if}
 
   {#if errorMsg && !testResult}
-    <div class="test-result fail">
-      <span class="test-icon">✗</span>
+    <div class="test-result fail" aria-live="polite">
+      <span class="test-icon" aria-hidden="true">✗</span>
       <span class="test-msg">{errorMsg}</span>
     </div>
   {/if}
 
   <!-- 高级（折叠） -->
-  <button class="advanced-toggle" onclick={() => showAdvanced = !showAdvanced}>
-    <span class="chevron">{showAdvanced ? '▾' : '▸'}</span>
-    <span>高级</span>
+  <button class="advanced-toggle" onclick={() => showAdvanced = !showAdvanced} aria-expanded={showAdvanced}>
+    <span class="chevron" aria-hidden="true">{showAdvanced ? '▾' : '▸'}</span>
+    <span>{messages.aiSettings.advanced}</span>
   </button>
 
   {#if showAdvanced}
     <label class="field">
-      <span class="label">模型</span>
+      <span class="label">{messages.aiSettings.model}</span>
       <input class="input" list="vault-models" bind:value={config.model} />
       <datalist id="vault-models">
         {#each presets.find(p => p.id === config.providerId)?.models ?? [] as m}
@@ -256,28 +281,36 @@
     </label>
 
     <label class="field">
-      <span class="label">Base URL</span>
+      <span class="label">{messages.aiSettings.baseUrl}</span>
       <input class="input" bind:value={config.baseUrl} placeholder="https://..." />
     </label>
   {/if}
 
   <!-- 30s clipboard toggle -->
   <div class="row clipboard-row">
-    <span class="label">复制敏感字段后 30 秒清除</span>
-    <div class="toggle" class:active={clipboardClearOn} onclick={toggleClipboardClear} role="switch" aria-checked={clipboardClearOn} tabindex="0">
+    <span class="label">{messages.aiSettings.clipboardClear}</span>
+    <button
+      type="button"
+      class="toggle"
+      class:active={clipboardClearOn}
+      onclick={toggleClipboardClear}
+      role="switch"
+      aria-checked={clipboardClearOn}
+      aria-label={messages.aiSettings.clipboardClear}
+    >
       <div class="toggle-knob"></div>
-    </div>
+    </button>
   </div>
 
   <!-- 数据说明 -->
   <div class="data-notice">
-    <div class="notice-title">数据说明</div>
+    <div class="notice-title">{messages.aiSettings.title}</div>
     <ul class="notice-list">
-      <li>整理时发送可查看的脱敏内容（敏感字段原文不发送）。</li>
-      <li>搜索时发送脱敏后的查询，不会上传完整资料库。</li>
-      <li>识别为敏感的字段原文不会发送给 LLM。</li>
-      <li>API Key 仅保存在本地数据库。</li>
-      <li>数据文件无应用层加密；请使用系统盘加密保护。</li>
+      <li>{messages.aiSettings.sendCapture}.</li>
+      <li>{messages.aiSettings.sendSearch}.</li>
+      <li>{messages.aiSettings.noSensitiveOriginal}.</li>
+      <li>{messages.aiSettings.localKey}.</li>
+      <li>{messages.aiSettings.noEncryption}.</li>
     </ul>
   </div>
 </div>
@@ -336,11 +369,13 @@
     width: 2rem;
     height: 1.1rem;
     background: var(--border-default);
+    border: none;
     border-radius: 0.55rem;
     position: relative;
     cursor: pointer;
     transition: background 0.2s;
     flex-shrink: 0;
+    padding: 0;
   }
   .toggle.active {
     background: var(--color-primary-faint);

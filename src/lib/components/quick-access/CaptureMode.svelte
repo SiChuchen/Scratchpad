@@ -20,6 +20,7 @@
 
   import { onMount, onDestroy } from 'svelte'
   import { vaultApi } from '$lib/api/vault'
+  import { messages } from '$lib/i18n'
   import { CaptureDraftController } from '$lib/state/capture-draft'
   import type {
     CaptureDraft,
@@ -339,7 +340,7 @@
     saveError = null
     try {
       const entry = await vaultApi.createFromCapture(draft, requestId)
-      notify('已保存到资料库', 'success')
+      notify(messages.quickAccess.saved, 'success')
       onSaved?.(entry)
       // Rotate session and reset state.
       requestId = controller.startSession()
@@ -373,35 +374,37 @@
   const canSave = $derived(!!draft && !saving)
   const partialStatusText = $derived(
     enrichStatus === 'partial'
-      ? `AI 建议已合并（${partialCount} 项因手动编辑未覆盖）`
+      ? `${messages.quickAccess.aiMerged} (${partialCount})`
       : '',
   )
 </script>
 
 <div class="capture-mode">
   <header class="mode-header">
-    <h2>录入</h2>
-    <span class="hint">Ctrl+Enter 保存 · Ctrl+Tab 搜索</span>
+    <h2>{messages.quickAccess.record}</h2>
+    <span class="hint">Ctrl+Enter {messages.quickAccess.save} · Ctrl+Tab {messages.quickAccess.search}</span>
   </header>
 
   <textarea
     class="raw-textarea"
-    placeholder="粘贴或输入要保存的内容"
+    placeholder={messages.quickAccess.inputPlaceholder}
     value={rawText}
     oninput={onRawTextInput}
     onkeydown={onKeydown}
+    aria-label={messages.quickAccess.record}
   ></textarea>
 
   {#if manualSensitiveValues.length > 0}
     <div class="sensitive-marks">
-      <span class="marks-label">敏感片段：</span>
+      <span class="marks-label">{messages.quickAccess.markSensitive}：</span>
       {#each manualSensitiveValues as value (value)}
         <span class="mark">
           <span class="mark-text">{value}</span>
           <button
             type="button"
             class="mark-remove"
-            aria-label="移除敏感标记 {value}"
+            aria-label={`${messages.quickAccess.removeSensitiveMark} ${value}`}
+            title={messages.quickAccess.removeSensitiveMark}
             onclick={() => onRemoveSensitiveMark(value)}
           >×</button>
         </span>
@@ -411,55 +414,57 @@
 
   {#if rawText.trim()}
     <button type="button" class="ghost-btn" onclick={onMarkSensitive}>
-      标记敏感
+      {messages.quickAccess.markSensitive}
     </button>
   {/if}
 
   {#if enrichStatus === 'enriching'}
-    <div class="enrich-status">AI 正在整理…</div>
+    <div class="enrich-status" aria-live="polite">{messages.quickAccess.aiEnhancing}…</div>
   {:else if enrichStatus === 'merged'}
-    <div class="enrich-status merged">AI 建议已合并</div>
+    <div class="enrich-status merged" aria-live="polite">{messages.quickAccess.aiMerged}</div>
   {:else if enrichStatus === 'partial'}
-    <div class="enrich-status partial">{partialStatusText}</div>
+    <div class="enrich-status partial" aria-live="polite">{partialStatusText}</div>
   {:else if enrichStatus === 'failed'}
-    <div class="enrich-status failed">AI 暂不可用，已保留本地整理</div>
+    <div class="enrich-status failed" aria-live="polite">{messages.quickAccess.aiFallback}</div>
   {/if}
 
   {#if draft}
     <div class="preview">
       <label class="form-row">
-        <span class="row-label">类型</span>
-        <select class="kind-select" value={draft.kind} onchange={onKindChange}>
-          <option value="note">笔记</option>
-          <option value="credential">凭据</option>
-          <option value="bookmark">书签</option>
+        <span class="row-label">{messages.library.title}</span>
+        <select class="kind-select" value={draft.kind} onchange={onKindChange} aria-label={messages.library.title}>
+          <option value="note">{messages.library.note}</option>
+          <option value="credential">{messages.library.credential}</option>
+          <option value="bookmark">{messages.library.bookmark}</option>
         </select>
       </label>
 
       <label class="form-row">
-        <span class="row-label">标题</span>
+        <span class="row-label">{messages.entry.untitled}</span>
         <input
           class="text-input"
           type="text"
           value={draft.title}
           oninput={onTitleInput}
+          aria-label={messages.entry.untitled}
         />
       </label>
 
       <label class="form-row">
-        <span class="row-label">备注</span>
+        <span class="row-label">{messages.settings.checkUpdate}</span>
         <textarea
           class="notes-input"
           value={draft.notes ?? ''}
           oninput={onNotesInput}
+          aria-label={messages.settings.checkUpdate}
         ></textarea>
       </label>
 
       <div class="fields-section">
         <div class="section-label">
-          <span>字段</span>
+          <span>{messages.entry.text}</span>
           <button type="button" class="ghost-btn small" onclick={onAddField}>
-            + 添加字段
+            + {messages.library.create}
           </button>
         </div>
         {#each draft.fields as field (field.draftId)}
@@ -467,16 +472,18 @@
             <input
               class="text-input field-key"
               type="text"
-              placeholder="键"
+              placeholder={messages.entry.text}
               value={field.key}
               oninput={(e) => onFieldKeyInput(field.draftId, e)}
+              aria-label={messages.entry.text}
             />
             <input
               class="text-input field-value"
               type="text"
-              placeholder="值"
+              placeholder={messages.entry.text}
               value={field.value}
               oninput={(e) => onFieldValueInput(field.draftId, e)}
+              aria-label={messages.entry.text}
             />
             <label class="sensitive-toggle">
               <input
@@ -484,12 +491,13 @@
                 checked={field.isSensitive}
                 onchange={(e) => onFieldSensitiveToggle(field.draftId, e)}
               />
-              <span>敏感</span>
+              <span>{messages.quickAccess.markSensitive}</span>
             </label>
             <button
               type="button"
               class="ghost-btn small danger"
-              aria-label="删除字段"
+              aria-label={messages.library.delete}
+              title={messages.library.delete}
               onclick={() => onRemoveField(field.draftId)}
             >×</button>
           </div>
@@ -497,19 +505,20 @@
       </div>
 
       <label class="form-row">
-        <span class="row-label">手动标签</span>
+        <span class="row-label">{messages.library.manualTag}</span>
         <input
           class="text-input"
           type="text"
-          placeholder="逗号分隔"
+          placeholder={messages.library.manualTag}
           value={draft.manualTags.join(', ')}
           oninput={onManualTagsInput}
+          aria-label={messages.library.manualTag}
         />
       </label>
 
       {#if draft.aiTags.length > 0}
         <div class="tags-section">
-          <span class="row-label">AI 标签</span>
+          <span class="row-label">{messages.library.aiTag}</span>
           <div class="tag-list">
             {#each draft.aiTags as tag (tag)}
               <span class="tag ai-tag">
@@ -517,14 +526,15 @@
                 <button
                   type="button"
                   class="tag-convert"
-                  aria-label="将 AI 标签 {tag} 转为手动标签"
-                  title="转为手动标签"
+                  aria-label={`${messages.library.aiTag} ${tag}`}
+                  title={messages.library.manualTag}
                   onclick={() => onConvertAiTag(tag)}
-                >→手动</button>
+                >→{messages.library.manualTag}</button>
                 <button
                   type="button"
                   class="tag-remove"
-                  aria-label="移除 AI 标签 {tag}"
+                  aria-label={`${messages.library.delete} ${tag}`}
+                  title={messages.library.delete}
                   onclick={() => onRemoveAiTag(tag)}
                 >×</button>
               </span>
@@ -538,12 +548,12 @@
   <div class="actions-row">
     {#if enrichment}
       <button type="button" class="ghost-btn" onclick={() => (auditOpen = true)}>
-        查看本次发送内容
+        {messages.quickAccess.outboundAudit}
       </button>
     {/if}
     {#if !aiConfigured}
       <button type="button" class="ghost-btn" onclick={onOpenSettings}>
-        配置 AI
+        {messages.aiSettings.title}
       </button>
     {/if}
     <button
@@ -552,26 +562,27 @@
       onclick={save}
       disabled={!canSave}
     >
-      {saving ? '保存中…' : '保存到资料库'}
+      {saving ? messages.settings.downloading : messages.quickAccess.save}
     </button>
   </div>
 
   {#if saveError}
-    <div class="error-banner">{saveError}</div>
+    <div class="error-banner" role="alert">{saveError}</div>
   {/if}
 
   {#if auditOpen && enrichment}
     <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <div class="audit-overlay" role="dialog" aria-label="本次发送内容">
+    <div class="audit-overlay" role="dialog" aria-label={messages.quickAccess.outboundAudit}>
       <div class="audit-dialog">
         <header class="audit-header">
-          <h3>本次发送内容</h3>
+          <h3>{messages.quickAccess.outboundAudit}</h3>
           <button
             type="button"
             class="ghost-btn small"
-            aria-label="关闭"
+            aria-label={messages.settings.clear}
+            title={messages.settings.clear}
             onclick={() => (auditOpen = false)}
-          >关闭</button>
+          >{messages.settings.clear}</button>
         </header>
         <div class="audit-meta">
           <span>Provider: {enrichment.audit.providerId}</span>

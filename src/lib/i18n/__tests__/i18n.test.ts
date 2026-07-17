@@ -23,6 +23,11 @@ describe('i18n dictionaries', () => {
     expect(enKeys).toEqual(zhKeys)
   })
 
+  it('contains no user-visible legacy vault name', () => {
+    expect(JSON.stringify(zhCN)).not.toContain('保险箱')
+    expect(JSON.stringify(en)).not.toMatch(/\bvault\b/i)
+  })
+
   it('all string values are non-empty', () => {
     const checkNonEmpty = (obj: Record<string, unknown>) => {
       for (const [key, value] of Object.entries(obj)) {

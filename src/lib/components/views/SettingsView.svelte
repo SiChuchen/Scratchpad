@@ -370,10 +370,15 @@
   <div class="settings-body">
     <!-- Data directory section -->
     <div class="section">
-      <div class="section-header" onclick={() => dataDirOpen = !dataDirOpen}>
+      <button
+        type="button"
+        class="section-header"
+        aria-expanded={dataDirOpen}
+        onclick={() => dataDirOpen = !dataDirOpen}
+      >
         <span class="section-label">{messages.settings.dataDir}</span>
-        <span class="chevron" class:open={dataDirOpen}>▾</span>
-      </div>
+        <span class="chevron" class:open={dataDirOpen} aria-hidden="true">▾</span>
+      </button>
       {#if dataDirOpen}
         <div class="section-body">
           {#if dataDirInfo}
@@ -421,17 +426,30 @@
 
     <!-- Theme section -->
     <div class="section">
-      <div class="section-header" onclick={() => themeOpen = !themeOpen}>
+      <button
+        type="button"
+        class="section-header"
+        aria-expanded={themeOpen}
+        onclick={() => themeOpen = !themeOpen}
+      >
         <span class="section-label">{messages.settings.theme}</span>
-        <span class="chevron" class:open={themeOpen}>▾</span>
-      </div>
+        <span class="chevron" class:open={themeOpen} aria-hidden="true">▾</span>
+      </button>
       {#if themeOpen}
         <div class="section-body">
           <div class="row">
             <span class="label">{messages.settings.followSystem}</span>
-            <div class="toggle" class:active={themeAuto} onclick={toggleThemeAuto}>
+            <button
+              type="button"
+              class="toggle"
+              class:active={themeAuto}
+              role="switch"
+              aria-checked={themeAuto}
+              aria-label={messages.settings.followSystem}
+              onclick={toggleThemeAuto}
+            >
               <div class="toggle-knob"></div>
-            </div>
+            </button>
           </div>
           {#if !themeAuto}
             <div class="theme-cards">
@@ -453,10 +471,15 @@
 
     <!-- Font section -->
     <div class="section">
-      <div class="section-header" onclick={() => fontOpen = !fontOpen}>
+      <button
+        type="button"
+        class="section-header"
+        aria-expanded={fontOpen}
+        onclick={() => fontOpen = !fontOpen}
+      >
         <span class="section-label">{messages.settings.font}</span>
-        <span class="chevron" class:open={fontOpen}>▾</span>
-      </div>
+        <span class="chevron" class:open={fontOpen} aria-hidden="true">▾</span>
+      </button>
       {#if fontOpen}
         <div class="section-body">
           <div class="row">
@@ -515,10 +538,15 @@
 
     <!-- Update section -->
     <div class="section">
-      <div class="section-header" onclick={() => updateOpen = !updateOpen}>
+      <button
+        type="button"
+        class="section-header"
+        aria-expanded={updateOpen}
+        onclick={() => updateOpen = !updateOpen}
+      >
         <span class="section-label">{messages.settings.update}</span>
-        <span class="chevron" class:open={updateOpen}>▾</span>
-      </div>
+        <span class="chevron" class:open={updateOpen} aria-hidden="true">▾</span>
+      </button>
       {#if updateOpen}
         <div class="section-body">
           <p class="section-subtitle">{messages.settings.proxyNote}</p>
@@ -593,21 +621,26 @@
 
     <!-- Shortcut section -->
     <div class="section">
-      <div class="section-header" onclick={() => shortcutOpen = !shortcutOpen}>
+      <button
+        type="button"
+        class="section-header"
+        aria-expanded={shortcutOpen}
+        onclick={() => shortcutOpen = !shortcutOpen}
+      >
         <span class="section-label">{messages.settings.shortcut}</span>
-        <span class="chevron" class:open={shortcutOpen}>▾</span>
-      </div>
+        <span class="chevron" class:open={shortcutOpen} aria-hidden="true">▾</span>
+      </button>
       {#if shortcutOpen}
         <div class="section-body">
           <!-- 主窗口 -->
           <div class="row">
-            <span class="label">显示/隐藏主窗口</span>
-            <span class="shortcut-status" class:ok={preferences.shortcutRegistered} class:failed={!preferences.shortcutRegistered}>
+            <span class="label">{messages.settings.shortcutMainLabel}</span>
+            <span class="shortcut-status" class:ok={preferences.shortcutRegistered} class:failed={!preferences.shortcutRegistered} aria-live="polite">
               {preferences.shortcutRegistered ? messages.settings.shortcutRegistered : messages.settings.shortcutFailed}
             </span>
           </div>
           <div class="row">
-            <span class="label">快捷键</span>
+            <span class="label">{messages.settings.shortcut}</span>
             <span class="shortcut-key">{mainShortcutLabel}</span>
             <button class="record-btn" onclick={startRecordingMain} disabled={recordingTarget !== null}>
               {recordingTarget === 'main' ? messages.settings.shortcutRecording : messages.settings.shortcutRecord}
@@ -616,13 +649,13 @@
 
           <!-- Quick access -->
           <div class="row" style="margin-top:0.3rem">
-            <span class="label">打开全局资料入口</span>
-            <span class="shortcut-status" class:ok={preferences.quickAccessShortcutRegistered} class:failed={!preferences.quickAccessShortcutRegistered}>
+            <span class="label">{messages.settings.shortcutQuickLabel}</span>
+            <span class="shortcut-status" class:ok={preferences.quickAccessShortcutRegistered} class:failed={!preferences.quickAccessShortcutRegistered} aria-live="polite">
               {preferences.quickAccessShortcutRegistered ? messages.settings.shortcutRegistered : messages.settings.shortcutFailed}
             </span>
           </div>
           <div class="row">
-            <span class="label">快捷键</span>
+            <span class="label">{messages.settings.shortcut}</span>
             <span class="shortcut-key">{quickAccessShortcutLabel}</span>
             <button class="record-btn" onclick={startRecordingQuickAccess} disabled={recordingTarget !== null}>
               {recordingTarget === 'quickAccess' ? messages.settings.shortcutRecording : messages.settings.shortcutRecord}
@@ -630,7 +663,7 @@
           </div>
 
           {#if shortcutConflictMsg}
-            <p class="proxy-error">{shortcutConflictMsg}</p>
+            <p class="proxy-error" role="alert">{messages.settings.shortcutConflict}: {shortcutConflictMsg}</p>
           {/if}
           <p class="section-subtitle">{messages.settings.shortcutHint}</p>
         </div>
@@ -639,18 +672,30 @@
 
     <!-- System section -->
     <div class="section">
-      <div class="section-header" onclick={() => systemOpen = !systemOpen}>
+      <button
+        type="button"
+        class="section-header"
+        aria-expanded={systemOpen}
+        onclick={() => systemOpen = !systemOpen}
+      >
         <span class="section-label">{messages.settings.system}</span>
-        <span class="chevron" class:open={systemOpen}>▾</span>
-      </div>
+        <span class="chevron" class:open={systemOpen} aria-hidden="true">▾</span>
+      </button>
       {#if systemOpen}
         <div class="section-body">
           <div class="row">
             <span class="label">{messages.settings.launchOnStartup}</span>
-            <div class="toggle" class:active={preferences.launchOnStartup}
-                 onclick={() => update({ launchOnStartup: !preferences.launchOnStartup })}>
+            <button
+              type="button"
+              class="toggle"
+              class:active={preferences.launchOnStartup}
+              role="switch"
+              aria-checked={preferences.launchOnStartup}
+              aria-label={messages.settings.launchOnStartup}
+              onclick={() => update({ launchOnStartup: !preferences.launchOnStartup })}
+            >
               <div class="toggle-knob"></div>
-            </div>
+            </button>
           </div>
           <div class="row">
             <span class="label">{messages.settings.autoCleanup}</span>
@@ -672,17 +717,30 @@
 
     <!-- Advanced section -->
     <div class="section">
-      <div class="section-header" onclick={() => advancedOpen = !advancedOpen}>
+      <button
+        type="button"
+        class="section-header"
+        aria-expanded={advancedOpen}
+        onclick={() => advancedOpen = !advancedOpen}
+      >
         <span class="section-label">{messages.settings.advanced}</span>
-        <span class="chevron" class:open={advancedOpen}>▾</span>
-      </div>
+        <span class="chevron" class:open={advancedOpen} aria-hidden="true">▾</span>
+      </button>
       {#if advancedOpen}
         <div class="section-body">
           <div class="row">
             <span class="label">{messages.settings.expertMode}</span>
-            <div class="toggle" class:active={expertMode} onclick={() => expertMode = !expertMode}>
+            <button
+              type="button"
+              class="toggle"
+              class:active={expertMode}
+              role="switch"
+              aria-checked={expertMode}
+              aria-label={messages.settings.expertMode}
+              onclick={() => expertMode = !expertMode}
+            >
               <div class="toggle-knob"></div>
-            </div>
+            </button>
           </div>
           {#if expertMode}
             <div class="expert-list">
@@ -830,6 +888,12 @@
     padding: 0.3rem 0;
     cursor: pointer;
     user-select: none;
+    width: 100%;
+    background: none;
+    border: none;
+    font-family: inherit;
+    color: inherit;
+    text-align: left;
   }
 
   .section-label {
@@ -875,11 +939,13 @@
     width: 2rem;
     height: 1.1rem;
     background: var(--border-default);
+    border: none;
     border-radius: 0.55rem;
     position: relative;
     cursor: pointer;
     transition: background 0.2s;
     flex-shrink: 0;
+    padding: 0;
   }
 
   .toggle.active {

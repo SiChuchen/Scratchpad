@@ -162,7 +162,7 @@ afterEach(() => {
 
 // Helper: type into search input.
 async function typeQuery(text: string) {
-  const input = screen.getByPlaceholderText('搜索资料库…') as HTMLInputElement
+  const input = screen.getByPlaceholderText('描述你要找的资料') as HTMLInputElement
   await fireEvent.input(input, { target: { value: text } })
 }
 
@@ -249,7 +249,7 @@ describe('SearchMode', () => {
       expect(opts[0]!.getAttribute('aria-selected')).toBe('true')
     })
 
-    const input = screen.getByPlaceholderText('搜索资料库…')
+    const input = screen.getByPlaceholderText('描述你要找的资料')
     await fireEvent.keyDown(input, { key: 'ArrowDown' })
 
     await waitFor(() => {
@@ -420,14 +420,14 @@ describe('SearchMode', () => {
     // Copy each independently.
     await fireEvent.click(screen.getByRole('button', { name: /复制 标题/ }))
     await fireEvent.click(screen.getByRole('button', { name: /复制 备注/ }))
-    await fireEvent.click(screen.getByRole('button', { name: /复制 标签/ }));
+    await fireEvent.click(screen.getByRole('button', { name: /复制 手动标签/ }));
     await fireEvent.click(screen.getByRole('button', { name: /复制 API/ }))
 
     // Each notify call should include a distinct field label.
     const calls = notify.mock.calls.map((c) => c[0])
     expect(calls).toContain('已复制：标题')
     expect(calls).toContain('已复制：备注')
-    expect(calls.some((c) => c.startsWith('已复制：标签'))).toBe(true)
+    expect(calls.some((c) => c.startsWith('已复制：手动标签'))).toBe(true)
     expect(calls).toContain('已复制：API')
   })
 

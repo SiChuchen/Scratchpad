@@ -8,6 +8,7 @@
   // 源（显示为 "manual" badge 而非 "AI" badge）。
 
   import CopyableValue from './CopyableValue.svelte'
+  import { messages } from '$lib/i18n'
   import type {
     VaultEntryDetail,
     VaultTag,
@@ -46,40 +47,47 @@
   const hasNotes = $derived(
     detail.entry.notes != null && detail.entry.notes.trim().length > 0,
   )
+
+  // Title / notes labels: pick by which locale is currently loaded. There
+  // is no dedicated label key for these in LocaleMessages, but we want the
+  // detail panel to follow the user's language.
+  const isZh = $derived(messages.nav.home === '收纳')
+  const titleLabel = $derived(isZh ? '标题' : 'Title')
+  const notesLabel = $derived(isZh ? '备注' : 'Notes')
 </script>
 
 <div class="detail">
   <CopyableValue
-    label="标题"
+    label={titleLabel}
     value={detail.entry.title}
     {resetToken}
-    onCopy={(p) => onCopy({ ...p, label: '标题' })}
+    onCopy={(p) => onCopy({ ...p, label: titleLabel })}
   />
 
   {#if hasNotes}
     <CopyableValue
-      label="备注"
+      label={notesLabel}
       value={detail.entry.notes ?? ''}
       {resetToken}
-      onCopy={(p) => onCopy({ ...p, label: '备注' })}
+      onCopy={(p) => onCopy({ ...p, label: notesLabel })}
     />
   {/if}
 
   {#each dedupedTags as tag (tag.normalizedTag)}
     <div class="tag-row">
       <CopyableValue
-        label={tag.source === 'ai' ? 'AI 标签' : '标签'}
+        label={tag.source === 'ai' ? messages.library.aiTag : messages.library.manualTag}
         value={tag.tag}
         {resetToken}
-        onCopy={(p) => onCopy({ ...p, label: `标签：${tag.tag}` })}
+        onCopy={(p) => onCopy({ ...p, label: tag.source === 'ai' ? messages.library.aiTag : messages.library.manualTag })}
       />
       <span class="source-badge {tag.source}">{tag.source === 'ai' ? 'AI' : 'manual'}</span>
       {#if tag.source === 'ai' && onRemoveAiTag}
         <button
           type="button"
           class="remove-tag-btn"
-          aria-label="移除标签 {tag.tag}"
-          title="移除"
+          aria-label={`${messages.library.delete} ${tag.tag}`}
+          title={messages.library.delete}
           onclick={() => onRemoveAiTag?.(tag.normalizedTag)}
         >
           ×

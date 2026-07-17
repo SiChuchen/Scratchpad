@@ -14,6 +14,7 @@
   // i18n：当前硬编码 zh-CN 字符串；Task 19 会迁移到统一 i18n 系统。
 
   import { onMount } from 'svelte'
+  import { messages } from '$lib/i18n'
 
   interface Props {
     label: string
@@ -65,8 +66,12 @@
   const displayValue = $derived(
     sensitive && !revealed ? '••••••••' : value,
   )
-  const eyeAriaLabel = $derived(revealed ? `隐藏 ${label}` : `显示 ${label}`)
-  const copyAriaLabel = $derived(`复制 ${label}`)
+  const eyeAriaLabel = $derived(
+    revealed
+      ? messages.library.hideLabel.replace('{label}', label)
+      : messages.library.showLabel.replace('{label}', label),
+  )
+  const copyAriaLabel = $derived(messages.library.copyLabel.replace('{label}', label))
 </script>
 
 <div class="copyable-row">

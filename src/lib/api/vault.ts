@@ -216,12 +216,12 @@ export const vaultApi = {
     return invoke<void>('ipc_clipboard_copy_text', { text, sensitive })
   },
 
-  // ---- 兼容别名（Task 12-14 会移除） ------------------------------------
+  // ---- 兼容别名（保留以便外部调用；新代码请使用上面的 typed API） ------
   //
-  // 这些方法仅为让现有 Svelte 组件（VaultView / EntryCard / TagEditor /
-  // SearchBar / LlmSearchPanel / VaultLlmConfig / SmartImportDialog /
-  // CredentialForm / BookmarkForm / NoteForm）继续 typecheck；功能会在
-  // 后续 Task 中迁移到新的 typed API。
+  // 早期迭代中由旧 Svelte 组件（CredentialForm / BookmarkForm / NoteForm /
+  // SmartImportDialog / LlmSearchPanel / SearchBar / TagEditor）使用的方法
+  // 别名。Task 19 已删除这些组件，但 API 别名本身仍然保留，外部如有引用
+  // 不至于 broken。
 
   /** @deprecated 用 searchLocal() 替代。 */
   search(query: string, limit = 20): Promise<VaultSearchHit[]> {

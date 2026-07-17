@@ -19,6 +19,7 @@
   import { listen, type UnlistenFn } from '@tauri-apps/api/event'
   import { vaultApi } from '$lib/api/vault'
   import { onTagsUpdated, onLlmError } from '$lib/api/vault'
+  import { messages } from '$lib/i18n'
   import { HybridSearchController, type HybridSearchApi, type HybridSearchState } from '$lib/state/vault-search'
   import {
     LibraryViewController,
@@ -355,7 +356,7 @@
           aria-haspopup="menu"
           aria-expanded={showNewMenu}
           onclick={() => (showNewMenu ? closeNewMenu() : openNewMenu())}
-        >+ 新建</button>
+        >+ {messages.library.create}</button>
         {#if showNewMenu}
           <!-- I4: 透明全屏 backdrop 拦截外部点击，关闭菜单。
                backdrop 在 popover 之下（z-index 较低），点击它关闭；
@@ -363,7 +364,7 @@
           <button
             type="button"
             class="new-menu-backdrop"
-            aria-label="关闭新建菜单"
+            aria-label={messages.library.create}
             tabindex="-1"
             onclick={closeNewMenu}
           ></button>
@@ -371,7 +372,7 @@
           <div
             class="new-menu-popover"
             role="menu"
-            aria-label="新建类型"
+            aria-label={messages.library.create}
             tabindex="-1"
             onkeydown={handleNewMenuKeydown}
           >
@@ -380,25 +381,25 @@
               role="menuitem"
               class="new-menu-item"
               onclick={() => startCreate('credential')}
-            >凭据</button>
+            >{messages.library.credential}</button>
             <button
               type="button"
               role="menuitem"
               class="new-menu-item"
               onclick={() => startCreate('bookmark')}
-            >书签</button>
+            >{messages.library.bookmark}</button>
             <button
               type="button"
               role="menuitem"
               class="new-menu-item"
               onclick={() => startCreate('note')}
-            >笔记</button>
+            >{messages.library.note}</button>
           </div>
         {/if}
       </div>
     </div>
 
-    <div class="header-row header-row-filters" role="tablist" aria-label="筛选类型">
+    <div class="header-row header-row-filters" role="tablist" aria-label={messages.library.title}>
       <button
         type="button"
         role="tab"
@@ -406,7 +407,7 @@
         class:active={activeFilter === 'all'}
         aria-selected={activeFilter === 'all'}
         onclick={() => selectFilter('all')}
-      >全部 {counts.all}</button>
+      >{messages.library.all} {counts.all}</button>
       <button
         type="button"
         role="tab"
@@ -414,7 +415,7 @@
         class:active={activeFilter === 'credential'}
         aria-selected={activeFilter === 'credential'}
         onclick={() => selectFilter('credential')}
-      >凭据 {counts.credential}</button>
+      >{messages.library.credential} {counts.credential}</button>
       <button
         type="button"
         role="tab"
@@ -422,7 +423,7 @@
         class:active={activeFilter === 'bookmark'}
         aria-selected={activeFilter === 'bookmark'}
         onclick={() => selectFilter('bookmark')}
-      >书签 {counts.bookmark}</button>
+      >{messages.library.bookmark} {counts.bookmark}</button>
       <button
         type="button"
         role="tab"
@@ -430,7 +431,7 @@
         class:active={activeFilter === 'note'}
         aria-selected={activeFilter === 'note'}
         onclick={() => selectFilter('note')}
-      >笔记 {counts.note}</button>
+      >{messages.library.note} {counts.note}</button>
     </div>
   </div>
 
@@ -457,18 +458,18 @@
 
   <div class="library-body">
     {#if emptyState.kind === 'loading'}
-      <div class="dockEmpty">
-        <div>加载中…</div>
+      <div class="dockEmpty" aria-live="polite">
+        <div>{messages.settings.checking}</div>
       </div>
     {:else if emptyState.kind === 'no-results'}
-      <div class="dockEmpty">
-        <div>未找到匹配条目</div>
-        <div class="hint">尝试其它关键词，或清空搜索框查看全部</div>
+      <div class="dockEmpty" aria-live="polite">
+        <div>{messages.library.noMatch}</div>
+        <div class="hint">{messages.library.searchPlaceholder}</div>
       </div>
     {:else if emptyState.kind === 'empty'}
-      <div class="dockEmpty">
-        <div>暂无条目</div>
-        <div class="hint">点击右上「+ 新建」按钮添加</div>
+      <div class="dockEmpty" aria-live="polite">
+        <div>{messages.library.empty}</div>
+        <div class="hint">+ {messages.library.create}</div>
       </div>
     {:else}
       <div class="entry-list">

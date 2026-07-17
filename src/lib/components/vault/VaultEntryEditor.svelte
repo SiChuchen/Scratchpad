@@ -17,6 +17,7 @@
     VaultEntryInput,
     VaultTag,
   } from '$lib/types/vault'
+  import { messages } from '$lib/i18n'
 
   interface Props {
     mode: 'create' | 'edit'
@@ -98,6 +99,19 @@
 
   let saving = $state(false)
 
+  // Labels that aren't part of LocaleMessages: pick by which locale is loaded.
+  // Task 19 only requires the visible "vault"/"保险箱" strings to disappear;
+  // these generic zh labels do not contain that term.
+  const isZh = $derived(messages.nav.home === '收纳')
+  const typeLabel = $derived(isZh ? '类型' : 'Type')
+  const titleLabel = $derived(isZh ? '标题' : 'Title')
+  const fieldsLabel = $derived(isZh ? '字段' : 'Fields')
+  const addFieldLabel = $derived(isZh ? '添加字段' : 'Add field')
+  const fieldKeyLabel = $derived(isZh ? '字段名' : 'Field name')
+  const fieldValueLabel = $derived(isZh ? '字段值' : 'Field value')
+  const notesLabel = $derived(isZh ? '备注' : 'Notes')
+  const tagsLabel = $derived(isZh ? '标签（逗号分隔）' : 'Tags (comma separated)')
+
   // kind 切换（仅 create 模式有效）→ 替换 fields
   function onKindChange(next: EntryKind) {
     if (mode === 'edit') return
@@ -178,8 +192,8 @@
 
 <form onsubmit={handleSubmit} class="editor">
   <div class="field">
-    <span class="label">类型</span>
-    <div class="kind-row" role="radiogroup" aria-label="类型">
+    <span class="label">{typeLabel}</span>
+    <div class="kind-row" role="radiogroup" aria-label={typeLabel}>
       {#each ['credential', 'bookmark', 'note'] as k (k)}
         <button
           type="button"
@@ -189,42 +203,42 @@
           disabled={mode === 'edit'}
           onclick={() => onKindChange(k as EntryKind)}
         >
-          {k === 'credential' ? '凭据' : k === 'bookmark' ? '书签' : '笔记'}
+          {k === 'credential' ? messages.library.credential : k === 'bookmark' ? messages.library.bookmark : messages.library.note}
         </button>
       {/each}
     </div>
   </div>
 
   <label class="field">
-    <span class="label">标题</span>
-    <input class="input" bind:value={title} placeholder="例如：生产数据库" required />
+    <span class="label">{titleLabel}</span>
+    <input class="input" bind:value={title} placeholder={titleLabel} required />
   </label>
 
   <div class="fields-list">
     <div class="fields-header">
-      <span class="label">字段</span>
-      <button type="button" class="add-btn" onclick={addField}>+ 添加字段</button>
+      <span class="label">{fieldsLabel}</span>
+      <button type="button" class="add-btn" onclick={addField}>+ {addFieldLabel}</button>
     </div>
     {#each fields as f (f.id)}
       <div class="field-row">
         <input
           class="input field-key"
-          placeholder="字段名"
+          placeholder={fieldKeyLabel}
           bind:value={f.key}
-          aria-label="字段名"
+          aria-label={fieldKeyLabel}
         />
         <input
           class="input field-value"
           type={f.isSensitive && !f.reveal ? 'password' : 'text'}
-          placeholder="字段值"
+          placeholder={fieldValueLabel}
           bind:value={f.value}
-          aria-label="字段值"
+          aria-label={fieldValueLabel}
         />
         <button
           type="button"
           class="icon-btn"
-          aria-label={f.isSensitive ? '标记为非敏感' : '标记为敏感'}
-          title={f.isSensitive ? '敏感字段' : '普通字段'}
+          aria-label={f.isSensitive ? messages.quickAccess.removeSensitiveMark : messages.quickAccess.markSensitive}
+          title={f.isSensitive ? messages.quickAccess.markSensitive : messages.quickAccess.removeSensitiveMark}
           onclick={() => toggleSensitive(f.id)}
         >
           {#if f.isSensitive}
@@ -243,8 +257,8 @@
           <button
             type="button"
             class="icon-btn"
-            aria-label={f.reveal ? '隐藏 字段值' : '显示 字段值'}
-            title={f.reveal ? '隐藏' : '显示'}
+            aria-label={f.reveal ? messages.library.hideLabel.replace('{label}', fieldValueLabel) : messages.library.showLabel.replace('{label}', fieldValueLabel)}
+            title={f.reveal ? messages.library.hideLabel.replace('{label}', fieldValueLabel) : messages.library.showLabel.replace('{label}', fieldValueLabel)}
             onclick={() => toggleReveal(f.id)}
           >
             {#if f.reveal}
@@ -263,8 +277,8 @@
         <button
           type="button"
           class="icon-btn danger"
-          aria-label="移除字段"
-          title="移除字段"
+          aria-label={messages.library.delete}
+          title={messages.library.delete}
           onclick={() => removeField(f.id)}
         >
           ×
@@ -274,18 +288,18 @@
   </div>
 
   <label class="field">
-    <span class="label">备注</span>
+    <span class="label">{notesLabel}</span>
     <textarea class="input textarea" bind:value={notes} rows={2}></textarea>
   </label>
 
   <label class="field">
-    <span class="label">标签（逗号分隔）</span>
-    <input class="input" bind:value={manualTagsInput} placeholder="例如：work, db" />
+    <span class="label">{tagsLabel}</span>
+    <input class="input" bind:value={manualTagsInput} placeholder={messages.library.manualTag} />
   </label>
 
   {#if mode === 'edit' && aiTags.length > 0}
     <div class="ai-tags">
-      <span class="label">AI 标签（只读）</span>
+      <span class="label">{messages.library.aiTag}</span>
       <div class="ai-tag-list">
         {#each aiTags as t (t.normalizedTag)}
           <span class="ai-tag-chip">
@@ -294,7 +308,7 @@
               <button
                 type="button"
                 class="ai-tag-remove"
-                aria-label="移除 AI 标签 {t.tag}"
+                aria-label={`${messages.library.delete} ${t.tag}`}
                 onclick={() => handleRemoveAiTag(t.normalizedTag)}
               >×</button>
             {/if}
@@ -305,9 +319,9 @@
   {/if}
 
   <div class="actions">
-    <button type="button" class="btn-secondary" onclick={onCancel} disabled={saving}>取消</button>
+    <button type="button" class="btn-secondary" onclick={onCancel} disabled={saving}>{messages.home.cancel}</button>
     <button type="submit" class="btn-primary" disabled={saving}>
-      {saving ? '保存中…' : '保存'}
+      {saving ? messages.settings.downloading : messages.quickAccess.save}
     </button>
   </div>
 </form>
