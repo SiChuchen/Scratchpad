@@ -29,6 +29,16 @@ export interface LocaleMessages {
     hideLabel: string
     manualTag: string
     aiTag: string
+    // Capture / editor form labels (Task 19 regression fixes).
+    kind: string
+    titleLabel: string
+    notesLabel: string
+    fieldsLabel: string
+    addField: string
+    fieldKeyPlaceholder: string
+    fieldValuePlaceholder: string
+    titlePlaceholder: string
+    tagsPlaceholder: string
   }
   quickAccess: {
     record: string
@@ -46,6 +56,14 @@ export interface LocaleMessages {
     searchPlaceholder: string
     noSelection: string
     noResults: string
+    // Audit dialog and AI tag chip labels (Task 19 regression fixes).
+    saving: string
+    close: string
+    auditProvider: string
+    auditModel: string
+    auditSentAt: string
+    convertToManualPrefix: string
+    removeAiTagPrefix: string
   }
   aiSettings: {
     title: string
@@ -70,6 +88,7 @@ export interface LocaleMessages {
     clipboardClear: string
     authBlocked: string
     cooldown: string
+    dataNotice: string
   }
   home: {
     search: string

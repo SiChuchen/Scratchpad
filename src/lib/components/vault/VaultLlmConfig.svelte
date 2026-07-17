@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import { vaultApi } from '$lib/api/vault'
-  import { messages } from '$lib/i18n'
+  import { messages, isZh } from '$lib/i18n'
   import type { LlmTestResult, ProviderPreset, VaultAiSettings } from '$lib/types/vault'
 
   // 已保存的 LLM 配置概览（不含 API Key）
@@ -159,12 +159,11 @@
   const apiKeyPlaceholder = $derived(savedConfig?.hasApiKey ? messages.aiSettings.savedKeyPlaceholder : 'sk-...')
 
   // Locale-aware labels for the small bits not covered by aiSettings keys.
-  const isZh = $derived(messages.nav.home === '收纳')
-  const connectedLabel = $derived(isZh ? '已连接' : 'Connected')
-  const unconfiguredLabel = $derived(isZh ? '未配置' : 'Not configured')
-  const verifyingLabel = $derived(isZh ? '验证中...' : 'Verifying...')
-  const deleteConfirmText = $derived(isZh ? '确认删除 LLM 配置？此操作不可撤销。' : 'Delete LLM configuration? This cannot be undone.')
-  const deleteConfirmActionLabel = $derived(isZh ? '确认删除' : 'Confirm delete')
+  const connectedLabel = $derived(isZh() ? '已连接' : 'Connected')
+  const unconfiguredLabel = $derived(isZh() ? '未配置' : 'Not configured')
+  const verifyingLabel = $derived(isZh() ? '验证中...' : 'Verifying...')
+  const deleteConfirmText = $derived(isZh() ? '确认删除 LLM 配置？此操作不可撤销。' : 'Delete LLM configuration? This cannot be undone.')
+  const deleteConfirmActionLabel = $derived(isZh() ? '确认删除' : 'Confirm delete')
 </script>
 
 <div class="llm-config">
@@ -304,7 +303,7 @@
 
   <!-- 数据说明 -->
   <div class="data-notice">
-    <div class="notice-title">{messages.aiSettings.title}</div>
+    <div class="notice-title">{messages.aiSettings.dataNotice}</div>
     <ul class="notice-list">
       <li>{messages.aiSettings.sendCapture}.</li>
       <li>{messages.aiSettings.sendSearch}.</li>

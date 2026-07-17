@@ -427,7 +427,8 @@ describe('SearchMode', () => {
     const calls = notify.mock.calls.map((c) => c[0])
     expect(calls).toContain('已复制：标题')
     expect(calls).toContain('已复制：备注')
-    expect(calls.some((c) => c.startsWith('已复制：手动标签'))).toBe(true)
+    // Tag copy now includes the tag value, e.g. "已复制：手动标签：工作".
+    expect(calls).toContain('已复制：手动标签：工作')
     expect(calls).toContain('已复制：API')
   })
 

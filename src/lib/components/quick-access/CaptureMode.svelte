@@ -431,8 +431,8 @@
   {#if draft}
     <div class="preview">
       <label class="form-row">
-        <span class="row-label">{messages.library.title}</span>
-        <select class="kind-select" value={draft.kind} onchange={onKindChange} aria-label={messages.library.title}>
+        <span class="row-label">{messages.library.kind}</span>
+        <select class="kind-select" value={draft.kind} onchange={onKindChange} aria-label={messages.library.kind}>
           <option value="note">{messages.library.note}</option>
           <option value="credential">{messages.library.credential}</option>
           <option value="bookmark">{messages.library.bookmark}</option>
@@ -440,31 +440,31 @@
       </label>
 
       <label class="form-row">
-        <span class="row-label">{messages.entry.untitled}</span>
+        <span class="row-label">{messages.library.titleLabel}</span>
         <input
           class="text-input"
           type="text"
           value={draft.title}
           oninput={onTitleInput}
-          aria-label={messages.entry.untitled}
+          aria-label={messages.library.titleLabel}
         />
       </label>
 
       <label class="form-row">
-        <span class="row-label">{messages.settings.checkUpdate}</span>
+        <span class="row-label">{messages.library.notesLabel}</span>
         <textarea
           class="notes-input"
           value={draft.notes ?? ''}
           oninput={onNotesInput}
-          aria-label={messages.settings.checkUpdate}
+          aria-label={messages.library.notesLabel}
         ></textarea>
       </label>
 
       <div class="fields-section">
         <div class="section-label">
-          <span>{messages.entry.text}</span>
+          <span>{messages.library.fieldsLabel}</span>
           <button type="button" class="ghost-btn small" onclick={onAddField}>
-            + {messages.library.create}
+            + {messages.library.addField}
           </button>
         </div>
         {#each draft.fields as field (field.draftId)}
@@ -472,18 +472,18 @@
             <input
               class="text-input field-key"
               type="text"
-              placeholder={messages.entry.text}
+              placeholder={messages.library.fieldKeyPlaceholder}
               value={field.key}
               oninput={(e) => onFieldKeyInput(field.draftId, e)}
-              aria-label={messages.entry.text}
+              aria-label={messages.library.fieldKeyPlaceholder}
             />
             <input
               class="text-input field-value"
               type="text"
-              placeholder={messages.entry.text}
+              placeholder={messages.library.fieldValuePlaceholder}
               value={field.value}
               oninput={(e) => onFieldValueInput(field.draftId, e)}
-              aria-label={messages.entry.text}
+              aria-label={messages.library.fieldValuePlaceholder}
             />
             <label class="sensitive-toggle">
               <input
@@ -509,7 +509,7 @@
         <input
           class="text-input"
           type="text"
-          placeholder={messages.library.manualTag}
+          placeholder={messages.library.tagsPlaceholder}
           value={draft.manualTags.join(', ')}
           oninput={onManualTagsInput}
           aria-label={messages.library.manualTag}
@@ -526,14 +526,14 @@
                 <button
                   type="button"
                   class="tag-convert"
-                  aria-label={`${messages.library.aiTag} ${tag}`}
+                  aria-label={`${messages.quickAccess.convertToManualPrefix}${tag}`}
                   title={messages.library.manualTag}
                   onclick={() => onConvertAiTag(tag)}
                 >→{messages.library.manualTag}</button>
                 <button
                   type="button"
                   class="tag-remove"
-                  aria-label={`${messages.library.delete} ${tag}`}
+                  aria-label={`${messages.quickAccess.removeAiTagPrefix}${tag}`}
                   title={messages.library.delete}
                   onclick={() => onRemoveAiTag(tag)}
                 >×</button>
@@ -562,7 +562,7 @@
       onclick={save}
       disabled={!canSave}
     >
-      {saving ? messages.settings.downloading : messages.quickAccess.save}
+      {saving ? messages.quickAccess.saving : messages.quickAccess.save}
     </button>
   </div>
 
@@ -579,15 +579,15 @@
           <button
             type="button"
             class="ghost-btn small"
-            aria-label={messages.settings.clear}
-            title={messages.settings.clear}
+            aria-label={messages.quickAccess.close}
+            title={messages.quickAccess.close}
             onclick={() => (auditOpen = false)}
-          >{messages.settings.clear}</button>
+          >{messages.quickAccess.close}</button>
         </header>
         <div class="audit-meta">
-          <span>Provider: {enrichment.audit.providerId}</span>
-          <span>Model: {enrichment.audit.model}</span>
-          <span>Sent: {enrichment.audit.sentAt}</span>
+          <span>{messages.quickAccess.auditProvider}: {enrichment.audit.providerId}</span>
+          <span>{messages.quickAccess.auditModel}: {enrichment.audit.model}</span>
+          <span>{messages.quickAccess.auditSentAt}: {enrichment.audit.sentAt}</span>
         </div>
         <div class="audit-messages">
           {#each enrichment.audit.messages as msg, i (i)}

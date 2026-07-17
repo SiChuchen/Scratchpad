@@ -17,7 +17,7 @@
     VaultEntryInput,
     VaultTag,
   } from '$lib/types/vault'
-  import { messages } from '$lib/i18n'
+  import { messages, isZh } from '$lib/i18n'
 
   interface Props {
     mode: 'create' | 'edit'
@@ -99,18 +99,13 @@
 
   let saving = $state(false)
 
-  // Labels that aren't part of LocaleMessages: pick by which locale is loaded.
-  // Task 19 only requires the visible "vault"/"保险箱" strings to disappear;
-  // these generic zh labels do not contain that term.
-  const isZh = $derived(messages.nav.home === '收纳')
-  const typeLabel = $derived(isZh ? '类型' : 'Type')
-  const titleLabel = $derived(isZh ? '标题' : 'Title')
-  const fieldsLabel = $derived(isZh ? '字段' : 'Fields')
-  const addFieldLabel = $derived(isZh ? '添加字段' : 'Add field')
-  const fieldKeyLabel = $derived(isZh ? '字段名' : 'Field name')
-  const fieldValueLabel = $derived(isZh ? '字段值' : 'Field value')
-  const notesLabel = $derived(isZh ? '备注' : 'Notes')
-  const tagsLabel = $derived(isZh ? '标签（逗号分隔）' : 'Tags (comma separated)')
+  // Field row labels (used for aria-labels, distinct from display labels).
+  // zh-CN: 字段名 / 字段值; en: Field name / Field value. These are not in
+  // LocaleMessages because the library block uses generic 键/值 placeholders
+  // for the capture preview; here we want slightly more descriptive names.
+  const fieldKeyLabel = $derived(isZh() ? '字段名' : 'Field name')
+  const fieldValueLabel = $derived(isZh() ? '字段值' : 'Field value')
+  const tagsLabel = $derived(isZh() ? '标签（逗号分隔）' : 'Tags (comma separated)')
 
   // kind 切换（仅 create 模式有效）→ 替换 fields
   function onKindChange(next: EntryKind) {
@@ -192,8 +187,8 @@
 
 <form onsubmit={handleSubmit} class="editor">
   <div class="field">
-    <span class="label">{typeLabel}</span>
-    <div class="kind-row" role="radiogroup" aria-label={typeLabel}>
+    <span class="label">{messages.library.kind}</span>
+    <div class="kind-row" role="radiogroup" aria-label={messages.library.kind}>
       {#each ['credential', 'bookmark', 'note'] as k (k)}
         <button
           type="button"
@@ -210,14 +205,14 @@
   </div>
 
   <label class="field">
-    <span class="label">{titleLabel}</span>
-    <input class="input" bind:value={title} placeholder={titleLabel} required />
+    <span class="label">{messages.library.titleLabel}</span>
+    <input class="input" bind:value={title} placeholder={messages.library.titlePlaceholder} required />
   </label>
 
   <div class="fields-list">
     <div class="fields-header">
-      <span class="label">{fieldsLabel}</span>
-      <button type="button" class="add-btn" onclick={addField}>+ {addFieldLabel}</button>
+      <span class="label">{messages.library.fieldsLabel}</span>
+      <button type="button" class="add-btn" onclick={addField}>+ {messages.library.addField}</button>
     </div>
     {#each fields as f (f.id)}
       <div class="field-row">
@@ -238,7 +233,7 @@
           type="button"
           class="icon-btn"
           aria-label={f.isSensitive ? messages.quickAccess.removeSensitiveMark : messages.quickAccess.markSensitive}
-          title={f.isSensitive ? messages.quickAccess.markSensitive : messages.quickAccess.removeSensitiveMark}
+          title={f.isSensitive ? messages.quickAccess.removeSensitiveMark : messages.quickAccess.markSensitive}
           onclick={() => toggleSensitive(f.id)}
         >
           {#if f.isSensitive}
@@ -288,13 +283,13 @@
   </div>
 
   <label class="field">
-    <span class="label">{notesLabel}</span>
+    <span class="label">{messages.library.notesLabel}</span>
     <textarea class="input textarea" bind:value={notes} rows={2}></textarea>
   </label>
 
   <label class="field">
     <span class="label">{tagsLabel}</span>
-    <input class="input" bind:value={manualTagsInput} placeholder={messages.library.manualTag} />
+    <input class="input" bind:value={manualTagsInput} placeholder={messages.library.tagsPlaceholder} />
   </label>
 
   {#if mode === 'edit' && aiTags.length > 0}
@@ -321,7 +316,7 @@
   <div class="actions">
     <button type="button" class="btn-secondary" onclick={onCancel} disabled={saving}>{messages.home.cancel}</button>
     <button type="submit" class="btn-primary" disabled={saving}>
-      {saving ? messages.settings.downloading : messages.quickAccess.save}
+      {saving ? messages.quickAccess.saving : messages.quickAccess.save}
     </button>
   </div>
 </form>

@@ -546,9 +546,10 @@ describe('CaptureMode', () => {
     await vi.advanceTimersByTimeAsync(LOCAL_PARSE_DELAY_MS)
     await waitFor(() => expect(mockVaultApi.parseCaptureLocal).toHaveBeenCalled())
 
-    // Wait for the AI tag chip to render.
+    // Wait for the AI tag chip to render. Convert chip aria-label now uses the
+    // prefix "将 AI 标签…转为手动标签：" followed by the tag name.
     const convertBtn = await screen.findByRole('button', {
-      name: /AI 标签 work/,
+      name: /将 AI 标签.*转为手动标签：work/,
     })
     expect(screen.getByText('work')).toBeInTheDocument()
     expect(screen.getByText('meeting')).toBeInTheDocument()
@@ -558,15 +559,15 @@ describe('CaptureMode', () => {
 
     // "work" disappears from the AI tags section and appears in manual tags.
     await waitFor(() => {
-      const manualInput = screen.getByPlaceholderText('手动标签') as HTMLInputElement
+      const manualInput = screen.getByPlaceholderText('例如：work, db') as HTMLInputElement
       expect(manualInput.value).toContain('work')
     })
     // AI tag chip for "work" is gone (only "meeting" remains in AI section).
     expect(
-      screen.queryByRole('button', { name: /AI 标签 work/ }),
+      screen.queryByRole('button', { name: /将 AI 标签.*转为手动标签：work/ }),
     ).not.toBeInTheDocument()
     expect(
-      screen.getByRole('button', { name: /AI 标签 meeting/ }),
+      screen.getByRole('button', { name: /将 AI 标签.*转为手动标签：meeting/ }),
     ).toBeInTheDocument()
 
     // Save — manual tags must include "work" and aiTags must not.

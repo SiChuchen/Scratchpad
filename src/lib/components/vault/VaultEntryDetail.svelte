@@ -48,12 +48,10 @@
     detail.entry.notes != null && detail.entry.notes.trim().length > 0,
   )
 
-  // Title / notes labels: pick by which locale is currently loaded. There
-  // is no dedicated label key for these in LocaleMessages, but we want the
-  // detail panel to follow the user's language.
-  const isZh = $derived(messages.nav.home === '收纳')
-  const titleLabel = $derived(isZh ? '标题' : 'Title')
-  const notesLabel = $derived(isZh ? '备注' : 'Notes')
+  // Title / notes labels come from the shared library i18n block so they stay
+  // in sync with the editor / capture preview.
+  const titleLabel = $derived(messages.library.titleLabel)
+  const notesLabel = $derived(messages.library.notesLabel)
 </script>
 
 <div class="detail">
@@ -79,7 +77,7 @@
         label={tag.source === 'ai' ? messages.library.aiTag : messages.library.manualTag}
         value={tag.tag}
         {resetToken}
-        onCopy={(p) => onCopy({ ...p, label: tag.source === 'ai' ? messages.library.aiTag : messages.library.manualTag })}
+        onCopy={(p) => onCopy({ ...p, label: `${tag.source === 'ai' ? messages.library.aiTag : messages.library.manualTag}：${tag.tag}` })}
       />
       <span class="source-badge {tag.source}">{tag.source === 'ai' ? 'AI' : 'manual'}</span>
       {#if tag.source === 'ai' && onRemoveAiTag}
