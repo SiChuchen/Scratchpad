@@ -75,6 +75,7 @@ export interface LocaleMessages {
     autoEnrichDisabled: string
     configureNow: string
     openSettingsFailed: string
+    openFailed: string
     modeLabel: string
   }
   aiSettings: {

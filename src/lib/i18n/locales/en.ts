@@ -75,6 +75,7 @@ const en: LocaleMessages = {
     autoEnrichDisabled: 'AI auto-organization is off',
     configureNow: 'Configure now',
     openSettingsFailed: 'Could not open main window settings',
+    openFailed: 'Could not open quick access',
     modeLabel: 'Quick access mode',
   },
   aiSettings: {

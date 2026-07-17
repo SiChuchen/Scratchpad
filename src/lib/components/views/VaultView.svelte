@@ -20,7 +20,6 @@
   import { vaultApi } from '$lib/api/vault'
   import { onTagsUpdated, onLlmError } from '$lib/api/vault'
   import { messages } from '$lib/i18n'
-  import { invoke } from '@tauri-apps/api/core'
   import { HybridSearchController, type HybridSearchApi, type HybridSearchState } from '$lib/state/vault-search'
   import {
     LibraryViewController,
@@ -214,14 +213,6 @@
   function closeNewMenu() {
     showNewMenu = false
   }
-  /** 主窗口 → 打开全局 quick-access 面板。 */
-  async function openQuickAccess() {
-    try {
-      await invoke('ipc_open_quick_access')
-    } catch (e) {
-      console.error('openQuickAccess failed', e)
-    }
-  }
   function startCreate(kind: EntryKind) {
     showNewMenu = false
     editorMode = { mode: 'create', kind }
@@ -366,15 +357,6 @@
           aria-expanded={showNewMenu}
           onclick={() => (showNewMenu ? closeNewMenu() : openNewMenu())}
         >+ {messages.library.create}</button>
-        <button
-          type="button"
-          class="quick-access-btn"
-          onclick={openQuickAccess}
-          title={`${messages.library.openQuickAccess} (Alt+Shift+Space)`}
-          aria-label={messages.library.openQuickAccess}
-        >
-          ⚡ {messages.library.quickAccess}
-        </button>
         {#if showNewMenu}
           <!-- I4: 透明全屏 backdrop 拦截外部点击，关闭菜单。
                backdrop 在 popover 之下（z-index 较低），点击它关闭；
@@ -565,23 +547,6 @@
 
   .new-btn:hover {
     background: color-mix(in srgb, var(--color-primary) 22%, transparent);
-  }
-
-  .quick-access-btn {
-    background: color-mix(in srgb, var(--color-warning, #f59e0b) 14%, transparent);
-    border: 1px solid color-mix(in srgb, var(--color-warning, #f59e0b) 30%, transparent);
-    color: var(--color-warning, #f59e0b);
-    font-size: var(--font-sm, 0.65rem);
-    font-weight: 500;
-    padding: 0.25rem 0.55rem;
-    border-radius: var(--radius-md, 0.3rem);
-    cursor: pointer;
-    font-family: inherit;
-    white-space: nowrap;
-    transition: background 0.12s, border-color 0.12s;
-  }
-  .quick-access-btn:hover {
-    background: color-mix(in srgb, var(--color-warning, #f59e0b) 22%, transparent);
   }
 
   .new-menu-popover {

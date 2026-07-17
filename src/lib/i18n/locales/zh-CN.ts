@@ -75,6 +75,7 @@ const zhCN: LocaleMessages = {
     autoEnrichDisabled: 'AI 自动整理已关闭',
     configureNow: '立即配置',
     openSettingsFailed: '无法打开主窗口设置',
+    openFailed: '无法打开快速入口',
     modeLabel: '快速入口模式',
   },
   aiSettings: {

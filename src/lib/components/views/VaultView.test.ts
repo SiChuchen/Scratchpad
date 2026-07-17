@@ -128,8 +128,8 @@ describe('VaultView', () => {
     const notify = vi.fn()
     render(VaultView, { notify })
 
-    expect(await screen.findByRole('button', { name: 'Open quick access' })).toBeInTheDocument()
-    await fireEvent.click(screen.getByRole('button', { name: 'Edit Entry B' }))
+    expect(screen.queryByRole('button', { name: 'Open quick access' })).not.toBeInTheDocument()
+    await fireEvent.click(await screen.findByRole('button', { name: 'Edit Entry B' }))
     const titleInput = await screen.findByDisplayValue('Entry B')
     await fireEvent.submit(titleInput.closest('form')!)
 

@@ -3,6 +3,7 @@
   import { invoke } from '@tauri-apps/api/core'
   import { listen } from '@tauri-apps/api/event'
   import TopBar from '$lib/components/TopBar.svelte'
+  import QuickAccessFab from '$lib/components/QuickAccessFab.svelte'
   import HomeView from '$lib/components/views/HomeView.svelte'
   import CategoriesView from '$lib/components/views/CategoriesView.svelte'
   import NoteView from '$lib/components/views/NoteView.svelte'
@@ -21,6 +22,7 @@
   let noteEntries = $state<DockEntry[]>([])
   let langKey = $state(0)
   let preferences = $state<DockPreferences | null>(null)
+  let quickAccessOpening = $state(false)
   let toast = $state<{ text: string; kind: 'success' | 'error'; undo?: () => void; actionLabel?: string } | null>(null)
   let confirmDialog = $state<{ message: string; onConfirm: () => void; onCancel: () => void; confirmLabel?: string; cancelLabel?: string } | null>(null)
   let toastTimer: ReturnType<typeof setTimeout> | null = null
@@ -424,6 +426,18 @@
     }
   }
 
+  async function openQuickAccess() {
+    if (quickAccessOpening) return
+    quickAccessOpening = true
+    try {
+      await invoke('ipc_open_quick_access')
+    } catch (e) {
+      showToast(`${messages.quickAccess.openFailed}: ${formatError(e)}`, 'error')
+    } finally {
+      quickAccessOpening = false
+    }
+  }
+
   // --- Ctrl+click drag ---
 
   let ctrlHeld = $state(false)
@@ -718,15 +732,17 @@
   />
 {:else if currentView === 'vault'}
   <VaultView notify={showToast} />
-{:else if currentView === 'settings' && preferences}
+  {:else if currentView === 'settings' && preferences}
   <SettingsView
     preferences={preferences}
     onChange={updatePreferences}
     onBack={() => navigate('home')}
     notify={showToast}
   />
-{/if}
-{/key}
+  {/if}
+
+  <QuickAccessFab onOpen={openQuickAccess} disabled={quickAccessOpening} />
+  {/key}
 
 {#if toast}
   <div class="toast" class:toast-error={toast.kind === 'error'}>
