@@ -24,12 +24,12 @@
   import type { QuickAccessState } from '$lib/types/quick-access'
   import { handleKeydown } from '$lib/state/quick-access'
   import CaptureMode from '$lib/components/quick-access/CaptureMode.svelte'
+  import SearchMode from '$lib/components/quick-access/SearchMode.svelte'
   import type { VaultEntryDetail } from '$lib/types/vault'
 
   const win = getCurrentWindow()
 
   // Element refs
-  let searchInputEl = $state<HTMLInputElement | null>(null)
   let unlisteners: UnlistenFn[] = []
 
   // Reactive state — primitive $state to avoid svelte-check edge cases.
@@ -39,6 +39,10 @@
   let selectedId = $state<string | null>(null)
   let preferences = $state<DockPreferences | null>(null)
   let systemDark = $state(true)
+  // Bumps each time the window blurs / sensitive-reset fires; SearchMode
+  // forwards this to CopyableValue to re-mask sensitive values.
+  let sensitiveResetToken = $state(0)
+  let autoHybridSearch = $state(false)
 
   // Inline toast notification (simple ephemeral banner).
   let noticeText = $state('')
@@ -88,6 +92,15 @@
       console.error('QuickAccessApp: failed to load preferences', e)
     }
 
+    // Load Vault AI settings so SearchMode knows whether to enable hybrid search.
+    try {
+      const { vaultApi } = await import('$lib/api/vault')
+      const aiSettings = await vaultApi.getAiSettings()
+      autoHybridSearch = aiSettings.autoHybridSearch
+    } catch (e) {
+      console.error('QuickAccessApp: failed to load AI settings', e)
+    }
+
     // Reactive system dark mode
     const mq = window.matchMedia('(prefers-color-scheme: dark)')
     const onSystemTheme = (e: MediaQueryListEvent) => {
@@ -118,6 +131,8 @@
         draft = ''
         query = ''
         selectedId = null
+        // Force CopyableValue rows in either mode to re-mask.
+        sensitiveResetToken += 1
       }),
     )
   })
@@ -152,7 +167,11 @@
         )
         ta?.focus()
       } else {
-        searchInputEl?.focus()
+        // SearchMode owns its input; focus via DOM query.
+        const input = document.querySelector<HTMLInputElement>(
+          '.mode-search .search-input',
+        )
+        input?.focus()
       }
     })
   }
@@ -187,27 +206,11 @@
       onOpenSettings={onOpenAiSettings}
     />
   {:else}
-    <!-- Task 17: SearchMode.svelte will replace this placeholder -->
-    <section class="mode mode-search">
-      <header class="mode-header">
-        <h2>搜索</h2>
-        <span class="hint">Ctrl+Tab → 录入</span>
-      </header>
-      <input
-        bind:this={searchInputEl}
-        class="search-input"
-        type="search"
-        placeholder="搜索资料库…"
-        bind:value={query}
-      />
-      <div class="search-results-placeholder">
-        {#if query}
-          <p>"{query}" 的结果将在这里显示</p>
-        {:else}
-          <p class="muted">输入关键词以开始搜索</p>
-        {/if}
-      </div>
-    </section>
+    <SearchMode
+      {notify}
+      resetToken={sensitiveResetToken}
+      autoHybridSearch={autoHybridSearch}
+    />
   {/if}
 </main>
 
@@ -226,33 +229,6 @@
     overflow: hidden;
   }
 
-  .mode {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    padding: 0.75rem;
-    gap: 0.5rem;
-    min-height: 0;
-  }
-
-  .mode-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-  }
-
-  .mode-header h2 {
-    margin: 0;
-    font-size: var(--font-md, 15px);
-    font-weight: 600;
-    color: var(--text-primary);
-  }
-
-  .hint {
-    font-size: var(--font-xs, 11px);
-    color: var(--text-muted);
-  }
-
   .notice {
     padding: 0.4rem 0.65rem;
     margin: 0.5rem 0.5rem 0;
@@ -267,40 +243,5 @@
     background: color-mix(in srgb, var(--color-danger, #ef4444) 12%, transparent);
     color: var(--color-danger, #ef4444);
     border-color: color-mix(in srgb, var(--color-danger, #ef4444) 30%, transparent);
-  }
-
-  .search-input {
-    width: 100%;
-    border: 1px solid var(--border-default);
-    border-radius: var(--radius-md, 6px);
-    padding: 0.5rem 0.65rem;
-    background: var(--surface-1);
-    color: var(--text-primary);
-    font-family: var(--font-family-en, 'Segoe UI'), var(--font-family-zh, 'Microsoft YaHei'),
-      sans-serif;
-    font-size: var(--font-md, 15px);
-    outline: none;
-  }
-
-  .search-input:focus {
-    border-color: var(--color-primary);
-  }
-
-  .search-results-placeholder {
-    flex: 1;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: var(--text-primary);
-    overflow: auto;
-  }
-
-  .search-results-placeholder p {
-    margin: 0;
-    font-size: var(--font-sm, 13px);
-  }
-
-  .muted {
-    color: var(--text-muted);
   }
 </style>
