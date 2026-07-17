@@ -4,14 +4,10 @@
   // 行为：
   //   * onMount 加载 DockPreferences，应用主题 tokens 和 locale；
   //   * 监听 `quick-access-focus-input` 事件，每次重新聚焦当前模式输入；
-  //   * 监听 `vault-sensitive-reset` 事件，清空当前 mode 的草稿/查询；
+  //   * 监听 `vault-sensitive-reset` 事件，重新掩码已显示的敏感值；
   //   * 全局 keydown：Ctrl+Tab 切换 record/search；Escape 隐藏窗口。
   //
-  // 窗口隐藏不销毁 WebView，因此未保存的 draft/query/selectedId 自然保留。
-  //
-  // 实现说明：使用 primitive/union 类型的 $state 字段（而非 $state<ObjectType>）。
-  // svelte-check 4.4.6 + Svelte 5.55 在多个 $state<复杂对象>(...) 声明并存时
-  // 存在检测异常，把每个字段拆成单独的 primitive $state 即可规避。
+  // 两个模式始终挂载，仅隐藏非活动面板，因此切换模式或隐藏窗口不会丢失工作。
 
   import { onMount, onDestroy } from 'svelte'
   import { listen, type UnlistenFn } from '@tauri-apps/api/event'
@@ -32,11 +28,7 @@
   // Element refs
   let unlisteners: UnlistenFn[] = []
 
-  // Reactive state — primitive $state to avoid svelte-check edge cases.
   let mode = $state<'record' | 'search'>('record')
-  let draft = $state('')
-  let query = $state('')
-  let selectedId = $state<string | null>(null)
   let preferences = $state<DockPreferences | null>(null)
   let systemDark = $state(true)
   // Bumps each time the window blurs / sensitive-reset fires; SearchMode
@@ -147,10 +139,6 @@
     // Sensitive reset on blur (window will also hide from Rust side)
     unlisteners.push(
       await listen('vault-sensitive-reset', () => {
-        draft = ''
-        query = ''
-        selectedId = null
-        // Force CopyableValue rows in either mode to re-mask.
         sensitiveResetToken += 1
       }),
     )
@@ -199,13 +187,22 @@
     win.hide().catch((e: unknown) => console.error('hide failed:', e))
   }
 
+  function switchMode(next: 'record' | 'search') {
+    mode = next
+    focusActiveModeInput()
+  }
+
   function onKeydown(e: KeyboardEvent) {
     // Build a transient QuickAccessState view for the pure helper.
-    const snapshot: QuickAccessState = { mode, draft, query, selectedId }
+    const snapshot: QuickAccessState = {
+      mode,
+      draft: '',
+      query: '',
+      selectedId: null,
+    }
     handleKeydown(snapshot, e, requestHide)
-    // Sync back any mode change.
     if (snapshot.mode !== mode) {
-      mode = snapshot.mode
+      switchMode(snapshot.mode)
     }
   }
 </script>
@@ -220,28 +217,40 @@
 
   <div class="qa-tablist" role="tablist" aria-label={isZh() ? '快速入口模式' : 'Quick access mode'}>
     <button
+      id="qa-record-tab"
       type="button"
       role="tab"
       aria-selected={mode === 'record'}
+      aria-controls="qa-record-panel"
+      tabindex={mode === 'record' ? 0 : -1}
       class="qa-tab"
       class:active={mode === 'record'}
-      onclick={() => (mode = 'record')}
+      onclick={() => switchMode('record')}
     >
       {messages.quickAccess.record}
     </button>
     <button
+      id="qa-search-tab"
       type="button"
       role="tab"
       aria-selected={mode === 'search'}
+      aria-controls="qa-search-panel"
+      tabindex={mode === 'search' ? 0 : -1}
       class="qa-tab"
       class:active={mode === 'search'}
-      onclick={() => (mode = 'search')}
+      onclick={() => switchMode('search')}
     >
       {messages.quickAccess.search}
     </button>
   </div>
 
-  {#if mode === 'record'}
+  <div
+    id="qa-record-panel"
+    class="qa-panel"
+    role="tabpanel"
+    aria-labelledby="qa-record-tab"
+    hidden={mode !== 'record'}
+  >
     <CaptureMode
       {notify}
       {aiConfigured}
@@ -249,13 +258,20 @@
       onSaved={onCaptureSaved}
       onOpenSettings={onOpenAiSettings}
     />
-  {:else}
+  </div>
+  <div
+    id="qa-search-panel"
+    class="qa-panel"
+    role="tabpanel"
+    aria-labelledby="qa-search-tab"
+    hidden={mode !== 'search'}
+  >
     <SearchMode
       {notify}
       resetToken={sensitiveResetToken}
       autoHybridSearch={autoHybridSearch}
     />
-  {/if}
+  </div>
 </main>
 
 <style>
@@ -300,6 +316,16 @@
   .qa-tab.active {
     color: var(--color-primary, #4f46e5);
     border-bottom-color: var(--color-primary, #4f46e5);
+  }
+
+  .qa-panel {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+  }
+
+  .qa-panel[hidden] {
+    display: none;
   }
 
   .notice {

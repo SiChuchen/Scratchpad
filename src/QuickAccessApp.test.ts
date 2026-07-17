@@ -82,6 +82,11 @@ beforeEach(() => {
     autoHybridSearch: false,
     sensitiveClipboardClearSeconds: null,
   })
+  mocks.searchLocal.mockResolvedValue([])
+  mocks.planSearch.mockResolvedValue(null)
+  mocks.cancelSearch.mockResolvedValue(undefined)
+  mocks.getEntry.mockResolvedValue(null)
+  mocks.copyText.mockResolvedValue(undefined)
   mocks.invoke.mockImplementation(async (command: string) => {
     if (command === 'ipc_preferences_get') return preferences()
     return undefined
@@ -103,5 +108,46 @@ describe('QuickAccessApp', () => {
       expect(mocks.invoke).toHaveBeenCalledWith('ipc_open_main_settings')
     })
     expect(mocks.invoke).not.toHaveBeenCalledWith('ipc_open_quick_access')
+  })
+
+  it('preserves record and search input across mode switches', async () => {
+    render(QuickAccessApp)
+
+    const recordInput = await screen.findByRole('textbox', { name: '记录' })
+    await fireEvent.input(recordInput, { target: { value: 'UXREVIEWDRAFT' } })
+
+    await fireEvent.click(screen.getByRole('tab', { name: '搜索' }))
+    const searchInput = screen.getByRole('searchbox', { name: '搜索' })
+    await fireEvent.input(searchInput, { target: { value: 'database' } })
+
+    await fireEvent.click(screen.getByRole('tab', { name: '记录' }))
+    expect(screen.getByRole('textbox', { name: '记录' })).toHaveValue('UXREVIEWDRAFT')
+
+    await fireEvent.click(screen.getByRole('tab', { name: '搜索' }))
+    expect(screen.getByRole('searchbox', { name: '搜索' })).toHaveValue('database')
+  })
+
+  it('focuses the active input after mouse and keyboard mode switches', async () => {
+    render(QuickAccessApp)
+
+    await fireEvent.click(screen.getByRole('tab', { name: '搜索' }))
+    const searchInput = screen.getByRole('searchbox', { name: '搜索' })
+    await waitFor(() => expect(searchInput).toHaveFocus())
+
+    await fireEvent.keyDown(window, { key: 'Tab', ctrlKey: true })
+    const recordInput = screen.getByRole('textbox', { name: '记录' })
+    await waitFor(() => expect(recordInput).toHaveFocus())
+  })
+
+  it('connects each tab to a persistent tabpanel', async () => {
+    render(QuickAccessApp)
+
+    const recordTab = screen.getByRole('tab', { name: '记录' })
+    const searchTab = screen.getByRole('tab', { name: '搜索' })
+    expect(recordTab).toHaveAttribute('aria-controls', 'qa-record-panel')
+    expect(searchTab).toHaveAttribute('aria-controls', 'qa-search-panel')
+
+    expect(screen.getByRole('tabpanel', { name: '记录' })).not.toHaveAttribute('hidden')
+    expect(document.getElementById('qa-search-panel')).toHaveAttribute('hidden')
   })
 })
