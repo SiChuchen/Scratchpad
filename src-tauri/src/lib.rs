@@ -376,6 +376,22 @@ fn ipc_shortcut_status(
     shortcut_status_for(&state, target)
 }
 
+/// 从主窗口 UI（TopBar 按钮、VaultView header 等）打开全局 quick-access 面板。
+///
+/// 复用与全局快捷键相同的 `show_quick_access_centered`：在鼠标所在显示器
+/// 居中、set_size、set_focus、emit `quick-access-focus-input`。可见时切回隐藏。
+#[tauri::command]
+fn ipc_open_quick_access(app: tauri::AppHandle) -> Result<(), String> {
+    if let Some(w) = app.get_webview_window("quick-access") {
+        if w.is_visible().map_err(|e| e.to_string())? {
+            let _ = w.hide();
+        } else {
+            show_quick_access_centered(&app);
+        }
+    }
+    Ok(())
+}
+
 #[tauri::command]
 fn ipc_shortcut_update(
     state: tauri::State<AppState>,
@@ -795,6 +811,7 @@ pub fn run() {
             ipc_preferences_list_fonts,
             ipc_shortcut_status,
             ipc_shortcut_update,
+            ipc_open_quick_access,
             ipc_toggle_always_on_top,
             ipc_window_apply_circle_region,
             ipc_window_clear_region,

@@ -43,6 +43,8 @@
   // forwards this to CopyableValue to re-mask sensitive values.
   let sensitiveResetToken = $state(0)
   let autoHybridSearch = $state(false)
+  let aiConfigured = $state(false)
+  let autoEnrich = $state(true)
 
   // Inline toast notification (simple ephemeral banner).
   let noticeText = $state('')
@@ -69,10 +71,28 @@
   }
 
   function onOpenAiSettings() {
-    // Task 17+ will wire this to open the main window's vault settings panel
-    // via a Tauri command. For now we emit a no-op event so behavior remains
-    // local; the quick-access window itself does not host the settings UI.
-    notify(isZh() ? '请到主窗口资料库设置中配置 AI' : 'Configure AI in the main window settings', 'success')
+    // Open main window and switch to settings view via Tauri IPC.
+    invoke('ipc_open_quick_access').catch(() => {}) // never (we are quick-access)
+    notify(
+      isZh() ? '请到主窗口资料库设置中配置 AI' : 'Configure AI in the main window settings',
+      'success',
+    )
+  }
+
+  /** 重新读取 AI 配置 + 设置；quick-access 每次聚焦时都要调，避免使用 stale 快照。 */
+  async function reloadAiState() {
+    try {
+      const { vaultApi } = await import('$lib/api/vault')
+      const [cfg, settings] = await Promise.all([
+        vaultApi.getLlmConfig(),
+        vaultApi.getAiSettings(),
+      ])
+      aiConfigured = !!cfg?.hasApiKey
+      autoEnrich = settings.autoEnrich
+      autoHybridSearch = settings.autoHybridSearch
+    } catch (e) {
+      console.error('QuickAccessApp: failed to reload AI state', e)
+    }
   }
 
   onMount(async () => {
@@ -92,14 +112,8 @@
       console.error('QuickAccessApp: failed to load preferences', e)
     }
 
-    // Load Vault AI settings so SearchMode knows whether to enable hybrid search.
-    try {
-      const { vaultApi } = await import('$lib/api/vault')
-      const aiSettings = await vaultApi.getAiSettings()
-      autoHybridSearch = aiSettings.autoHybridSearch
-    } catch (e) {
-      console.error('QuickAccessApp: failed to load AI settings', e)
-    }
+    // 初始加载 AI 配置（在 quick-access 第一次挂载时）。
+    await reloadAiState()
 
     // Reactive system dark mode
     const mq = window.matchMedia('(prefers-color-scheme: dark)')
@@ -122,6 +136,9 @@
             preferences = prefs
           })
           .catch(() => {})
+        // 关键：每次呼出都重读 AI 配置 — 用户可能在主窗口刚保存配置，
+        // 否则 quick-access 持续使用首次挂载时的 stale 快照（"成功但没整理"）。
+        void reloadAiState()
       }),
     )
 
@@ -199,9 +216,34 @@
     <div class="notice" class:error={noticeKind === 'error'} role="status" aria-live="polite">{noticeText}</div>
   {/if}
 
+  <div class="qa-tablist" role="tablist" aria-label={isZh() ? '快速入口模式' : 'Quick access mode'}>
+    <button
+      type="button"
+      role="tab"
+      aria-selected={mode === 'record'}
+      class="qa-tab"
+      class:active={mode === 'record'}
+      onclick={() => (mode = 'record')}
+    >
+      {messages.quickAccess.record}
+    </button>
+    <button
+      type="button"
+      role="tab"
+      aria-selected={mode === 'search'}
+      class="qa-tab"
+      class:active={mode === 'search'}
+      onclick={() => (mode = 'search')}
+    >
+      {messages.quickAccess.search}
+    </button>
+  </div>
+
   {#if mode === 'record'}
     <CaptureMode
       {notify}
+      {aiConfigured}
+      {autoEnrich}
       onSaved={onCaptureSaved}
       onOpenSettings={onOpenAiSettings}
     />
@@ -227,6 +269,35 @@
     border: 1px solid var(--border-emphasis);
     box-shadow: var(--shadow-default);
     overflow: hidden;
+  }
+
+  .qa-tablist {
+    display: flex;
+    gap: 0;
+    padding: 0.4rem 0.4rem 0;
+    border-bottom: 1px solid var(--border-emphasis, rgba(255, 255, 255, 0.06));
+    background: color-mix(in srgb, var(--surface-0) 80%, transparent);
+  }
+  .qa-tab {
+    appearance: none;
+    border: none;
+    background: transparent;
+    color: var(--text-muted, rgba(255, 255, 255, 0.55));
+    padding: 0.4rem 0.9rem;
+    font-size: var(--font-md, 14px);
+    font-weight: 500;
+    cursor: pointer;
+    border-radius: 6px 6px 0 0;
+    border-bottom: 2px solid transparent;
+    transition: color 0.12s, border-color 0.12s, background 0.12s;
+  }
+  .qa-tab:hover {
+    color: var(--text-strong, rgba(255, 255, 255, 0.9));
+    background: color-mix(in srgb, var(--color-primary, #4f46e5) 8%, transparent);
+  }
+  .qa-tab.active {
+    color: var(--color-primary, #4f46e5);
+    border-bottom-color: var(--color-primary, #4f46e5);
   }
 
   .notice {

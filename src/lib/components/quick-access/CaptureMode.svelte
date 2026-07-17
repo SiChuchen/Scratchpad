@@ -20,13 +20,12 @@
 
   import { onMount, onDestroy } from 'svelte'
   import { vaultApi } from '$lib/api/vault'
-  import { messages } from '$lib/i18n'
+  import { messages, isZh } from '$lib/i18n'
   import { CaptureDraftController } from '$lib/state/capture-draft'
   import type {
     CaptureDraft,
     CaptureEnrichment,
     EntryKind,
-    VaultAiSettings,
     VaultEntryDetail,
   } from '$lib/types/vault'
 
@@ -37,12 +36,18 @@
       undo?: () => void,
       actionLabel?: string,
     ) => void
+    /** AI 是否已配置（来自 QuickAccessApp 重读，避免 stale 快照）。 */
+    aiConfigured?: boolean
+    /** AI 自动整理开关（来自 QuickAccessApp 重读）。 */
+    autoEnrich?: boolean
     onSaved?: (entry: VaultEntryDetail) => void
     onOpenSettings?: () => void
   }
 
   let {
     notify,
+    aiConfigured = false,
+    autoEnrich = true,
     onSaved,
     onOpenSettings,
   }: Props = $props()
@@ -73,29 +78,12 @@
   // merge logic; this set mirrors user edits for UI reporting only.
   let dirtyPaths = $state<Set<string>>(new Set())
 
-  let aiConfigured = $state(false)
-  let aiSettings = $state<VaultAiSettings>({
-    autoEnrich: false,
-    autoHybridSearch: false,
-    sensitiveClipboardClearSeconds: null,
-  })
-
   let parseTimer: ReturnType<typeof setTimeout> | null = null
   let enrichTimer: ReturnType<typeof setTimeout> | null = null
 
   // ---- Lifecycle ----------------------------------------------------------
 
   onMount(async () => {
-    try {
-      const [cfg, settings] = await Promise.all([
-        vaultApi.getLlmConfig(),
-        vaultApi.getAiSettings(),
-      ])
-      aiConfigured = !!cfg?.hasApiKey
-      aiSettings = settings
-    } catch (e) {
-      console.error('CaptureMode: failed to load AI settings', e)
-    }
     // 开启首个 session，预先生成 requestId 供 enrich / save 使用。
     requestId = controller.startSession()
   })
@@ -166,7 +154,7 @@
       resetDirty()
       draft = cloneDraft(controller.draft)
       // AI enrich scheduling
-      if (aiSettings.autoEnrich && aiConfigured) {
+      if (autoEnrich && aiConfigured) {
         enrichStatus = 'idle'
         if (enrichTimer) clearTimeout(enrichTimer)
         enrichTimer = setTimeout(() => {
@@ -180,7 +168,7 @@
 
   async function doEnrich() {
     if (!draft) return
-    if (!aiSettings.autoEnrich || !aiConfigured) return
+    if (!autoEnrich || !aiConfigured) return
     const myRevision = ++captureRevision
     enrichStatus = 'enriching'
     try {
@@ -385,6 +373,22 @@
     <span class="hint">Ctrl+Enter {messages.quickAccess.save} · Ctrl+Tab {messages.quickAccess.search}</span>
   </header>
 
+  {#if !aiConfigured || !autoEnrich}
+    <div class="ai-status-banner" role="status" aria-live="polite">
+      <span class="ai-status-icon">⚠</span>
+      <span class="ai-status-text">
+        {isZh()
+          ? (!aiConfigured ? 'AI 未配置，仅本地整理' : 'AI 自动整理已关闭')
+          : (!aiConfigured ? 'AI not configured; local parse only' : 'AI auto-enrich disabled')}
+      </span>
+      {#if !aiConfigured}
+        <button type="button" class="ghost-btn small" onclick={onOpenSettings}>
+          {isZh() ? '立即配置' : 'Configure now'}
+        </button>
+      {/if}
+    </div>
+  {/if}
+
   <textarea
     class="raw-textarea"
     placeholder={messages.quickAccess.inputPlaceholder}
@@ -551,11 +555,6 @@
         {messages.quickAccess.outboundAudit}
       </button>
     {/if}
-    {#if !aiConfigured}
-      <button type="button" class="ghost-btn" onclick={onOpenSettings}>
-        {messages.aiSettings.title}
-      </button>
-    {/if}
     <button
       type="button"
       class="primary-btn"
@@ -610,6 +609,24 @@
     gap: 0.5rem;
     padding: 0.75rem;
     min-height: 0;
+  }
+
+  .ai-status-banner {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.4rem 0.6rem;
+    border-radius: 6px;
+    background: color-mix(in srgb, var(--color-warning, #f59e0b) 14%, transparent);
+    border: 1px solid color-mix(in srgb, var(--color-warning, #f59e0b) 40%, transparent);
+    color: var(--color-warning, #f59e0b);
+    font-size: var(--font-sm, 13px);
+  }
+  .ai-status-banner .ai-status-text {
+    flex: 1;
+  }
+  .ai-status-banner .ai-status-icon {
+    font-size: 1rem;
   }
 
   .mode-header {

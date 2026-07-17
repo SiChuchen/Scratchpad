@@ -256,14 +256,19 @@ export class CaptureDraftController {
     }
     // fields
     if (suggestion.fields.length > 0) {
+      // 用 lowercase key 归一化索引，避免本地解析器输出 "user" 与 LLM 输出
+      // "Username" 同时存在导致重复行。
       const byKey = new Map<string, CaptureField>()
       for (const f of draft.fields) {
-        if (!byKey.has(f.key)) byKey.set(f.key, f)
+        const lk = f.key.trim().toLowerCase()
+        if (lk && !byKey.has(lk)) byKey.set(lk, f)
       }
       for (const sug of suggestion.fields) {
-        const existing = byKey.get(sug.key)
+        const lk = sug.key.trim().toLowerCase()
+        if (!lk) continue
+        const existing = byKey.get(lk)
         if (existing) {
-          // 同 key：已存在的字段，如果未 dirty，则覆盖 value（不复制新行）。
+          // 同 key（lowercase 归一后）：已存在的字段，如果未 dirty，则覆盖 value。
           if (!this.dirty.has(fieldValuePath(existing.draftId))) {
             existing.value = sug.value
           }
@@ -280,7 +285,7 @@ export class CaptureDraftController {
             isSensitive: sug.isSensitive,
           }
           draft.fields.push(newField)
-          byKey.set(sug.key, newField)
+          byKey.set(lk, newField)
         }
       }
     }

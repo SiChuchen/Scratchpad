@@ -178,13 +178,11 @@ describe('CaptureMode', () => {
 
     render(CaptureMode, {
       notify: vi.fn(),
+      aiConfigured: true,
+      autoEnrich: true,
       onSaved: vi.fn(),
       onOpenSettings: vi.fn(),
     })
-
-    // Wait for onMount getLlmConfig / getAiSettings to settle.
-    await vi.advanceTimersByTimeAsync(0)
-    await waitFor(() => expect(mockVaultApi.getLlmConfig).toHaveBeenCalled())
 
     await typeRawText('hello world')
 
@@ -215,11 +213,12 @@ describe('CaptureMode', () => {
 
     render(CaptureMode, {
       notify: vi.fn(),
+      aiConfigured: true,
+      autoEnrich: true,
       onSaved: vi.fn(),
       onOpenSettings: vi.fn(),
     })
     await vi.advanceTimersByTimeAsync(0)
-    await waitFor(() => expect(mockVaultApi.getLlmConfig).toHaveBeenCalled())
 
     await typeRawText('foo')
 
@@ -249,11 +248,12 @@ describe('CaptureMode', () => {
 
     render(CaptureMode, {
       notify: vi.fn(),
+      aiConfigured: true,
+      autoEnrich: false,
       onSaved: vi.fn(),
       onOpenSettings: vi.fn(),
     })
     await vi.advanceTimersByTimeAsync(0)
-    await waitFor(() => expect(mockVaultApi.getLlmConfig).toHaveBeenCalled())
 
     await typeRawText('foo')
     await vi.advanceTimersByTimeAsync(LOCAL_PARSE_DELAY_MS + AI_ENRICH_DELAY_MS + 50)
@@ -271,11 +271,12 @@ describe('CaptureMode', () => {
 
     render(CaptureMode, {
       notify: vi.fn(),
+      aiConfigured: true,
+      autoEnrich: true,
       onSaved: vi.fn(),
       onOpenSettings: vi.fn(),
     })
     await vi.advanceTimersByTimeAsync(0)
-    await waitFor(() => expect(mockVaultApi.getLlmConfig).toHaveBeenCalled())
 
     await typeRawText('raw')
     await vi.advanceTimersByTimeAsync(LOCAL_PARSE_DELAY_MS)
@@ -311,11 +312,12 @@ describe('CaptureMode', () => {
 
     render(CaptureMode, {
       notify: vi.fn(),
+      aiConfigured: true,
+      autoEnrich: true,
       onSaved: vi.fn(),
       onOpenSettings: vi.fn(),
     })
     await vi.advanceTimersByTimeAsync(0)
-    await waitFor(() => expect(mockVaultApi.getLlmConfig).toHaveBeenCalled())
 
     await typeRawText('raw')
     await vi.advanceTimersByTimeAsync(LOCAL_PARSE_DELAY_MS)
@@ -343,11 +345,12 @@ describe('CaptureMode', () => {
 
     render(CaptureMode, {
       notify: vi.fn(),
+      aiConfigured: true,
+      autoEnrich: true,
       onSaved: vi.fn(),
       onOpenSettings: vi.fn(),
     })
     await vi.advanceTimersByTimeAsync(0)
-    await waitFor(() => expect(mockVaultApi.getLlmConfig).toHaveBeenCalled())
 
     await typeRawText('my-secret-value raw text')
     await vi.advanceTimersByTimeAsync(LOCAL_PARSE_DELAY_MS)
@@ -384,11 +387,12 @@ describe('CaptureMode', () => {
 
     render(CaptureMode, {
       notify: vi.fn(),
+      aiConfigured: true,
+      autoEnrich: true,
       onSaved: vi.fn(),
       onOpenSettings: vi.fn(),
     })
     await vi.advanceTimersByTimeAsync(0)
-    await waitFor(() => expect(mockVaultApi.getLlmConfig).toHaveBeenCalled())
 
     await typeRawText('foo')
     await vi.advanceTimersByTimeAsync(LOCAL_PARSE_DELAY_MS)
@@ -423,7 +427,6 @@ describe('CaptureMode', () => {
       onOpenSettings: vi.fn(),
     })
     await vi.advanceTimersByTimeAsync(0)
-    await waitFor(() => expect(mockVaultApi.getLlmConfig).toHaveBeenCalled())
 
     await typeRawText('foo')
     await vi.advanceTimersByTimeAsync(LOCAL_PARSE_DELAY_MS)
@@ -455,7 +458,6 @@ describe('CaptureMode', () => {
       onOpenSettings: vi.fn(),
     })
     await vi.advanceTimersByTimeAsync(0)
-    await waitFor(() => expect(mockVaultApi.getLlmConfig).toHaveBeenCalled())
 
     await typeRawText('foo')
     await vi.advanceTimersByTimeAsync(LOCAL_PARSE_DELAY_MS)
@@ -536,11 +538,12 @@ describe('CaptureMode', () => {
 
     render(CaptureMode, {
       notify: vi.fn(),
+      aiConfigured: true,
+      autoEnrich: true,
       onSaved: vi.fn(),
       onOpenSettings: vi.fn(),
     })
     await vi.advanceTimersByTimeAsync(0)
-    await waitFor(() => expect(mockVaultApi.getLlmConfig).toHaveBeenCalled())
 
     await typeRawText('foo')
     await vi.advanceTimersByTimeAsync(LOCAL_PARSE_DELAY_MS)
