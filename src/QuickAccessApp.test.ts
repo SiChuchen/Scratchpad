@@ -110,6 +110,17 @@ afterEach(() => {
 })
 
 describe('QuickAccessApp', () => {
+  it('renders both primary modes as icon-labelled segments', async () => {
+    render(QuickAccessApp)
+    const record = await screen.findByRole('tab', { name: '记录' })
+    const search = screen.getByRole('tab', { name: '搜索' })
+
+    expect(record).toHaveAttribute('data-primary-mode', 'record')
+    expect(search).toHaveAttribute('data-primary-mode', 'search')
+    expect(record.querySelector('svg[aria-hidden="true"]')).toBeInTheDocument()
+    expect(search.querySelector('svg[aria-hidden="true"]')).toBeInTheDocument()
+  })
+
   it('applies live preference changes from the main window', async () => {
     render(QuickAccessApp)
     await screen.findByRole('tab', { name: '记录' })

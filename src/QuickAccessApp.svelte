@@ -227,6 +227,7 @@
       id="qa-record-tab"
       type="button"
       role="tab"
+      data-primary-mode="record"
       aria-selected={mode === 'record'}
       aria-controls="qa-record-panel"
       tabindex={mode === 'record' ? 0 : -1}
@@ -234,12 +235,17 @@
       class:active={mode === 'record'}
       onclick={() => switchMode('record')}
     >
-      {messages.quickAccess.record}
+      <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+        <path d="M12 20h9" />
+        <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z" stroke-linejoin="round" />
+      </svg>
+      <span>{messages.quickAccess.record}</span>
     </button>
     <button
       id="qa-search-tab"
       type="button"
       role="tab"
+      data-primary-mode="search"
       aria-selected={mode === 'search'}
       aria-controls="qa-search-panel"
       tabindex={mode === 'search' ? 0 : -1}
@@ -247,7 +253,11 @@
       class:active={mode === 'search'}
       onclick={() => switchMode('search')}
     >
-      {messages.quickAccess.search}
+      <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+        <circle cx="11" cy="11" r="7" />
+        <path d="m20 20-3.6-3.6" />
+      </svg>
+      <span>{messages.quickAccess.search}</span>
     </button>
   </div>
 
@@ -292,37 +302,62 @@
     background: var(--surface-0);
     backdrop-filter: blur(24px);
     border: 1px solid var(--border-emphasis);
+    border-radius: var(--radius-lg, 0.55rem);
     box-shadow: var(--shadow-default);
     overflow: hidden;
   }
 
   .qa-tablist {
-    display: flex;
-    gap: 0;
-    padding: 0.4rem 0.4rem 0;
-    border-bottom: 1px solid var(--border-emphasis, rgba(255, 255, 255, 0.06));
-    background: color-mix(in srgb, var(--surface-0) 80%, transparent);
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.4rem;
+    padding: 0.45rem;
+    border-bottom: 1px solid var(--border-emphasis);
+    background: color-mix(in srgb, var(--surface-0) 86%, transparent);
   }
+
   .qa-tab {
     appearance: none;
-    border: none;
-    background: transparent;
-    color: var(--text-muted, rgba(255, 255, 255, 0.55));
-    padding: 0.4rem 0.9rem;
-    font-size: var(--font-md, 14px);
-    font-weight: 500;
+    min-width: 0;
+    min-height: 2.9rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.45rem;
+    padding: 0.55rem 0.8rem;
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md, 0.4rem);
+    background: var(--surface-1);
+    color: var(--text-muted);
+    font: inherit;
+    font-size: var(--font-md, 0.85rem);
+    font-weight: 600;
     cursor: pointer;
-    border-radius: 6px 6px 0 0;
-    border-bottom: 2px solid transparent;
-    transition: color 0.12s, border-color 0.12s, background 0.12s;
+    transition: color 0.14s, border-color 0.14s, background 0.14s, box-shadow 0.14s;
   }
+
+  .qa-tab svg {
+    width: 1rem;
+    height: 1rem;
+    flex: 0 0 auto;
+  }
+
   .qa-tab:hover {
-    color: var(--text-strong, rgba(255, 255, 255, 0.9));
-    background: color-mix(in srgb, var(--color-primary, #4f46e5) 8%, transparent);
+    color: var(--text-primary);
+    border-color: var(--border-emphasis);
+    background: color-mix(in srgb, var(--color-primary) 9%, var(--surface-1));
   }
+
   .qa-tab.active {
-    color: var(--color-primary, #4f46e5);
-    border-bottom-color: var(--color-primary, #4f46e5);
+    color: var(--color-primary);
+    border-color: color-mix(in srgb, var(--color-primary) 55%, transparent);
+    background: color-mix(in srgb, var(--color-primary) 16%, var(--surface-1));
+    box-shadow: inset 0 -2px 0 var(--color-primary);
+  }
+
+  .qa-tab:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
   }
 
   .qa-panel {
