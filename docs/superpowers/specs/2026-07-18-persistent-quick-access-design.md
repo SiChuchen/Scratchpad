@@ -41,6 +41,7 @@ Add a circular floating action button to the top-level `App.svelte` shell so it 
 - Failure: show a localized error toast in the main window and restore the enabled state.
 - Layering: appear above normal page content and menus, but below blocking confirmation and drag/drop overlays.
 - Visibility: remain present on all normal pages; blocking overlays may cover it because they intentionally suspend page interaction.
+- Content safety: every scrollable main-page body includes a bottom safe area so its final action or card can scroll fully clear of the floating button.
 
 The existing rectangular Quick Access button in `VaultView.svelte` will be removed. Keeping both controls on the Library page would create two equivalent calls to action and make the persistent control look accidental rather than global.
 

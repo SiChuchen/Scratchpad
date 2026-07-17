@@ -793,6 +793,14 @@
     box-shadow: var(--shadow-default);
   }
 
+  .app-shell :global(.home-body),
+  .app-shell :global(.note-body),
+  .app-shell :global(.categories-body),
+  .app-shell :global(.library-body),
+  .app-shell :global(.settings-body) {
+    padding-bottom: 4.25rem;
+  }
+
   .ctrl-drag {
     cursor: move !important;
   }

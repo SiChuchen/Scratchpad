@@ -746,7 +746,7 @@ Do not stage the pre-existing line-ending-only change in `src-tauri/Cargo.toml`.
 ### Task 5: Integrated UX Verification and Final Adjustment
 
 **Files:**
-- Modify only after a measured failure: `src/lib/components/QuickAccessFab.svelte`, `src/QuickAccessApp.svelte`, `src-tauri/src/system/window.rs`, `src-tauri/tauri.conf.json`, plus the directly corresponding tests.
+- Modify only after a measured failure: `src/App.svelte`, `src/lib/components/QuickAccessFab.svelte`, `src/QuickAccessApp.svelte`, `src-tauri/src/system/window.rs`, `src-tauri/tauri.conf.json`, plus the directly corresponding tests.
 
 - [ ] **Step 1: Run complete automated frontend validation**
 
@@ -766,6 +766,7 @@ Verify:
 
 - The 48 px circular control keeps the same bottom-right inset.
 - It does not cover top navigation, toast, confirmation dialog, or primary page controls.
+- The last control/card in each scrollable page can scroll above the button's reserved safe area.
 - Focus is visible; Enter/Space opens Quick Access; repeated activation while opening is blocked.
 - Clicking the floating entry while Quick Access is already visible focuses/recenters it instead of hiding it; the global shortcut still toggles.
 - The Library page has no duplicate rectangular Quick Access action.
