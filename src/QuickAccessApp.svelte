@@ -15,7 +15,7 @@
   import { invoke } from '@tauri-apps/api/core'
 
   import { computeThemeTokens } from '$lib/themes/engine'
-  import { loadLocale, detectLanguage, messages, isZh } from '$lib/i18n'
+  import { loadLocale, detectLanguage, messages } from '$lib/i18n'
   import type { DockPreferences } from '$lib/types/dock'
   import type { QuickAccessState } from '$lib/types/quick-access'
   import { handleKeydown } from '$lib/state/quick-access'
@@ -66,10 +66,7 @@
     try {
       await invoke('ipc_open_main_settings')
     } catch {
-      notify(
-        isZh() ? '无法打开主窗口设置' : 'Could not open main window settings',
-        'error',
-      )
+      notify(messages.quickAccess.openSettingsFailed, 'error')
     }
   }
 
@@ -215,7 +212,7 @@
     <div class="notice" class:error={noticeKind === 'error'} role="status" aria-live="polite">{noticeText}</div>
   {/if}
 
-  <div class="qa-tablist" role="tablist" aria-label={isZh() ? '快速入口模式' : 'Quick access mode'}>
+  <div class="qa-tablist" role="tablist" aria-label={messages.quickAccess.modeLabel}>
     <button
       id="qa-record-tab"
       type="button"

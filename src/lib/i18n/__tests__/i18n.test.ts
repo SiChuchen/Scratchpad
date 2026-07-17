@@ -47,6 +47,17 @@ describe('i18n dictionaries', () => {
     expect(expertKeys.length).toBeGreaterThanOrEqual(24)
     expect(Object.keys(en.expert).length).toBe(expertKeys.length)
   })
+
+  it('contains English recovery and Library workflow messages', () => {
+    expect(en.quickAccess.aiNotConfigured).toBe('AI is not configured; using local organization only')
+    expect(en.quickAccess.autoEnrichDisabled).toBe('AI auto-organization is off')
+    expect(en.quickAccess.configureNow).toBe('Configure now')
+    expect(en.quickAccess.openSettingsFailed).toBe('Could not open main window settings')
+    expect(en.settings.selectDataDirTitle).toBe('Select data directory')
+    expect(en.settings.changeDataDirFailed).toBe('Could not change data directory')
+    expect(en.library.saved).toBe('Saved')
+    expect(en.library.openQuickAccess).toBe('Open quick access')
+  })
 })
 
 describe('detectLanguage', () => {

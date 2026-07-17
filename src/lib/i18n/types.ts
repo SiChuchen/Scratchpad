@@ -39,6 +39,12 @@ export interface LocaleMessages {
     fieldValuePlaceholder: string
     titlePlaceholder: string
     tagsPlaceholder: string
+    created: string
+    saved: string
+    removeTagFailed: string
+    aiError: string
+    openQuickAccess: string
+    quickAccess: string
   }
   quickAccess: {
     record: string
@@ -65,6 +71,11 @@ export interface LocaleMessages {
     convertToManualPrefix: string
     removeAiTagPrefix: string
     sensitiveMetadataRejected: string
+    aiNotConfigured: string
+    autoEnrichDisabled: string
+    configureNow: string
+    openSettingsFailed: string
+    modeLabel: string
   }
   aiSettings: {
     title: string
@@ -201,6 +212,9 @@ export interface LocaleMessages {
     proxyErrPortRange: string
     proxyErrNoProtocol: string
     proxyErrNoPort: string
+    loading: string
+    selectDataDirTitle: string
+    changeDataDirFailed: string
   }
   toast: {
     loadFailed: string

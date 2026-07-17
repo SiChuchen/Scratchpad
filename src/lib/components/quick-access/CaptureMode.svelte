@@ -20,7 +20,7 @@
 
   import { onMount, onDestroy } from 'svelte'
   import { vaultApi } from '$lib/api/vault'
-  import { messages, isZh } from '$lib/i18n'
+  import { messages } from '$lib/i18n'
   import { CaptureDraftController } from '$lib/state/capture-draft'
   import type {
     CaptureDraft,
@@ -380,15 +380,13 @@
     <div class="ai-status-banner" role="status" aria-live="polite">
       <span class="ai-status-icon">⚠</span>
       <span class="ai-status-text">
-        {isZh()
-          ? (!aiConfigured ? 'AI 未配置，仅本地整理' : 'AI 自动整理已关闭')
-          : (!aiConfigured ? 'AI not configured; local parse only' : 'AI auto-enrich disabled')}
+        {aiConfigured
+          ? messages.quickAccess.autoEnrichDisabled
+          : messages.quickAccess.aiNotConfigured}
       </span>
-      {#if !aiConfigured}
-        <button type="button" class="ghost-btn small" onclick={onOpenSettings}>
-          {isZh() ? '立即配置' : 'Configure now'}
-        </button>
-      {/if}
+      <button type="button" class="ghost-btn small" onclick={onOpenSettings}>
+        {messages.quickAccess.configureNow}
+      </button>
     </div>
   {/if}
 

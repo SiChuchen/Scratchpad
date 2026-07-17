@@ -51,7 +51,7 @@
 
   async function changeDataDir() {
     try {
-      const path = await open({ directory: true, title: '选择数据目录' })
+      const path = await open({ directory: true, title: messages.settings.selectDataDirTitle })
       if (!path) return
       const info = await dockApi.setDataDir(path)
       dataDirInfo = info
@@ -60,7 +60,7 @@
     } catch (e) {
       const msg = String(e)
       if (notify) {
-        notify(`更改数据目录失败：${msg}`, 'error')
+        notify(`${messages.settings.changeDataDirFailed}: ${msg}`, 'error')
       }
     }
   }
@@ -396,7 +396,7 @@
               <button class="record-btn" onclick={() => relaunch()}>{messages.settings.dataDirRestartBtn}</button>
             {/if}
           {:else}
-            <p class="section-subtitle">加载中...</p>
+            <p class="section-subtitle">{messages.settings.loading}</p>
           {/if}
         </div>
       {/if}

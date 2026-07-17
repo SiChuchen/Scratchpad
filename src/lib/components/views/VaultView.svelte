@@ -19,7 +19,7 @@
   import { listen, type UnlistenFn } from '@tauri-apps/api/event'
   import { vaultApi } from '$lib/api/vault'
   import { onTagsUpdated, onLlmError } from '$lib/api/vault'
-  import { messages, isZh } from '$lib/i18n'
+  import { messages } from '$lib/i18n'
   import { invoke } from '@tauri-apps/api/core'
   import { HybridSearchController, type HybridSearchApi, type HybridSearchState } from '$lib/state/vault-search'
   import {
@@ -233,7 +233,7 @@
       editorMode = { mode: 'edit', id, detail }
     } catch (e) {
       const msg = e instanceof Error && e.message ? e.message : String(e)
-      notify(`加载失败：${msg}`, 'error')
+      notify(`${messages.toast.loadFailed}: ${msg}`, 'error')
     }
   }
 
@@ -246,10 +246,10 @@
       await vaultApi.createEntry(input)
       editorMode = null
       await reload()
-      notify('已创建', 'success')
+      notify(messages.library.created, 'success')
     } catch (e) {
       const msg = e instanceof Error && e.message ? e.message : String(e)
-      notify(`创建失败：${msg}`, 'error')
+      notify(`${messages.toast.createFailed}: ${msg}`, 'error')
     }
   }
 
@@ -259,10 +259,10 @@
       await vaultApi.updateEntry(editorMode.id, input)
       editorMode = null
       await reload()
-      notify('已保存', 'success')
+      notify(messages.library.saved, 'success')
     } catch (e) {
       const msg = e instanceof Error && e.message ? e.message : String(e)
-      notify(`保存失败：${msg}`, 'error')
+      notify(`${messages.toast.saveFailed}: ${msg}`, 'error')
     }
   }
 
@@ -272,7 +272,7 @@
       await reload()
     } catch (e) {
       const msg = e instanceof Error && e.message ? e.message : String(e)
-      notify(`移除标签失败：${msg}`, 'error')
+      notify(`${messages.library.removeTagFailed}: ${msg}`, 'error')
     }
   }
 
@@ -280,9 +280,9 @@
     try {
       // Task 18: 所有资料库复制都走 Tauri 命令，敏感值由后端按设置自动清除。
       await vaultApi.copyText(payload.value, payload.sensitive)
-      notify(`已复制：${payload.label}`, 'success')
+      notify(messages.library.copiedLabel.replace('{label}', payload.label), 'success')
     } catch {
-      notify(`复制失败：${payload.label}`, 'error')
+      notify(`${messages.toast.copyFailed}: ${payload.label}`, 'error')
     }
   }
 
@@ -314,7 +314,7 @@
     const promises: Promise<UnlistenFn>[] = [
       onTagsUpdated(() => { void reload() }),
       onLlmError((e) => {
-        notify(`AI 错误：${e.kind} - ${e.code}`, 'error')
+        notify(`${messages.library.aiError}: ${e.kind} - ${e.code}`, 'error')
       }),
     ]
 
@@ -370,10 +370,10 @@
           type="button"
           class="quick-access-btn"
           onclick={openQuickAccess}
-          title={isZh() ? '打开全局快速入口 (Alt+Shift+Space)' : 'Open quick access (Alt+Shift+Space)'}
-          aria-label={isZh() ? '打开全局快速入口' : 'Open quick access'}
+          title={`${messages.library.openQuickAccess} (Alt+Shift+Space)`}
+          aria-label={messages.library.openQuickAccess}
         >
-          ⚡ {isZh() ? '快速入口' : 'Quick'}
+          ⚡ {messages.library.quickAccess}
         </button>
         {#if showNewMenu}
           <!-- I4: 透明全屏 backdrop 拦截外部点击，关闭菜单。

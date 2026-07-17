@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/svelte'
 import type { VaultEntryDetail, VaultEntrySummary } from '$lib/types/vault'
+import { loadLocale } from '$lib/i18n'
 
 const mocks = vi.hoisted(() => ({
   listEntries: vi.fn(),
@@ -99,6 +100,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup()
   vi.clearAllMocks()
+  loadLocale('zh-CN')
 })
 
 describe('VaultView', () => {
@@ -118,6 +120,21 @@ describe('VaultView', () => {
         'entry-b',
         expect.objectContaining({ title: 'Entry B' }),
       )
+    })
+  })
+
+  it('uses English notifications and controls in English mode', async () => {
+    loadLocale('en')
+    const notify = vi.fn()
+    render(VaultView, { notify })
+
+    expect(await screen.findByRole('button', { name: 'Open quick access' })).toBeInTheDocument()
+    await fireEvent.click(screen.getByRole('button', { name: 'Edit Entry B' }))
+    const titleInput = await screen.findByDisplayValue('Entry B')
+    await fireEvent.submit(titleInput.closest('form')!)
+
+    await waitFor(() => {
+      expect(notify).toHaveBeenCalledWith('Saved', 'success')
     })
   })
 })

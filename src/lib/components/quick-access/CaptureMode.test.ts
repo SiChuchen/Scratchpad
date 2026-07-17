@@ -261,6 +261,24 @@ describe('CaptureMode', () => {
     expect(mockVaultApi.enrichCapture).not.toHaveBeenCalled()
   })
 
+  it('offers Settings when automatic enrichment is disabled', async () => {
+    configureAISetup(CONFIGURED, AI_SETTINGS_OFF)
+    const onOpenSettings = vi.fn()
+
+    render(CaptureMode, {
+      notify: vi.fn(),
+      aiConfigured: true,
+      autoEnrich: false,
+      onSaved: vi.fn(),
+      onOpenSettings,
+    })
+    await vi.advanceTimersByTimeAsync(0)
+
+    const configureButton = screen.getByRole('button', { name: '立即配置' })
+    await fireEvent.click(configureButton)
+    expect(onOpenSettings).toHaveBeenCalledTimes(1)
+  })
+
   it('AI response does NOT overwrite user-edited fields (dirty title)', async () => {
     configureAISetup(CONFIGURED, AI_SETTINGS_ON)
     const parsed = baseDraft({ title: '本地标题', kind: 'note' })
