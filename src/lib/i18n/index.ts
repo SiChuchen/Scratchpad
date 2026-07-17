@@ -1,6 +1,7 @@
 import type { LocaleMessages } from './types'
 import zhCN from './locales/zh-CN'
 import en from './locales/en'
+import { reactiveMessages } from './reactive-messages.svelte'
 
 const locales = { 'zh-CN': zhCN, en } as const
 
@@ -15,7 +16,8 @@ function cloneLocale(lang: string): LocaleMessages {
 }
 
 /** Current locale messages. Mutated by loadLocale(). */
-export const messages: LocaleMessages = cloneLocale(getInitialLocale())
+export const messages: LocaleMessages = reactiveMessages
+Object.assign(messages, cloneLocale(getInitialLocale()))
 
 /** Tracks the active locale code so callers can branch on language without
  *  inspecting message strings. */

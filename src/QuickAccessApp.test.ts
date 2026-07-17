@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/svelte'
 import type { DockPreferences } from '$lib/types/dock'
+import { loadLocale } from '$lib/i18n'
 
 const mocks = vi.hoisted(() => ({
   invoke: vi.fn(),
@@ -34,7 +35,7 @@ vi.mock('$lib/api/vault', () => ({
 
 import QuickAccessApp from './QuickAccessApp.svelte'
 
-function preferences(): DockPreferences {
+function preferences(language = 'zh-CN'): DockPreferences {
   return {
     themeMode: 'preset',
     themePresetId: 'dark-glass',
@@ -54,7 +55,7 @@ function preferences(): DockPreferences {
     fontFamilyEn: 'Segoe UI',
     launchOnStartup: false,
     updateProxy: '',
-    language: 'zh-CN',
+    language,
     shortcutModifiers: 'Alt+Shift',
     shortcutKey: 'V',
     shortcutRegistered: true,
@@ -66,6 +67,7 @@ function preferences(): DockPreferences {
 }
 
 beforeEach(() => {
+  loadLocale('zh-CN')
   Object.defineProperty(window, 'matchMedia', {
     configurable: true,
     value: vi.fn(() => ({
@@ -99,6 +101,19 @@ afterEach(() => {
 })
 
 describe('QuickAccessApp', () => {
+  it('renders the persisted English locale after preferences load', async () => {
+    mocks.invoke.mockImplementation(async (command: string) => {
+      if (command === 'ipc_preferences_get') return preferences('en')
+      return undefined
+    })
+
+    render(QuickAccessApp)
+
+    expect(await screen.findByRole('button', { name: 'Configure now' })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: 'Record' })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: 'Search' })).toBeInTheDocument()
+  })
+
   it('opens the main Settings view through the dedicated command', async () => {
     render(QuickAccessApp)
 
