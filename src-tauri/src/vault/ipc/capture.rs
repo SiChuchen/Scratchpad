@@ -258,11 +258,11 @@ fn reject_sensitive_metadata_leak(draft: &CaptureDraft) -> Result<(), String> {
         //     概念标签里。
         if v_lower.chars().count() >= 6 {
             if metadata_lower.contains(&v_lower) {
-                return Err(format!("元数据泄漏敏感字段值：{}", v));
+                return Err("sensitive_metadata_rejected".to_string());
             }
         } else if metadata_lower.split_whitespace().any(|w| w == v_lower) {
             // 短值：要求词级精确匹配（"admin" 不能命中 "administrator"）。
-            return Err(format!("元数据泄漏敏感字段值：{}", v));
+            return Err("sensitive_metadata_rejected".to_string());
         }
     }
     Ok(())
@@ -547,6 +547,25 @@ mod tests {
         }];
         d.ai_tags = vec!["leak-topsecretvalue".into()];
         assert!(reject_sensitive_metadata_leak(&d).is_err());
+    }
+
+    #[test]
+    fn sensitive_metadata_error_never_contains_the_sensitive_value() {
+        let secret = "DO_NOT_ECHO_THIS_PASSWORD";
+        let mut d = sample_draft();
+        d.fields = vec![crate::vault::models::CaptureField {
+            draft_id: "f1".into(),
+            key: "password".into(),
+            value: secret.into(),
+            is_sensitive: true,
+        }];
+        d.ai_tags = vec![secret.into()];
+
+        let err = reject_sensitive_metadata_leak(&d)
+            .expect_err("metadata leak must be rejected");
+
+        assert_eq!(err, "sensitive_metadata_rejected");
+        assert!(!err.contains(secret));
     }
 
     #[test]

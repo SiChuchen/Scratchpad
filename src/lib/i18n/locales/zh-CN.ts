@@ -64,6 +64,7 @@ const zhCN: LocaleMessages = {
     auditSentAt: '发送时间',
     convertToManualPrefix: '将 AI 标签…转为手动标签：',
     removeAiTagPrefix: '移除 AI 标签：',
+    sensitiveMetadataRejected: '检测到敏感信息出现在标签或摘要中，请修改后重试',
   },
   aiSettings: {
     title: 'AI 整理与搜索',

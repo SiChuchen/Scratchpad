@@ -530,6 +530,46 @@ describe('CaptureMode', () => {
     expect(screen.queryByDisplayValue('第二条')).not.toBeInTheDocument()
   })
 
+  it('renders sensitive metadata rejection without exposing the secret or raw code', async () => {
+    configureAISetup(CONFIGURED, AI_SETTINGS_OFF)
+    const secret = 'DO_NOT_ECHO_THIS_PASSWORD'
+    mockVaultApi.parseCaptureLocal.mockResolvedValue(
+      baseDraft({
+        title: '敏感资料',
+        fields: [
+          {
+            draftId: 'f1',
+            key: 'password',
+            value: secret,
+            isSensitive: true,
+          },
+        ],
+      }),
+    )
+    mockVaultApi.createFromCapture.mockRejectedValue(
+      new Error('sensitive_metadata_rejected'),
+    )
+
+    render(CaptureMode, {
+      notify: vi.fn(),
+      aiConfigured: true,
+      autoEnrich: false,
+      onSaved: vi.fn(),
+      onOpenSettings: vi.fn(),
+    })
+    await vi.advanceTimersByTimeAsync(0)
+
+    await typeRawText('password fixture')
+    await vi.advanceTimersByTimeAsync(LOCAL_PARSE_DELAY_MS)
+    await waitFor(() => expect(mockVaultApi.parseCaptureLocal).toHaveBeenCalled())
+    await fireEvent.click(screen.getByRole('button', { name: /保存到资料库/ }))
+
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('检测到敏感信息出现在标签或摘要中，请修改后重试')
+    expect(alert).not.toHaveTextContent(secret)
+    expect(alert).not.toHaveTextContent('sensitive_metadata_rejected')
+  })
+
   it('AI tag → manual conversion removes from aiTags and adds to manualTags', async () => {
     configureAISetup(CONFIGURED, AI_SETTINGS_OFF)
     mockVaultApi.parseCaptureLocal.mockResolvedValue(

@@ -340,7 +340,10 @@
       manualSensitiveValues = []
       resetDirty()
     } catch (e) {
-      saveError = e instanceof Error ? e.message : String(e)
+      const raw = e instanceof Error ? e.message : String(e)
+      saveError = raw === 'sensitive_metadata_rejected'
+        ? messages.quickAccess.sensitiveMetadataRejected
+        : raw
       // rawText, draft, requestId all preserved — the storage layer's
       // vault_capture_requests idempotency check guarantees the retry of the
       // SAME requestId won't create a duplicate entry if the first attempt

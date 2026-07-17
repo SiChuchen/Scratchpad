@@ -64,6 +64,7 @@ const en: LocaleMessages = {
     auditSentAt: 'Sent at',
     convertToManualPrefix: 'Convert AI tag ... to manual: ',
     removeAiTagPrefix: 'Remove AI tag: ',
+    sensitiveMetadataRejected: 'Sensitive information appeared in a tag or summary. Please revise and try again.',
   },
   aiSettings: {
     title: 'AI Organization & Search',

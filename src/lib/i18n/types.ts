@@ -64,6 +64,7 @@ export interface LocaleMessages {
     auditSentAt: string
     convertToManualPrefix: string
     removeAiTagPrefix: string
+    sensitiveMetadataRejected: string
   }
   aiSettings: {
     title: string
