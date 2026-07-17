@@ -367,7 +367,7 @@ pub fn desensitize_raw_text(
         .iter()
         .filter(|s| !s.is_empty())
         .collect();
-    manual.sort_by(|a, b| b.len().cmp(&a.len()));
+    manual.sort_by_key(|a| std::cmp::Reverse(a.len()));
 
     let mut current = text.to_string();
     for value in manual {

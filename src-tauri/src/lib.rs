@@ -398,9 +398,9 @@ fn ipc_shortcut_update(
         };
         if let Some(other_sc) = other {
             if other_sc == new_shortcut {
-                return Err(format!(
-                    "shortcut conflict: same combination is used by the other target"
-                ));
+                return Err(
+                    "shortcut conflict: same combination is used by the other target".to_string(),
+                );
             }
         }
     }
@@ -1016,8 +1016,10 @@ mod shortcut_tests {
         let new_sc_for_qa = Shortcut::new(Some(new_mods), Code::KeyV);
 
         // Quick Access 已有 Some(other)；现在 Main 想注册相同组合
-        let mut shortcuts = RegisteredShortcuts::default();
-        shortcuts.quick_access = Some(main_sc);
+        let shortcuts = RegisteredShortcuts {
+            quick_access: Some(main_sc),
+            ..Default::default()
+        };
 
         // 模拟 ipc_shortcut_update 中的冲突检查
         let other = shortcuts.quick_access;

@@ -210,9 +210,9 @@ mod tests {
         let (x, y, w, h) = fit_and_center_quick_access(-960, 540, work);
         assert_eq!((w, h), (760, 520));
         let work_width = 0 - (-1920); // 1920
-        let work_height = 1080 - 0; // 1080
+        let work_height = 1080;
         assert_eq!(x, -1920 + (work_width - w) / 2);
-        assert_eq!(y, 0 + (work_height - h) / 2);
+        assert_eq!(y, (work_height - h) / 2);
     }
 
     /// On a large monitor the runtime min stays at the static 480×320.

@@ -306,7 +306,7 @@ fn build_preview(
                 .find(|f| f.key.eq_ignore_ascii_case("url") && !f.is_sensitive)
                 .map(|f| f.value.trim())
                 .filter(|s| !s.is_empty());
-            url.and_then(|u| trim_to(&u))
+            url.and_then(&mut trim_to)
                 .or_else(|| entry.notes.as_deref().and_then(&mut trim_to))
         }
         EntryKind::Note => entry.notes.as_deref().and_then(&mut trim_to),

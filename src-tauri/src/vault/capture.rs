@@ -203,7 +203,7 @@ fn try_connection_url(text: &str) -> Option<CaptureDraft> {
     // host_part: host[:port][/path?query#frag]
     // 先去掉 path / query / fragment
     let authority_end = host_part
-        .find(|c: char| c == '/' || c == '?' || c == '#')
+        .find(['/', '?', '#'])
         .unwrap_or(host_part.len());
     let authority = &host_part[..authority_end];
     let path_remainder = &host_part[authority_end..];
@@ -215,7 +215,7 @@ fn try_connection_url(text: &str) -> Option<CaptureDraft> {
 
     let database = path_remainder
         .trim_start_matches('/')
-        .split(|c: char| c == '?' || c == '#')
+        .split(['?', '#'])
         .next()
         .filter(|s| !s.is_empty())
         .map(|s| s.to_string());
@@ -365,7 +365,7 @@ fn try_multiline_key_value(text: &str) -> Option<CaptureDraft> {
             continue;
         }
         // 识别 key ([:=]) value
-        let sep_idx = line.find(|c: char| c == ':' || c == '=')?;
+        let sep_idx = line.find([':', '='])?;
         let (k, v) = line.split_at(sep_idx);
         let key = k.trim();
         let value = v[1..].trim(); // 跳过分隔符
@@ -431,7 +431,7 @@ fn try_single_url_bookmark(text: &str) -> Option<CaptureDraft> {
 
     // 推导 host：从 scheme 后到第一个 `/`、`?`、`#` 之间
     let authority_end = after_scheme
-        .find(|c: char| c == '/' || c == '?' || c == '#')
+        .find(['/', '?', '#'])
         .unwrap_or(after_scheme.len());
     let authority = &after_scheme[..authority_end];
 
