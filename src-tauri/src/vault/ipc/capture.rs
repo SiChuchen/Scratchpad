@@ -251,7 +251,17 @@ fn reject_sensitive_metadata_leak(draft: &CaptureDraft) -> Result<(), String> {
     let metadata_lower = metadata_buf.to_lowercase();
     for v in &sensitive_values {
         let v_lower = v.to_lowercase();
-        if metadata_lower.contains(&v_lower) {
+        // 与 desensitize::validate_non_sensitive_metadata 保持一致：
+        //   * 短敏感值（< 6 字符）只在精确匹配时拒绝，避免 "admin" / "ok" / "abc"
+        //     这类常用词在 AI 标签里出现被误判为泄漏。
+        //   * 长敏感值（>= 6 字符）保留子串匹配，因为长 token 几乎不会自然出现在
+        //     概念标签里。
+        if v_lower.chars().count() >= 6 {
+            if metadata_lower.contains(&v_lower) {
+                return Err(format!("元数据泄漏敏感字段值：{}", v));
+            }
+        } else if metadata_lower.split_whitespace().any(|w| w == v_lower) {
+            // 短值：要求词级精确匹配（"admin" 不能命中 "administrator"）。
             return Err(format!("元数据泄漏敏感字段值：{}", v));
         }
     }
@@ -580,5 +590,36 @@ mod tests {
         // 恰好 120 应通过
         d.title = "y".repeat(120);
         assert!(validate_final_draft(&d).is_ok());
+    }
+
+    /// 短敏感值（< 6 字符）只在词级精确匹配时拒绝。"admin" 作为 password
+    /// 时，AI 给的标签里出现 "administrator" / "admin-login" 等不应被误判。
+    #[test]
+    fn reject_sensitive_metadata_leak_short_value_requires_word_match() {
+        let mut d = sample_draft();
+        d.fields = vec![crate::vault::models::CaptureField {
+            draft_id: "f1".into(),
+            key: "password".into(),
+            value: "admin".into(), // 5 chars — 短值
+            is_sensitive: true,
+        }];
+        // "administrator" 包含 "admin" 子串，但不是同一个词 —— 必须放行。
+        d.ai_tags = vec!["administrator".into()];
+        assert!(
+            reject_sensitive_metadata_leak(&d).is_ok(),
+            "short value substring inside a longer word must NOT trigger leak"
+        );
+        // 精确词匹配仍然必须拒绝（即使是 5 字符的值）。
+        d.ai_tags = vec!["admin".into()];
+        assert!(
+            reject_sensitive_metadata_leak(&d).is_err(),
+            "exact word match on short value MUST trigger leak"
+        );
+        // 复合标签 "admin login" 也应拒绝（split_whitespace 命中）。
+        d.ai_tags = vec!["admin login".into()];
+        assert!(
+            reject_sensitive_metadata_leak(&d).is_err(),
+            "exact word match inside a multi-word tag MUST trigger leak"
+        );
     }
 }
