@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import { invoke } from '@tauri-apps/api/core'
+  import { listen } from '@tauri-apps/api/event'
   import TopBar from '$lib/components/TopBar.svelte'
   import HomeView from '$lib/components/views/HomeView.svelte'
   import CategoriesView from '$lib/components/views/CategoriesView.svelte'
@@ -83,6 +84,21 @@
     }
     mq.addEventListener('change', onSystemThemeChange)
     return () => mq.removeEventListener('change', onSystemThemeChange)
+  })
+
+  onMount(() => {
+    let disposed = false
+    let unlisten: (() => void) | null = null
+
+    void listen('main-open-settings', () => navigate('settings')).then((fn) => {
+      if (disposed) fn()
+      else unlisten = fn
+    })
+
+    return () => {
+      disposed = true
+      unlisten?.()
+    }
   })
 
   // --- Update check ---

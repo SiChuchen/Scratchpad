@@ -70,13 +70,15 @@
     // For now we just rely on the success notification.
   }
 
-  function onOpenAiSettings() {
-    // Open main window and switch to settings view via Tauri IPC.
-    invoke('ipc_open_quick_access').catch(() => {}) // never (we are quick-access)
-    notify(
-      isZh() ? '请到主窗口资料库设置中配置 AI' : 'Configure AI in the main window settings',
-      'success',
-    )
+  async function onOpenAiSettings() {
+    try {
+      await invoke('ipc_open_main_settings')
+    } catch {
+      notify(
+        isZh() ? '无法打开主窗口设置' : 'Could not open main window settings',
+        'error',
+      )
+    }
   }
 
   /** 重新读取 AI 配置 + 设置；quick-access 每次聚焦时都要调，避免使用 stale 快照。 */

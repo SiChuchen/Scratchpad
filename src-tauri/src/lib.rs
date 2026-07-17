@@ -392,6 +392,22 @@ fn ipc_open_quick_access(app: tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// 从 quick-access 打开可见的主窗口，并导航到设置页。
+#[tauri::command]
+fn ipc_open_main_settings(app: tauri::AppHandle) -> Result<(), String> {
+    let main = app
+        .get_webview_window("main")
+        .ok_or_else(|| "main window not found".to_string())?;
+    main.show().map_err(|e| e.to_string())?;
+    main.set_focus().map_err(|e| e.to_string())?;
+    app.emit("main-open-settings", ())
+        .map_err(|e| e.to_string())?;
+    if let Some(quick) = app.get_webview_window("quick-access") {
+        quick.hide().map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 #[tauri::command]
 fn ipc_shortcut_update(
     state: tauri::State<AppState>,
@@ -812,6 +828,7 @@ pub fn run() {
             ipc_shortcut_status,
             ipc_shortcut_update,
             ipc_open_quick_access,
+            ipc_open_main_settings,
             ipc_toggle_always_on_top,
             ipc_window_apply_circle_region,
             ipc_window_clear_region,
