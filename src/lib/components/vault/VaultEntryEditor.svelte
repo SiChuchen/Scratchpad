@@ -10,6 +10,7 @@
   //
   // 绝不使用 confirm() / alert()。
 
+  import { untrack } from 'svelte'
   import type {
     EntryKind,
     FieldInput,
@@ -69,13 +70,15 @@
     }
   }
 
-  // 初始 state
-  let kind = $state<EntryKind>(initial?.entry.kind ?? initialKind)
-  let title = $state(initial?.entry.title ?? '')
-  let notes = $state(initial?.entry.notes ?? '')
-  let fields = $state<FieldRow[]>(
-    initial
-      ? initial.fields
+  const initialState = untrack(() => {
+    const detail = initial
+    const kind = detail?.entry.kind ?? initialKind
+    return {
+      kind,
+      title: detail?.entry.title ?? '',
+      notes: detail?.entry.notes ?? '',
+      fields: detail
+        ? detail.fields
           .slice()
           .sort((a, b) => a.sortOrder - b.sortOrder)
           .map((f) => ({
@@ -85,17 +88,21 @@
             isSensitive: f.isSensitive,
             reveal: false,
           }))
-      : defaultFieldsFor(kind),
-  )
-  // manualTags：编辑模式从 initial 加载（仅 manual 源）；新建模式空
-  let manualTagsInput = $state(
-    initial
-      ? initial.tags
+        : defaultFieldsFor(kind),
+      manualTagsInput: detail
+        ? detail.tags
           .filter((t) => t.source === 'manual')
           .map((t) => t.tag)
           .join(', ')
-      : '',
-  )
+        : '',
+    }
+  })
+
+  let kind = $state<EntryKind>(initialState.kind)
+  let title = $state(initialState.title)
+  let notes = $state(initialState.notes)
+  let fields = $state<FieldRow[]>(initialState.fields)
+  let manualTagsInput = $state(initialState.manualTagsInput)
 
   let saving = $state(false)
 

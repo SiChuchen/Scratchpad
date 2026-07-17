@@ -13,10 +13,10 @@
 // 暴露稳定 code（auth / rateLimit / timeout / network / server / parse），
 // 绝不把 `LlmError::Server` 的响应 body 或 reqwest 错误直接送到前端。
 
-pub mod settings;
-pub mod search;
 pub mod capture;
 pub mod entries;
+pub mod search;
+pub mod settings;
 
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -198,9 +198,7 @@ impl VaultRuntimeState {
     #[cfg(test)]
     pub(crate) fn has_cooldown(&self) -> bool {
         let guard = self.cooldown_until.lock().unwrap();
-        guard
-            .map(|until| Instant::now() < until)
-            .unwrap_or(false)
+        guard.map(|until| Instant::now() < until).unwrap_or(false)
     }
 
     /// 测试当前 auth 是否被阻断（仅用于测试断言）。
@@ -224,7 +222,10 @@ impl VaultRuntimeState {
         request_id: String,
         token: CancellationToken,
     ) -> Option<(String, CancellationToken)> {
-        self.active_search.lock().unwrap().replace((request_id, token))
+        self.active_search
+            .lock()
+            .unwrap()
+            .replace((request_id, token))
     }
 
     /// 取出当前活跃搜索的 token clone（不消费 slot）。

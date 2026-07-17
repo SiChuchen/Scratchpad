@@ -16,7 +16,12 @@ pub static PRESETS: &[ProviderPreset] = &[
         id: "deepseek",
         label: "Deepseek",
         base_url: "https://api.deepseek.com/v1",
-        models: &["deepseek-v4-flash", "deepseek-v4-pro", "deepseek-chat", "deepseek-reasoner"],
+        models: &[
+            "deepseek-v4-flash",
+            "deepseek-v4-pro",
+            "deepseek-chat",
+            "deepseek-reasoner",
+        ],
         default_model: "deepseek-v4-flash",
     },
     ProviderPreset {
@@ -38,11 +43,20 @@ pub static PRESETS: &[ProviderPreset] = &[
         label: "智谱 BigModel",
         base_url: "https://open.bigmodel.cn/api/paas/v4",
         models: &[
-            "glm-5.2", "glm-5.1", "glm-5", "glm-5-turbo",
-            "glm-4.7", "glm-4.7-flash", "glm-4.7-flashx",
+            "glm-5.2",
+            "glm-5.1",
+            "glm-5",
+            "glm-5-turbo",
+            "glm-4.7",
+            "glm-4.7-flash",
+            "glm-4.7-flashx",
             "glm-4.6",
-            "glm-4.5-air", "glm-4.5-airx", "glm-4.5-flash",
-            "glm-4-long", "glm-4-flash-250414", "glm-4-flashx-250414",
+            "glm-4.5-air",
+            "glm-4.5-airx",
+            "glm-4.5-flash",
+            "glm-4-long",
+            "glm-4-flash-250414",
+            "glm-4-flashx-250414",
         ],
         default_model: "glm-4.7-flash",
     },
@@ -80,7 +94,15 @@ mod tests {
     #[test]
     fn presets_contain_required_providers() {
         let ids: Vec<_> = PRESETS.iter().map(|p| p.id).collect();
-        for required in ["deepseek", "openai", "kimi", "zhipu", "qwen", "openrouter", "custom"] {
+        for required in [
+            "deepseek",
+            "openai",
+            "kimi",
+            "zhipu",
+            "qwen",
+            "openrouter",
+            "custom",
+        ] {
             assert!(ids.contains(&required), "missing preset {required}");
         }
     }
@@ -97,7 +119,11 @@ mod tests {
             if p.default_model.is_empty() {
                 assert!(p.models.is_empty(), "{} default empty but models not", p.id);
             } else {
-                assert!(p.models.contains(&p.default_model), "{} default not in models", p.id);
+                assert!(
+                    p.models.contains(&p.default_model),
+                    "{} default not in models",
+                    p.id
+                );
             }
         }
     }

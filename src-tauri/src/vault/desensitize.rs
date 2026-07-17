@@ -123,9 +123,18 @@ mod tests {
             ("passwd: hunter2", "hunter2"),
             ("pwd = hunter2", "hunter2"),
             ("secret: abcdef123456", "abcdef123456"),
-            ("token=ghp_1234567890abcdefghijklmnop", "ghp_1234567890abcdefghijklmnop"),
-            ("api_key: sk-abcdefghijklmnopqrstuvwxyz", "sk-abcdefghijklmnopqrstuvwxyz"),
-            ("github_pat_11AA0abcdefghijklmnopqrstuvwxyz", "github_pat_11AA0abcdefghijklmnopqrstuvwxyz"),
+            (
+                "token=ghp_1234567890abcdefghijklmnop",
+                "ghp_1234567890abcdefghijklmnop",
+            ),
+            (
+                "api_key: sk-abcdefghijklmnopqrstuvwxyz",
+                "sk-abcdefghijklmnopqrstuvwxyz",
+            ),
+            (
+                "github_pat_11AA0abcdefghijklmnopqrstuvwxyz",
+                "github_pat_11AA0abcdefghijklmnopqrstuvwxyz",
+            ),
         ] {
             let mut map = TokenMap::new();
             let masked = desensitize_raw_text(sample, &[], &mut map);
@@ -177,8 +186,11 @@ mod tests {
     #[test]
     fn regex_does_not_remask_placeholder_after_assignment_keyword() {
         let mut map = TokenMap::new();
-        let masked =
-            desensitize_raw_text("use this key: sk-abcdefghijklmnopqrstuvwxyz1234", &[], &mut map);
+        let masked = desensitize_raw_text(
+            "use this key: sk-abcdefghijklmnopqrstuvwxyz1234",
+            &[],
+            &mut map,
+        );
         assert!(
             !masked.contains("[SECRET[SECRET:"),
             "nested placeholders detected: {masked}"
@@ -209,7 +221,8 @@ mod tests {
         );
 
         let mut map3 = TokenMap::new();
-        let masked3 = desensitize_raw_text("api_key: sk-abcdefghijklmnopqrstuvwxyz", &[], &mut map3);
+        let masked3 =
+            desensitize_raw_text("api_key: sk-abcdefghijklmnopqrstuvwxyz", &[], &mut map3);
         assert!(
             masked3.contains("api_key: [SECRET:"),
             "separator lost in api_key: {masked3}"
@@ -219,10 +232,7 @@ mod tests {
             !masked3.contains("[SECRET[SECRET:"),
             "nested placeholders: {masked3}"
         );
-        assert_eq!(
-            masked3.matches("[SECRET:").count(),
-            map3.forward.len()
-        );
+        assert_eq!(masked3.matches("[SECRET:").count(), map3.forward.len());
     }
 
     /// C2 回归：带边界字符（如 `{`、`(`、`,`）的赋值也必须正确脱敏。
@@ -236,7 +246,8 @@ mod tests {
         );
 
         let mut map2 = TokenMap::new();
-        let masked2 = desensitize_raw_text("(token=ghp_1234567890abcdefghijklmnop)", &[], &mut map2);
+        let masked2 =
+            desensitize_raw_text("(token=ghp_1234567890abcdefghijklmnop)", &[], &mut map2);
         assert!(
             masked2.contains("(token=[SECRET:"),
             "paren boundary broken: {masked2}"
@@ -401,11 +412,7 @@ pub fn validate_non_sensitive_metadata(
     max_len: usize,
 ) -> Result<Vec<String>, String> {
     // 提前收集敏感原文的小写集合，避免每次比较都遍历 map
-    let sensitive_lower: Vec<String> = token_map
-        .forward
-        .keys()
-        .map(|k| k.to_lowercase())
-        .collect();
+    let sensitive_lower: Vec<String> = token_map.forward.keys().map(|k| k.to_lowercase()).collect();
 
     let mut seen: HashMap<String, ()> = HashMap::new();
     let mut out: Vec<String> = Vec::new();
@@ -536,7 +543,8 @@ mod regex_tests {
     #[test]
     fn regex_catches_pem_private_key() {
         let mut m = TokenMap::new();
-        let pem = "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA...\n-----END RSA PRIVATE KEY-----";
+        let pem =
+            "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA...\n-----END RSA PRIVATE KEY-----";
         let masked = apply_regex_mask(pem, &mut m);
         assert!(masked.starts_with("[SECRET:"));
         assert!(!masked.contains("MIIEowIBAAKCAQEA"));
@@ -618,7 +626,8 @@ mod regex_tests {
     #[test]
     fn validate_metadata_rejects_embedded_placeholder() {
         let m = TokenMap::new();
-        let err = validate_non_sensitive_metadata(&["leaked [SECRET:abc] tag".to_string()], &m, 10, 100);
+        let err =
+            validate_non_sensitive_metadata(&["leaked [SECRET:abc] tag".to_string()], &m, 10, 100);
         assert!(err.is_err());
     }
 

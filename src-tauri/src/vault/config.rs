@@ -189,9 +189,7 @@ pub fn resolve_input(
             match saved {
                 Some(s) => {
                     if s.provider_id != provider_id {
-                        return Err(
-                            "切换 provider 时必须重新填写 API Key".to_string()
-                        );
+                        return Err("切换 provider 时必须重新填写 API Key".to_string());
                     }
                     s.api_key.clone()
                 }

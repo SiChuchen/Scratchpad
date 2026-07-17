@@ -27,9 +27,7 @@ use crate::vault::ipc::VaultRuntimeState;
 use crate::vault::llm::openai_compat::OpenAiCompatAdapter;
 use crate::vault::llm::prompt::capture_enrichment_prompt;
 use crate::vault::llm::{LlmAdapter, LlmRequest};
-use crate::vault::models::{
-    AiMetadataStatus, BackfillStatus, VaultAiMetadata, VaultEntryDetail,
-};
+use crate::vault::models::{AiMetadataStatus, BackfillStatus, VaultAiMetadata, VaultEntryDetail};
 use crate::vault::storage as vstore;
 
 /// 每完成一条 entry 后的节流间隔。
@@ -158,24 +156,16 @@ async fn process_one_entry(app: &AppHandle, entry_id: &str) {
     };
     let Some(config) = config else { return };
 
-    let adapter = match OpenAiCompatAdapter::new(
-        config.base_url,
-        config.api_key,
-        config.model.clone(),
-    ) {
-        Ok(a) => a,
-        Err(_) => return,
-    };
+    let adapter =
+        match OpenAiCompatAdapter::new(config.base_url, config.api_key, config.model.clone()) {
+            Ok(a) => a,
+            Err(_) => return,
+        };
 
     // 3) 脱敏（请求局部 TokenMap）
     let tag_strings: Vec<String> = detail.tags.iter().map(|t| t.tag.clone()).collect();
     let mut token_map = TokenMap::new();
-    let d_entry = desensitize_entry(
-        &detail.entry,
-        &detail.fields,
-        &tag_strings,
-        &mut token_map,
-    );
+    let d_entry = desensitize_entry(&detail.entry, &detail.fields, &tag_strings, &mut token_map);
     let mut masked_text = String::new();
     masked_text.push_str("title: ");
     masked_text.push_str(&d_entry.title);
@@ -208,14 +198,7 @@ async fn process_one_entry(app: &AppHandle, entry_id: &str) {
         Err(e) => {
             vault.record_failure(&e);
             // 失败：把 metadata 置为 error 并发事件
-            write_status_and_emit(
-                app,
-                entry_id,
-                AiMetadataStatus::Error,
-                Vec::new(),
-                None,
-            )
-            .await;
+            write_status_and_emit(app, entry_id, AiMetadataStatus::Error, Vec::new(), None).await;
             return;
         }
     };
@@ -225,14 +208,7 @@ async fn process_one_entry(app: &AppHandle, entry_id: &str) {
         Ok(s) => s,
         Err(e) => {
             vault.record_failure(&e);
-            write_status_and_emit(
-                app,
-                entry_id,
-                AiMetadataStatus::Error,
-                Vec::new(),
-                None,
-            )
-            .await;
+            write_status_and_emit(app, entry_id, AiMetadataStatus::Error, Vec::new(), None).await;
             return;
         }
     };
@@ -250,17 +226,16 @@ async fn process_one_entry(app: &AppHandle, entry_id: &str) {
     // 下一轮回填处理。
     {
         let app_state = app.state::<crate::AppState>();
-        let Ok(conn) = app_state.db.lock() else { return };
-        let current_hash = vstore::ai_content_hash_for_entry(&conn, entry_id)
-            .unwrap_or_default();
+        let Ok(conn) = app_state.db.lock() else {
+            return;
+        };
+        let current_hash = vstore::ai_content_hash_for_entry(&conn, entry_id).unwrap_or_default();
         // 读 metadata 当前 status，只有仍为 pending（未变 ready/error）才写
         let current_status = vstore::get_ai_metadata(&conn, entry_id)
             .ok()
             .flatten()
             .map(|m| m.status);
-        if current_hash != content_hash
-            || current_status != Some(AiMetadataStatus::Pending)
-        {
+        if current_hash != content_hash || current_status != Some(AiMetadataStatus::Pending) {
             // entry 已被修改或已处理；放弃本次写入
             return;
         }
@@ -279,7 +254,9 @@ async fn process_one_entry(app: &AppHandle, entry_id: &str) {
     };
     {
         let app_state = app.state::<crate::AppState>();
-        let Ok(mut conn) = app_state.db.lock() else { return };
+        let Ok(mut conn) = app_state.db.lock() else {
+            return;
+        };
         let _ = vstore::replace_ai_tags(&mut conn, entry_id, &suggestion.ai_tags);
         let _ = vstore::set_ai_metadata(&mut conn, &metadata);
     }
@@ -533,7 +510,10 @@ mod tests {
         let json = serde_json::to_value(&evt).unwrap();
         assert_eq!(json["entryId"], "v2");
         assert_eq!(json["status"], "error");
-        assert!(json["metadata"].is_null(), "metadata should be null on error");
+        assert!(
+            json["metadata"].is_null(),
+            "metadata should be null on error"
+        );
     }
 
     /// 回归 C1：worker 在 LLM 调用期间 entry 被并发 update_entry 修改时，
@@ -559,8 +539,7 @@ mod tests {
         // 1) 创建 entry，默认 pending
         let detail = vstore::create_entry(&mut conn, &mk_input("Original")).unwrap();
         let id = detail.entry.id.clone();
-        let snapshot_hash =
-            vstore::compute_entry_content_hash(&detail.entry, &detail.fields);
+        let snapshot_hash = vstore::compute_entry_content_hash(&detail.entry, &detail.fields);
 
         // 2) 模拟"LLM 调用期间，update_entry 修改了 title → 触发 hash 变化 +
         //    status 仍为 pending（update_entry 内部把 ready→pending；这里
@@ -571,8 +550,7 @@ mod tests {
 
         // 3) 保护逻辑：重新读取当前 hash + status
         let current_hash = vstore::ai_content_hash_for_entry(&conn, &id).unwrap();
-        let current_status =
-            vstore::get_ai_metadata(&conn, &id).unwrap().unwrap().status;
+        let current_status = vstore::get_ai_metadata(&conn, &id).unwrap().unwrap().status;
 
         // 4) 断言：snapshot_hash != current_hash → 写入必须被跳过
         assert_ne!(
@@ -582,8 +560,8 @@ mod tests {
         assert_eq!(current_status, AiMetadataStatus::Pending);
 
         // 模拟 process_one_entry 的决策分支
-        let should_skip = current_hash != snapshot_hash
-            || current_status != AiMetadataStatus::Pending;
+        let should_skip =
+            current_hash != snapshot_hash || current_status != AiMetadataStatus::Pending;
         assert!(
             should_skip,
             "worker must skip write when entry changed during LLM call"
@@ -596,8 +574,9 @@ mod tests {
         assert!(md.summary.is_none());
         let tags = vstore::list_tags_with_source(&conn, &id).unwrap();
         assert!(
-            !tags.iter().any(|t| t.source
-                == crate::vault::models::TagSource::Ai),
+            !tags
+                .iter()
+                .any(|t| t.source == crate::vault::models::TagSource::Ai),
             "no stale AI tags should be written"
         );
     }

@@ -20,17 +20,19 @@ impl OpenAiCompatAdapter {
             .timeout(Duration::from_secs(30))
             .build()
             .map_err(|e| LlmError::Network(e.to_string()))?;
-        Ok(Self { base_url, api_key, model, client })
+        Ok(Self {
+            base_url,
+            api_key,
+            model,
+            client,
+        })
     }
 }
 
 #[async_trait]
 impl LlmAdapter for OpenAiCompatAdapter {
     async fn complete(&self, req: LlmRequest) -> Result<LlmResponse, LlmError> {
-        let url = format!(
-            "{}/chat/completions",
-            self.base_url.trim_end_matches('/')
-        );
+        let url = format!("{}/chat/completions", self.base_url.trim_end_matches('/'));
         let mut body = json!({
             "model": self.model,
             "messages": req.messages.iter().map(|m| json!({"role": m.role, "content": m.content})).collect::<Vec<_>>(),
@@ -69,12 +71,18 @@ impl LlmAdapter for OpenAiCompatAdapter {
             });
         }
 
-        let v: Value = resp.json().await.map_err(|e| LlmError::Parse(e.to_string()))?;
+        let v: Value = resp
+            .json()
+            .await
+            .map_err(|e| LlmError::Parse(e.to_string()))?;
         let content = v["choices"][0]["message"]["content"]
             .as_str()
             .ok_or_else(|| LlmError::Parse("missing choices[0].message.content".into()))?
             .to_string();
         let tokens_used = v["usage"]["total_tokens"].as_u64().map(|n| n as u32);
-        Ok(LlmResponse { content, tokens_used })
+        Ok(LlmResponse {
+            content,
+            tokens_used,
+        })
     }
 }

@@ -202,9 +202,7 @@ fn try_connection_url(text: &str) -> Option<CaptureDraft> {
 
     // host_part: host[:port][/path?query#frag]
     // 先去掉 path / query / fragment
-    let authority_end = host_part
-        .find(['/', '?', '#'])
-        .unwrap_or(host_part.len());
+    let authority_end = host_part.find(['/', '?', '#']).unwrap_or(host_part.len());
     let authority = &host_part[..authority_end];
     let path_remainder = &host_part[authority_end..];
 
@@ -312,9 +310,7 @@ fn try_user_pass_host_port(text: &str) -> Option<CaptureDraft> {
         return None;
     }
     // user / password 不应含空白
-    if user.chars().any(|c| c.is_whitespace())
-        || password.chars().any(|c| c.is_whitespace())
-    {
+    if user.chars().any(|c| c.is_whitespace()) || password.chars().any(|c| c.is_whitespace()) {
         return None;
     }
 
@@ -588,7 +584,10 @@ mod tests {
     fn single_url_becomes_bookmark() {
         let draft = parse_capture_local("https://example.com/path?query=1").unwrap();
         assert_eq!(draft.kind, EntryKind::Bookmark);
-        assert_eq!(field(&draft, "url").value, "https://example.com/path?query=1");
+        assert_eq!(
+            field(&draft, "url").value,
+            "https://example.com/path?query=1"
+        );
         assert_eq!(draft.title, "example.com");
     }
 
@@ -731,8 +730,7 @@ mod tests {
     fn multiline_kv_with_host_still_classified_as_credential() {
         // I2 回归保护：只要至少一个 key 命中 CREDENTIAL_KEYS（这里是 host），
         // 就应当分类为 Credential，即便其它 key 是任意字段名。
-        let draft =
-            parse_capture_local("host: db.internal\nfree_form_field: whatever").unwrap();
+        let draft = parse_capture_local("host: db.internal\nfree_form_field: whatever").unwrap();
         assert_eq!(draft.kind, EntryKind::Credential);
         assert_eq!(field(&draft, "host").value, "db.internal");
     }
@@ -758,10 +756,7 @@ mod tests {
         let draft = parse_capture_local(&raw).unwrap();
         assert_eq!(draft.fields.len(), 32);
         assert!(
-            draft
-                .warnings
-                .iter()
-                .any(|w| w == "too_many_fields"),
+            draft.warnings.iter().any(|w| w == "too_many_fields"),
             "expected too_many_fields warning, got {:?}",
             draft.warnings
         );

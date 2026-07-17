@@ -6,9 +6,9 @@ use sha2::{Digest, Sha256};
 
 use crate::storage::error::{StorageError, StorageResult};
 use crate::vault::models::{
-    AiMetadataStatus, BackfillStatus, CaptureDraft, EntryKind, TagSource, VaultAiMetadata,
-    VaultEntry, VaultEntryDetail, VaultEntryInput, VaultEntrySummary, VaultField, VaultTag,
-    is_default_sensitive_key,
+    is_default_sensitive_key, AiMetadataStatus, BackfillStatus, CaptureDraft, EntryKind, TagSource,
+    VaultAiMetadata, VaultEntry, VaultEntryDetail, VaultEntryInput, VaultEntrySummary, VaultField,
+    VaultTag,
 };
 
 const VAULT_SCHEMA_SQL: &str = r#"
@@ -116,7 +116,8 @@ pub fn list_fields(conn: &Connection, entry_id: &str) -> StorageResult<Vec<Vault
          FROM vault_fields WHERE entry_id = ?1 ORDER BY sort_order",
     )?;
     let rows = stmt.query_map(params![entry_id], row_to_field)?;
-    rows.collect::<rusqlite::Result<Vec<_>>>().map_err(StorageError::from)
+    rows.collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(StorageError::from)
 }
 
 fn row_to_field(row: &Row) -> rusqlite::Result<VaultField> {
@@ -148,7 +149,10 @@ fn row_to_entry(row: &Row) -> rusqlite::Result<VaultEntry> {
         rusqlite::Error::FromSqlConversionFailure(
             1,
             rusqlite::types::Type::Text,
-            Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, "bad kind")),
+            Box::new(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "bad kind",
+            )),
         )
     })?;
     Ok(VaultEntry {
@@ -191,7 +195,14 @@ pub fn update_entry(
         tx.execute(
             "INSERT INTO vault_fields(id, entry_id, key, value, is_sensitive, sort_order)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![next_field_id(), id, f.key, f.value, sensitive as i32, i as i64],
+            params![
+                next_field_id(),
+                id,
+                f.key,
+                f.value,
+                sensitive as i32,
+                i as i64
+            ],
         )?;
     }
 
@@ -416,10 +427,7 @@ pub fn remove_ai_tag(
 }
 
 /// 写入完整的 ready AI metadata（status='ready'）。同事务刷新 FTS 以反映 search_aliases。
-pub fn set_ai_metadata(
-    conn: &mut Connection,
-    metadata: &VaultAiMetadata,
-) -> StorageResult<()> {
+pub fn set_ai_metadata(conn: &mut Connection, metadata: &VaultAiMetadata) -> StorageResult<()> {
     let tx = conn.transaction()?;
     let aliases_json = serde_json::to_string(&metadata.search_aliases)
         .map_err(|e| StorageError::Other(e.to_string()))?;
@@ -502,17 +510,14 @@ pub fn list_pending_ai_entries(conn: &Connection, limit: usize) -> StorageResult
          LIMIT ?1",
     )?;
     let rows = stmt.query_map(params![limit as i64], |r| r.get::<_, String>(0))?;
-    rows.collect::<rusqlite::Result<Vec<_>>>().map_err(StorageError::from)
+    rows.collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(StorageError::from)
 }
 
 /// 统计当前各 AI metadata 状态的条目数。
 /// `processing` 字段始终为 0（worker 没有显式 processing 状态，pending 即"待处理"）。
 pub fn backfill_status(conn: &Connection) -> StorageResult<BackfillStatus> {
-    let total: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM vault_ai_metadata",
-        [],
-        |r| r.get(0),
-    )?;
+    let total: i64 = conn.query_row("SELECT COUNT(*) FROM vault_ai_metadata", [], |r| r.get(0))?;
     let ready: i64 = conn.query_row(
         "SELECT COUNT(*) FROM vault_ai_metadata WHERE status='ready'",
         [],
@@ -572,11 +577,15 @@ pub fn list_tags_with_source(conn: &Connection, entry_id: &str) -> StorageResult
             source,
         })
     })?;
-    rows.collect::<rusqlite::Result<Vec<_>>>().map_err(StorageError::from)
+    rows.collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(StorageError::from)
 }
 
 /// 读取一条条目的 AI 元数据；无记录时返回 None。
-pub fn get_ai_metadata(conn: &Connection, entry_id: &str) -> StorageResult<Option<VaultAiMetadata>> {
+pub fn get_ai_metadata(
+    conn: &Connection,
+    entry_id: &str,
+) -> StorageResult<Option<VaultAiMetadata>> {
     let mut stmt = conn.prepare(
         "SELECT entry_id, summary, search_aliases_json, content_hash,
                 provider_id, model, generated_at, status
@@ -587,8 +596,7 @@ pub fn get_ai_metadata(conn: &Connection, entry_id: &str) -> StorageResult<Optio
         return Ok(None);
     };
     let aliases_json: String = r.get(2)?;
-    let aliases: Vec<String> =
-        serde_json::from_str(&aliases_json).unwrap_or_default();
+    let aliases: Vec<String> = serde_json::from_str(&aliases_json).unwrap_or_default();
     let status_str: String = r.get(7)?;
     let status = match status_str.as_str() {
         "pending" => AiMetadataStatus::Pending,
@@ -611,9 +619,8 @@ fn build_searchable(conn: &Connection, entry_id: &str) -> StorageResult<String> 
     // 拼接所有非敏感字段的 value + 所有 tag
     let mut parts: Vec<String> = Vec::new();
 
-    let mut stmt = conn.prepare(
-        "SELECT value FROM vault_fields WHERE entry_id=?1 AND is_sensitive=0",
-    )?;
+    let mut stmt =
+        conn.prepare("SELECT value FROM vault_fields WHERE entry_id=?1 AND is_sensitive=0")?;
     let values = stmt.query_map(params![entry_id], |r| r.get::<_, String>(0))?;
     for v in values {
         parts.push(v?);
@@ -631,13 +638,15 @@ fn fts5_upsert(conn: &Connection, entry_id: &str) -> StorageResult<()> {
     let entry = get_entry_by_id(conn, entry_id)?
         .ok_or_else(|| StorageError::Other(format!("entry {entry_id} missing for fts")))?;
     let searchable = build_searchable(conn, entry_id)?;
-    conn.execute(
-        "DELETE FROM vault_fts WHERE entry_id=?1",
-        params![entry_id],
-    )?;
+    conn.execute("DELETE FROM vault_fts WHERE entry_id=?1", params![entry_id])?;
     conn.execute(
         "INSERT INTO vault_fts(entry_id, title, notes, searchable) VALUES (?1, ?2, ?3, ?4)",
-        params![entry_id, entry.title, entry.notes.unwrap_or_default(), searchable],
+        params![
+            entry_id,
+            entry.title,
+            entry.notes.unwrap_or_default(),
+            searchable
+        ],
     )?;
     Ok(())
 }
@@ -661,7 +670,8 @@ pub fn fts5_search(
     let rows = stmt.query_map(params![escape_fts_query(query)], |r| {
         Ok((r.get::<_, String>(0)?, r.get::<_, f64>(1)?))
     })?;
-    rows.collect::<rusqlite::Result<Vec<_>>>().map_err(StorageError::from)
+    rows.collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(StorageError::from)
 }
 
 fn escape_fts_query(q: &str) -> String {
@@ -714,10 +724,7 @@ fn ai_content_hash(input: &VaultEntryInput) -> String {
 /// Task 9 search 用它判断 metadata.content_hash 是否已经 stale。
 /// 与 `ai_content_hash(input)` 的 canonical 输入完全一致，因此可以
 /// 直接拿来和 metadata.content_hash 对比。
-pub fn compute_entry_content_hash(
-    entry: &VaultEntry,
-    fields: &[VaultField],
-) -> String {
+pub fn compute_entry_content_hash(entry: &VaultEntry, fields: &[VaultField]) -> String {
     let fields_str = fields
         .iter()
         .map(|f| {
@@ -802,10 +809,17 @@ pub fn create_from_capture(
     let aliases_json = serde_json::to_string(&draft.search_aliases)
         .map_err(|e| StorageError::Other(e.to_string()))?;
     let (provider_id, model, generated_at) = match &draft.ai_provenance {
-        Some(p) => (Some(p.provider_id.clone()), Some(p.model.clone()), Some(p.generated_at.clone())),
+        Some(p) => (
+            Some(p.provider_id.clone()),
+            Some(p.model.clone()),
+            Some(p.generated_at.clone()),
+        ),
         None => (None, None, None),
     };
-    let has_ai_content = draft.ai_summary.as_ref().is_some_and(|s| !s.trim().is_empty())
+    let has_ai_content = draft
+        .ai_summary
+        .as_ref()
+        .is_some_and(|s| !s.trim().is_empty())
         || !draft.search_aliases.is_empty()
         || !draft.ai_tags.is_empty();
     let status_value = if draft.ai_provenance.is_some() && has_ai_content {
@@ -928,8 +942,16 @@ mod tests {
             kind: EntryKind::Credential,
             title: "Prod DB".into(),
             fields: vec![
-                FieldInput { key: "user".into(), value: "admin".into(), is_sensitive: false },
-                FieldInput { key: "password".into(), value: "s3cr3t".into(), is_sensitive: false },
+                FieldInput {
+                    key: "user".into(),
+                    value: "admin".into(),
+                    is_sensitive: false,
+                },
+                FieldInput {
+                    key: "password".into(),
+                    value: "s3cr3t".into(),
+                    is_sensitive: false,
+                },
             ],
             notes: Some("prod".into()),
             manual_tags: Vec::new(),
@@ -959,17 +981,20 @@ mod tests {
 
     /// 旧测试辅助：返回 VaultEntry（不含 tags/metadata）
     fn make_entry(conn: &mut Connection, title: &str) -> VaultEntry {
-        create_entry(conn, &VaultEntryInput {
-            kind: EntryKind::Credential,
-            title: title.into(),
-            fields: vec![FieldInput {
-                key: "password".into(),
-                value: "x".into(),
-                is_sensitive: false,
-            }],
-            notes: None,
-            manual_tags: Vec::new(),
-        })
+        create_entry(
+            conn,
+            &VaultEntryInput {
+                kind: EntryKind::Credential,
+                title: title.into(),
+                fields: vec![FieldInput {
+                    key: "password".into(),
+                    value: "x".into(),
+                    is_sensitive: false,
+                }],
+                notes: None,
+                manual_tags: Vec::new(),
+            },
+        )
         .unwrap()
         .entry
     }
@@ -1083,7 +1108,11 @@ mod tests {
                 kind: EntryKind::Credential,
                 title: "Production Database".into(),
                 fields: vec![
-                    FieldInput { key: "user".into(), value: "admin".into(), is_sensitive: false },
+                    FieldInput {
+                        key: "user".into(),
+                        value: "admin".into(),
+                        is_sensitive: false,
+                    },
                     FieldInput {
                         key: "password".into(),
                         value: "supersecretvalue".into(),
@@ -1146,31 +1175,48 @@ mod tests {
     fn replacing_ai_tags_preserves_manual_tags() {
         let mut conn = open_test_db();
         let detail = create_entry(&mut conn, &input_with_manual_tags(&["数据库"])).unwrap();
-        replace_ai_tags(&mut conn, &detail.entry.id, &["生产".into(), "数据库".into()]).unwrap();
+        replace_ai_tags(
+            &mut conn,
+            &detail.entry.id,
+            &["生产".into(), "数据库".into()],
+        )
+        .unwrap();
         replace_ai_tags(&mut conn, &detail.entry.id, &["MySQL".into()]).unwrap();
 
         let tags = list_tags(&conn, &detail.entry.id).unwrap();
-        assert!(tags.iter().any(|t| t.tag == "数据库" && t.source == TagSource::Manual));
-        assert!(tags.iter().any(|t| t.tag == "MySQL" && t.source == TagSource::Ai));
+        assert!(tags
+            .iter()
+            .any(|t| t.tag == "数据库" && t.source == TagSource::Manual));
+        assert!(tags
+            .iter()
+            .any(|t| t.tag == "MySQL" && t.source == TagSource::Ai));
         assert!(!tags.iter().any(|t| t.tag == "生产"));
     }
 
     #[test]
     fn create_entry_saves_manual_tags_and_pending_metadata_atomically() {
         let mut conn = open_test_db();
-        let detail = create_entry(&mut conn, &input_with_manual_tags(&["数据库", "MySQL"])).unwrap();
+        let detail =
+            create_entry(&mut conn, &input_with_manual_tags(&["数据库", "MySQL"])).unwrap();
 
         // manual tags 落库
         let tags = list_tags(&conn, &detail.entry.id).unwrap();
-        assert!(tags.iter().any(|t| t.tag == "数据库" && t.source == TagSource::Manual));
-        assert!(tags.iter().any(|t| t.tag == "MySQL" && t.source == TagSource::Manual));
+        assert!(tags
+            .iter()
+            .any(|t| t.tag == "数据库" && t.source == TagSource::Manual));
+        assert!(tags
+            .iter()
+            .any(|t| t.tag == "MySQL" && t.source == TagSource::Manual));
         assert!(tags.iter().all(|t| t.source == TagSource::Manual));
 
         // AI metadata 落库 + pending 状态
         let md = get_ai_metadata(&conn, &detail.entry.id).unwrap();
         let md = md.expect("metadata should exist after create_entry");
         assert_eq!(md.status, AiMetadataStatus::Pending);
-        assert!(!md.content_hash.is_empty(), "content hash should be populated");
+        assert!(
+            !md.content_hash.is_empty(),
+            "content hash should be populated"
+        );
         assert!(md.summary.is_none());
         assert!(md.search_aliases.is_empty());
     }
@@ -1208,7 +1254,9 @@ mod tests {
 
         let tags = list_tags(&conn, &id).unwrap();
         // manual 保留
-        assert!(tags.iter().any(|t| t.tag == "数据库" && t.source == TagSource::Manual));
+        assert!(tags
+            .iter()
+            .any(|t| t.tag == "数据库" && t.source == TagSource::Manual));
         // ai 全部被清掉
         assert!(!tags.iter().any(|t| t.source == TagSource::Ai));
 
@@ -1249,15 +1297,26 @@ mod tests {
 
         // ai tags 必须仍在
         let tags = list_tags(&conn, &id).unwrap();
-        assert!(tags.iter().any(|t| t.tag == "生产" && t.source == TagSource::Ai),
-            "AI tags must be preserved when content hash unchanged");
+        assert!(
+            tags.iter()
+                .any(|t| t.tag == "生产" && t.source == TagSource::Ai),
+            "AI tags must be preserved when content hash unchanged"
+        );
         // 新 manual tag 落库
-        assert!(tags.iter().any(|t| t.tag == "MySQL" && t.source == TagSource::Manual));
-        assert!(tags.iter().any(|t| t.tag == "重要" && t.source == TagSource::Manual));
+        assert!(tags
+            .iter()
+            .any(|t| t.tag == "MySQL" && t.source == TagSource::Manual));
+        assert!(tags
+            .iter()
+            .any(|t| t.tag == "重要" && t.source == TagSource::Manual));
 
         // metadata 仍是 ready，summary 仍存在
         let md = get_ai_metadata(&conn, &id).unwrap().unwrap();
-        assert_eq!(md.status, AiMetadataStatus::Ready, "ready metadata must be preserved");
+        assert_eq!(
+            md.status,
+            AiMetadataStatus::Ready,
+            "ready metadata must be preserved"
+        );
         assert_eq!(md.summary.as_deref(), Some("prod"));
         assert_eq!(md.content_hash, orig_hash);
     }
@@ -1275,11 +1334,16 @@ mod tests {
 
         let tags = list_tags(&conn, &id).unwrap();
         // manual 必须保留
-        assert!(tags.iter().any(|t| t.tag == "prod" && t.source == TagSource::Manual),
-            "manual tag must survive remove_ai_tag");
+        assert!(
+            tags.iter()
+                .any(|t| t.tag == "prod" && t.source == TagSource::Manual),
+            "manual tag must survive remove_ai_tag"
+        );
         // ai 必须被删除
-        assert!(!tags.iter().any(|t| t.source == TagSource::Ai),
-            "ai tag should be removed");
+        assert!(
+            !tags.iter().any(|t| t.source == TagSource::Ai),
+            "ai tag should be removed"
+        );
     }
 
     fn make_capture_draft(title: &str) -> CaptureDraft {
@@ -1358,7 +1422,10 @@ mod tests {
             is_sensitive: true,
         });
         let result = create_from_capture(&mut conn, &draft, "req-fail");
-        assert!(result.is_err(), "capture with duplicate field key should fail");
+        assert!(
+            result.is_err(),
+            "capture with duplicate field key should fail"
+        );
 
         // 失败后：没有 capture_requests 记录
         let n_req: i64 = conn
@@ -1368,7 +1435,10 @@ mod tests {
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(n_req, 0, "no request row should remain after failed capture");
+        assert_eq!(
+            n_req, 0,
+            "no request row should remain after failed capture"
+        );
         // 失败后：没有 title='Will Fail' 的 entry
         let n_entries: i64 = conn
             .query_row(
@@ -1377,7 +1447,10 @@ mod tests {
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(n_entries, 0, "no partial entry should remain after failed capture");
+        assert_eq!(
+            n_entries, 0,
+            "no partial entry should remain after failed capture"
+        );
         // 失败后：对应的 metadata 也不应存在
         let n_md: i64 = conn
             .query_row(
@@ -1386,7 +1459,10 @@ mod tests {
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(n_md, 0, "no metadata row should remain after failed capture");
+        assert_eq!(
+            n_md, 0,
+            "no metadata row should remain after failed capture"
+        );
     }
 
     #[test]
@@ -1404,7 +1480,10 @@ mod tests {
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(status, "ready", "draft with provenance + content must be ready");
+        assert_eq!(
+            status, "ready",
+            "draft with provenance + content must be ready"
+        );
         // provider_id 必须落盘
         let provider: Option<String> = conn
             .query_row(
@@ -1431,7 +1510,10 @@ mod tests {
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(status, "pending", "draft without provenance must be pending");
+        assert_eq!(
+            status, "pending",
+            "draft without provenance must be pending"
+        );
         // provider_id 必须为 NULL
         let provider: Option<String> = conn
             .query_row(
@@ -1471,8 +1553,16 @@ mod tests {
             kind: EntryKind::Credential,
             title: "Prod".into(),
             fields: vec![
-                FieldInput { key: "user".into(), value: "admin".into(), is_sensitive: false },
-                FieldInput { key: "password".into(), value: "hunter2".into(), is_sensitive: false },
+                FieldInput {
+                    key: "user".into(),
+                    value: "admin".into(),
+                    is_sensitive: false,
+                },
+                FieldInput {
+                    key: "password".into(),
+                    value: "hunter2".into(),
+                    is_sensitive: false,
+                },
             ],
             notes: Some("notes".into()),
             manual_tags: vec![],
@@ -1482,7 +1572,10 @@ mod tests {
         // 轮换密码：hash 应保持不变
         input_v1.fields[1].value = "totally-different-pw".into();
         let h2 = ai_content_hash(&input_v1);
-        assert_eq!(h1, h2, "rotating sensitive value must not change content hash");
+        assert_eq!(
+            h1, h2,
+            "rotating sensitive value must not change content hash"
+        );
 
         // 改非敏感字段 value → hash 必须变化
         input_v1.fields[0].value = "root".into();
@@ -1499,7 +1592,11 @@ mod tests {
                 kind: EntryKind::Credential,
                 title: "Preview Test".into(),
                 fields: vec![
-                    FieldInput { key: "user".into(), value: "admin".into(), is_sensitive: false },
+                    FieldInput {
+                        key: "user".into(),
+                        value: "admin".into(),
+                        is_sensitive: false,
+                    },
                     FieldInput {
                         key: "password".into(),
                         value: "DO_NOT_LEAK".into(),
@@ -1513,10 +1610,19 @@ mod tests {
         .unwrap();
 
         let summaries = list_entries(&conn, None).unwrap();
-        let s = summaries.iter().find(|s| s.entry.id == detail.entry.id).unwrap();
+        let s = summaries
+            .iter()
+            .find(|s| s.entry.id == detail.entry.id)
+            .unwrap();
         let preview = s.preview.clone().unwrap_or_default();
-        assert!(preview.contains("admin"), "preview should include non-sensitive value");
-        assert!(!preview.contains("DO_NOT_LEAK"), "preview must not contain sensitive value");
+        assert!(
+            preview.contains("admin"),
+            "preview should include non-sensitive value"
+        );
+        assert!(
+            !preview.contains("DO_NOT_LEAK"),
+            "preview must not contain sensitive value"
+        );
     }
 
     #[test]
@@ -1528,7 +1634,11 @@ mod tests {
                 kind: EntryKind::Credential,
                 title: "Index Test".into(),
                 fields: vec![
-                    FieldInput { key: "user".into(), value: "admin".into(), is_sensitive: false },
+                    FieldInput {
+                        key: "user".into(),
+                        value: "admin".into(),
+                        is_sensitive: false,
+                    },
                     FieldInput {
                         key: "password".into(),
                         value: "INDEX_SECRET_VALUE".into(),
@@ -1544,8 +1654,10 @@ mod tests {
 
         // 通过 FTS 无法召回敏感值
         let hits = fts5_search(&conn, "INDEX_SECRET_VALUE", 10).unwrap();
-        assert!(!hits.iter().any(|(h_id, _)| h_id == &id),
-            "FTS must never index sensitive values");
+        assert!(
+            !hits.iter().any(|(h_id, _)| h_id == &id),
+            "FTS must never index sensitive values"
+        );
 
         // 但能召回非敏感值
         let hits = fts5_search(&conn, "admin", 10).unwrap();

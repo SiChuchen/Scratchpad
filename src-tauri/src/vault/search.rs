@@ -175,15 +175,16 @@ fn add_title_matches(
     source: SearchSource,
 ) -> StorageResult<()> {
     let like = format!("%{query}%");
-    let mut stmt = conn.prepare(
-        "SELECT id FROM vault_entries WHERE title = ?1 OR title LIKE ?2",
-    )?;
+    let mut stmt =
+        conn.prepare("SELECT id FROM vault_entries WHERE title = ?1 OR title LIKE ?2")?;
     let ids: Vec<String> = stmt
         .query_map(params![query, like], |r| r.get::<_, String>(0))?
         .filter_map(|r| r.ok())
         .collect();
     for id in ids {
-        acc.entry(id).or_default().record("title", SCORE_TITLE_MATCH, source);
+        acc.entry(id)
+            .or_default()
+            .record("title", SCORE_TITLE_MATCH, source);
     }
     Ok(())
 }
@@ -425,7 +426,11 @@ fn build_summary(conn: &Connection, entry_id: &str) -> StorageResult<VaultEntryS
     let tags = vstore::list_tags_with_source(conn, entry_id).unwrap_or_default();
     let fields: Vec<VaultField> = vstore::list_fields(conn, entry_id).unwrap_or_default();
     let preview = build_preview(&entry, &fields);
-    Ok(VaultEntrySummary { entry, tags, preview })
+    Ok(VaultEntrySummary {
+        entry,
+        tags,
+        preview,
+    })
 }
 
 /// 与 storage::build_preview 等价的预览生成（storage 里的是私有函数）。

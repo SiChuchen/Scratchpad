@@ -16,7 +16,7 @@ use serde::Serialize;
 use tauri::{AppHandle, State};
 
 use crate::vault::config::{
-    apply_preset_base_url, resolve_input, LlmConfigInput, LlmConfigSummary, LlmConfigStored,
+    apply_preset_base_url, resolve_input, LlmConfigInput, LlmConfigStored, LlmConfigSummary,
     VaultAiSettings,
 };
 use crate::vault::ipc::VaultRuntimeState;
@@ -142,7 +142,9 @@ pub async fn ipc_vault_verify_and_save_llm(
     // 5) 测试成功：原子写入 DB + 更新 runtime + 清门控
     {
         let mut conn = state.db.lock().map_err(|e| e.to_string())?;
-        vault.save_config(&mut conn, to_test).map_err(|e| e.to_string())?;
+        vault
+            .save_config(&mut conn, to_test)
+            .map_err(|e| e.to_string())?;
     }
 
     // Task 10: 配置保存成功后启动一次 backfill（worker mutex 保证只一个）
@@ -241,8 +243,7 @@ pub async fn ipc_vault_set_ai_settings(
 ) -> Result<VaultAiSettings, String> {
     {
         let mut conn = state.db.lock().map_err(|e| e.to_string())?;
-        crate::vault::config::save_ai_settings(&mut conn, &settings)
-            .map_err(|e| e.to_string())?;
+        crate::vault::config::save_ai_settings(&mut conn, &settings).map_err(|e| e.to_string())?;
     }
     vault.set_settings(settings.clone());
     Ok(settings)

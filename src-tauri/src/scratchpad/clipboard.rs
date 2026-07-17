@@ -125,11 +125,7 @@ mod win32_clipboard {
             if ptr == 0 {
                 return Err("GlobalLock failed".to_string());
             }
-            std::ptr::copy_nonoverlapping(
-                wide.as_ptr() as *const u8,
-                ptr as *mut u8,
-                byte_count,
-            );
+            std::ptr::copy_nonoverlapping(wide.as_ptr() as *const u8, ptr as *mut u8, byte_count);
             GlobalUnlock(hmem);
 
             if OpenClipboard(0) == 0 {
@@ -276,9 +272,7 @@ pub fn copy_text(text: &str, clear_after_seconds: Option<u64>) -> Result<(), Str
             std::thread::spawn(move || {
                 std::thread::sleep(std::time::Duration::from_secs(secs));
                 let current_seq = win32_clipboard::current_sequence();
-                let current_text = win32_clipboard::get_unicode_text()
-                    .ok()
-                    .flatten();
+                let current_text = win32_clipboard::get_unicode_text().ok().flatten();
                 if should_clear_sensitive_clipboard(
                     saved_seq,
                     current_seq,
@@ -286,10 +280,7 @@ pub fn copy_text(text: &str, clear_after_seconds: Option<u64>) -> Result<(), Str
                     current_text.as_deref(),
                 ) {
                     if let Err(e) = win32_clipboard::empty_clipboard() {
-                        eprintln!(
-                            "[clipboard] auto-clear EmptyClipboard failed: {}",
-                            e
-                        );
+                        eprintln!("[clipboard] auto-clear EmptyClipboard failed: {}", e);
                     }
                 }
             });
@@ -360,7 +351,12 @@ mod tests {
     #[test]
     fn clear_decision_returns_false_when_clipboard_is_not_text() {
         // 剪贴板已被清空或被替换为非文本格式（图片/文件等）→ 不清空。
-        assert!(!should_clear_sensitive_clipboard(42, 42, "super-secret", None));
+        assert!(!should_clear_sensitive_clipboard(
+            42,
+            42,
+            "super-secret",
+            None
+        ));
     }
 
     #[test]

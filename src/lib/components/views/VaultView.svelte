@@ -105,7 +105,7 @@
 
   const ctrl = new LibraryViewController({
     onDelete: (id) => vaultApi.deleteEntry(id),
-    notify,
+    notify: (text, kind, undo, actionLabel) => notify(text, kind, undo, actionLabel),
     deleteDelayMs: 3000,
     onRestoreFailedDelete: (pending) => {
       restorePendingToAllEntries(pending)

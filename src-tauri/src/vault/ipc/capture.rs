@@ -25,7 +25,9 @@ use crate::vault::config::LlmConfigStored;
 use crate::vault::desensitize::{desensitize_raw_text, TokenMap};
 use crate::vault::llm::prompt::capture_enrichment_prompt;
 use crate::vault::llm::{LlmAdapter, LlmError, LlmRequest};
-use crate::vault::models::{is_default_sensitive_key, CaptureDraft, CaptureEnrichment, VaultEntryDetail};
+use crate::vault::models::{
+    is_default_sensitive_key, CaptureDraft, CaptureEnrichment, VaultEntryDetail,
+};
 use crate::vault::storage as vstore;
 
 /// 用户可读的占位符扫描失败信息。
@@ -35,9 +37,7 @@ const UNKNOWN_PLACEHOLDER_HINT: &str = "draft 包含未脱敏的占位符，请�
 
 /// 仅做本地解析，绝不调 LLM。
 #[tauri::command]
-pub async fn ipc_vault_parse_capture_local(
-    raw_text: String,
-) -> Result<CaptureDraft, String> {
+pub async fn ipc_vault_parse_capture_local(raw_text: String) -> Result<CaptureDraft, String> {
     vcapture::parse_capture_local(&raw_text).map_err(|e| e.to_string())
 }
 
@@ -56,9 +56,7 @@ pub async fn ipc_vault_enrich_capture(
     // 1) 取 config；缺配置 → 错误
     let config: LlmConfigStored = {
         let guard = vault.config.lock().map_err(|e| e.to_string())?;
-        guard
-            .clone()
-            .ok_or_else(|| "LLM 未配置".to_string())?
+        guard.clone().ok_or_else(|| "LLM 未配置".to_string())?
     };
 
     // 2) 构造 adapter（helper 接受 `&dyn LlmAdapter`，方便单元测试注入）
@@ -95,8 +93,7 @@ pub async fn ipc_vault_create_from_capture(
 
     // 3) 落库
     let mut conn = state.db.lock().map_err(|e| e.to_string())?;
-    vstore::create_from_capture(&mut conn, &final_draft, &request_id)
-        .map_err(|e| e.to_string())
+    vstore::create_from_capture(&mut conn, &final_draft, &request_id).map_err(|e| e.to_string())
 }
 
 // ---- 可测试 helper ---------------------------------------------------------
@@ -368,14 +365,10 @@ mod tests {
         let config = sample_stored();
         let _draft = sample_draft();
         let raw_text = "hello world topsecret";
-        let enrichment = enrich_capture_with(
-            &adapter,
-            &config,
-            raw_text,
-            &["topsecret".to_string()],
-        )
-        .await
-        .expect("enrich ok");
+        let enrichment =
+            enrich_capture_with(&adapter, &config, raw_text, &["topsecret".to_string()])
+                .await
+                .expect("enrich ok");
 
         assert_eq!(enrichment.suggestion.ai_tags, vec!["work", "prod"]);
         assert_eq!(counter.load(Ordering::SeqCst), 1);
@@ -429,7 +422,12 @@ mod tests {
         let id = saved.entry.id.clone();
 
         // 假设 refresh 后 AI 给出新的 tags
-        vstore::replace_ai_tags(&mut conn, &id, &["new-ai-1".to_string(), "new-ai-2".to_string()]).unwrap();
+        vstore::replace_ai_tags(
+            &mut conn,
+            &id,
+            &["new-ai-1".to_string(), "new-ai-2".to_string()],
+        )
+        .unwrap();
         let tags = vstore::list_tags_with_source(&conn, &id).unwrap();
         // manual tag 保留
         assert!(tags.iter().any(|t| t.tag == "manual-keep"));
@@ -561,8 +559,7 @@ mod tests {
         }];
         d.ai_tags = vec![secret.into()];
 
-        let err = reject_sensitive_metadata_leak(&d)
-            .expect_err("metadata leak must be rejected");
+        let err = reject_sensitive_metadata_leak(&d).expect_err("metadata leak must be rejected");
 
         assert_eq!(err, "sensitive_metadata_rejected");
         assert!(!err.contains(secret));

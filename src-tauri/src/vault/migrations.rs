@@ -85,8 +85,7 @@ pub fn migrate_vault_schema(conn: &mut Connection) -> StorageResult<()> {
     // 1) 读出旧 vault_tags 到内存
     let legacy_tags: Vec<(String, String)> = {
         let mut stmt = tx.prepare("SELECT entry_id, tag FROM vault_tags")?;
-        let rows =
-            stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
+        let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
         let mut v = Vec::new();
         for row in rows {
             v.push(row?);
@@ -410,8 +409,14 @@ mod tests {
 
     #[test]
     fn normalize_tag_trims_lowercases_and_collapses_whitespace() {
-        assert_eq!(normalize_tag("  Production  ").as_deref(), Some("production"));
-        assert_eq!(normalize_tag("Foo   Bar\tBaz").as_deref(), Some("foo bar baz"));
+        assert_eq!(
+            normalize_tag("  Production  ").as_deref(),
+            Some("production")
+        );
+        assert_eq!(
+            normalize_tag("Foo   Bar\tBaz").as_deref(),
+            Some("foo bar baz")
+        );
         assert_eq!(normalize_tag("MIXEDCase").as_deref(), Some("mixedcase"));
         assert_eq!(normalize_tag("   ").as_deref(), None);
         assert_eq!(normalize_tag("").as_deref(), None);

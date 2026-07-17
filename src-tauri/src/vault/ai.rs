@@ -229,9 +229,8 @@ pub fn parse_capture_response(
         .flatten();
 
     // --- aliases: validate_non_sensitive_metadata ---
-    let aliases =
-        validate_non_sensitive_metadata(&parsed.aliases, map, ALIASES_MAX, ALIAS_MAX_LEN)
-            .map_err(LlmError::Parse)?;
+    let aliases = validate_non_sensitive_metadata(&parsed.aliases, map, ALIASES_MAX, ALIAS_MAX_LEN)
+        .map_err(LlmError::Parse)?;
 
     Ok(CaptureSuggestion {
         kind: parsed.kind,
@@ -345,11 +344,7 @@ pub fn build_request_audit(
 // ---- 内部辅助 --------------------------------------------------------------
 
 /// 校验一个 term 列表：trim、去空、单项长度 ≤ term_max、总数 ≤ max。
-fn validate_terms(
-    values: &[String],
-    max: usize,
-    label: &str,
-) -> Result<Vec<String>, LlmError> {
+fn validate_terms(values: &[String], max: usize, label: &str) -> Result<Vec<String>, LlmError> {
     if values.len() > max {
         return Err(LlmError::Parse(format!(
             "query plan {label} count {} > {max}",
@@ -394,9 +389,8 @@ fn validate_date(s: &str) -> Result<(), LlmError> {
         )));
     }
     // 用 chrono 校验真实合法性（月份 / 日期范围）
-    chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").map_err(|_| {
-        LlmError::Parse(format!("query plan date not valid: {s}"))
-    })?;
+    chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d")
+        .map_err(|_| LlmError::Parse(format!("query plan date not valid: {s}")))?;
     Ok(())
 }
 
@@ -486,10 +480,7 @@ mod tests {
         fields_json.push(']');
         let json = format!(r#"{{"fields":{fields_json}}}"#);
         let err = parse_capture_response(&json, &map);
-        assert!(
-            err.is_err(),
-            "must reject > 32 fields, got {err:?}"
-        );
+        assert!(err.is_err(), "must reject > 32 fields, got {err:?}");
     }
 
     /// #5: query plan 校验
@@ -584,9 +575,8 @@ mod tests {
         let mut m = TokenMap::new();
         let t = m.tokenize("topsecret");
         let value = format!("see {t}");
-        let json = format!(
-            r#"{{"fields":[{{"key":"password","value":"{value}","isSensitive":true}}]}}"#
-        );
+        let json =
+            format!(r#"{{"fields":[{{"key":"password","value":"{value}","isSensitive":true}}]}}"#);
         let sug = parse_capture_response(&json, &m).expect("parse ok");
         assert_eq!(sug.fields.len(), 1);
         assert_eq!(sug.fields[0].key, "password");
@@ -624,10 +614,7 @@ mod tests {
 
     #[test]
     fn build_request_audit_copies_only_role_and_content() {
-        let msgs = vec![
-            ChatMessage::system("sys"),
-            ChatMessage::user("hi"),
-        ];
+        let msgs = vec![ChatMessage::system("sys"), ChatMessage::user("hi")];
         let audit = build_request_audit("openai", "gpt-4o-mini", &msgs);
         assert_eq!(audit.provider_id, "openai");
         assert_eq!(audit.model, "gpt-4o-mini");

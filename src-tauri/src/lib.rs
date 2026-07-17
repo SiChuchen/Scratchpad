@@ -34,11 +34,7 @@ impl ShortcutTarget {
     fn prefs_fields(self) -> (&'static str, &'static str, &'static str) {
         // (modifiers_key, key_key, registered_key)
         match self {
-            ShortcutTarget::Main => (
-                "shortcut_modifiers",
-                "shortcut_key",
-                "shortcut_registered",
-            ),
+            ShortcutTarget::Main => ("shortcut_modifiers", "shortcut_key", "shortcut_registered"),
             ShortcutTarget::QuickAccess => (
                 "quick_access_shortcut_modifiers",
                 "quick_access_shortcut_key",
@@ -74,12 +70,7 @@ fn win_monitor_work_area(x: i32, y: i32) -> system::window::WorkRect {
         GetMonitorInfoW, MonitorFromPoint, MONITORINFO, MONITOR_DEFAULTTONEAREST,
     };
 
-    let monitor = unsafe {
-        MonitorFromPoint(
-            POINT { x, y },
-            MONITOR_DEFAULTTONEAREST,
-        )
-    };
+    let monitor = unsafe { MonitorFromPoint(POINT { x, y }, MONITOR_DEFAULTTONEAREST) };
     let mut mi = MONITORINFO {
         cbSize: std::mem::size_of::<MONITORINFO>() as u32,
         ..unsafe { std::mem::zeroed() }
@@ -341,10 +332,7 @@ struct ShortcutStatus {
 }
 
 /// 计算 target 当前应该返回的状态（从持久化偏好 + 内存注册结果汇总）。
-fn shortcut_status_for(
-    state: &AppState,
-    target: ShortcutTarget,
-) -> Result<ShortcutStatus, String> {
+fn shortcut_status_for(state: &AppState, target: ShortcutTarget) -> Result<ShortcutStatus, String> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
     let prefs = scratchpad::preferences::load_preferences(&conn).map_err(|e| e.to_string())?;
     drop(conn);
@@ -929,8 +917,8 @@ pub fn run() {
                 // --- Quick access toggle ---
                 let qa_mods = parse_modifiers(&prefs.quick_access_shortcut_modifiers)
                     .unwrap_or(Modifiers::ALT | Modifiers::SHIFT);
-                let qa_code = parse_key_code(&prefs.quick_access_shortcut_key)
-                    .unwrap_or(Code::Space);
+                let qa_code =
+                    parse_key_code(&prefs.quick_access_shortcut_key).unwrap_or(Code::Space);
                 let qa_shortcut = Shortcut::new(Some(qa_mods), qa_code);
                 let qa_registered = {
                     app.global_shortcut()
@@ -1057,9 +1045,7 @@ mod shortcut_tests {
 
         // 模拟 ipc_shortcut_update 中的冲突检查
         let other = shortcuts.quick_access;
-        let conflict = other
-            .map(|o| o == new_sc_for_qa)
-            .unwrap_or(false);
+        let conflict = other.map(|o| o == new_sc_for_qa).unwrap_or(false);
         assert!(conflict, "same combination must be detected as conflict");
 
         // 冲突时不应注销旧 shortcut

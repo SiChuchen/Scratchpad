@@ -44,8 +44,7 @@ pub async fn ipc_vault_search_hybrid_local(
 ) -> Result<Vec<VaultSearchHit>, String> {
     let limit = limit.unwrap_or(20);
     let conn = state.db.lock().map_err(|e| e.to_string())?;
-    vsearch::search_local(&conn, &query, plan.as_ref(), limit)
-        .map_err(|e| e.to_string())
+    vsearch::search_local(&conn, &query, plan.as_ref(), limit).map_err(|e| e.to_string())
 }
 
 /// AI 查询理解 IPC。脱敏 query → 调 LLM 生成 AiQueryPlan。
@@ -184,8 +183,7 @@ pub async fn ipc_vault_cancel_search(
     if let Some(token) = token_opt {
         // 读 ID 前先看是否匹配；通过 set/clear 完成原子操作
         // 这里采用：拿当前 token，对比 ID，匹配则 cancel + clear
-        let current_id_matches = vault
-            .active_search_id_matches(&request_id);
+        let current_id_matches = vault.active_search_id_matches(&request_id);
         if current_id_matches {
             token.cancel();
             vault.clear_active_search(&request_id);
@@ -208,7 +206,10 @@ fn empty_planned_search(_query: String) -> PlannedSearch {
     }
 }
 
-fn empty_planned_search_with_audit(_query: String, audit: crate::vault::models::AiRequestAudit) -> PlannedSearch {
+fn empty_planned_search_with_audit(
+    _query: String,
+    audit: crate::vault::models::AiRequestAudit,
+) -> PlannedSearch {
     PlannedSearch {
         plan: AiQueryPlan::default(),
         understood_terms: Vec::new(),
@@ -274,7 +275,10 @@ mod tests {
         if runtime.active_search_id_matches(&stale_id) {
             token_clone.cancel();
         }
-        assert!(!token_clone.is_cancelled(), "stale cancel must not affect active");
+        assert!(
+            !token_clone.is_cancelled(),
+            "stale cancel must not affect active"
+        );
 
         // 真正匹配的 cancel 才生效
         let active_id = "active-req".to_string();
