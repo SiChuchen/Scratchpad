@@ -205,6 +205,17 @@ export const vaultApi = {
     return invoke<ProviderPreset[]>('ipc_vault_get_llm_presets')
   },
 
+  // ---- Clipboard（Task 18）-----------------------------------------------
+
+  /**
+   * 通过 Tauri 命令复制文本到系统剪贴板。`sensitive = true` 时由后端
+   * 从 VaultAiSettings.sensitiveClipboardClearSeconds 读取自动清除秒数
+   * （默认 30s）；前端不能伪造更长的清除窗口。
+   */
+  copyText(text: string, sensitive: boolean): Promise<void> {
+    return invoke<void>('ipc_clipboard_copy_text', { text, sensitive })
+  },
+
   // ---- 兼容别名（Task 12-14 会移除） ------------------------------------
   //
   // 这些方法仅为让现有 Svelte 组件（VaultView / EntryCard / TagEditor /

@@ -268,7 +268,8 @@
 
   async function handleCopy(payload: { label: string; value: string; sensitive: boolean }) {
     try {
-      await navigator.clipboard.writeText(payload.value)
+      // Task 18: 所有资料库复制都走 Tauri 命令，敏感值由后端按设置自动清除。
+      await vaultApi.copyText(payload.value, payload.sensitive)
       notify(`已复制：${payload.label}`, 'success')
     } catch {
       notify(`复制失败：${payload.label}`, 'error')

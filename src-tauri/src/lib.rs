@@ -550,6 +550,23 @@ fn ipc_clipboard_read_file_paths() -> Result<Vec<String>, String> {
     scratchpad::clipboard::read_file_paths()
 }
 
+/// 复制文本到剪贴板。`sensitive = true` 时从 VaultAiSettings 读取
+/// `sensitive_clipboard_clear_seconds`（默认 30s）作为自动清除窗口；
+/// 前端无法伪造更长的清除时间。
+#[tauri::command]
+async fn ipc_clipboard_copy_text(
+    text: String,
+    sensitive: bool,
+    vault: tauri::State<'_, vault::ipc::VaultRuntimeState>,
+) -> Result<(), String> {
+    let seconds = if sensitive {
+        vault.settings().sensitive_clipboard_clear_seconds
+    } else {
+        None
+    };
+    scratchpad::clipboard::copy_text(&text, seconds)
+}
+
 // --- Data directory IPC ---
 
 #[derive(serde::Serialize)]
@@ -770,6 +787,7 @@ pub fn run() {
             ipc_clipboard_copy_file,
             ipc_clipboard_copy_image,
             ipc_clipboard_read_file_paths,
+            ipc_clipboard_copy_text,
             ipc_data_dir_info,
             ipc_data_dir_set,
             ipc_preferences_get,

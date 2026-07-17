@@ -38,6 +38,8 @@ const mockVaultApi = vi.hoisted(() => {
     getEntry: vi.fn(),
     getLlmConfig: vi.fn(),
     getAiSettings: vi.fn(),
+    // Task 18: copy 通过 IPC 命令；测试里走 mock。
+    copyText: vi.fn(() => Promise.resolve()),
   }
 })
 
@@ -128,6 +130,8 @@ function resetMocks() {
   mockVaultApi.getEntry.mockReset()
   mockVaultApi.getLlmConfig.mockReset()
   mockVaultApi.getAiSettings.mockReset()
+  mockVaultApi.copyText.mockReset()
+  mockVaultApi.copyText.mockImplementation(() => Promise.resolve())
   clipboardWriteText.mockReset()
   clipboardWriteText.mockImplementation(() => Promise.resolve())
 }

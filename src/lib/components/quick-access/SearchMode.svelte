@@ -230,7 +230,8 @@
     sensitive: boolean
   }) {
     try {
-      await navigator.clipboard.writeText(payload.value)
+      // Task 18: 敏感值由后端按设置自动清除。
+      await vaultApi.copyText(payload.value, payload.sensitive)
       notify(`已复制：${payload.label}`, 'success')
     } catch {
       notify(`复制失败：${payload.label}`, 'error')
