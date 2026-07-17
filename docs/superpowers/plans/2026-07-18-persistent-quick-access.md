@@ -4,6 +4,8 @@
 
 **Goal:** Add an always-visible main-window Quick Access floating button, promote Record/Search to primary navigation, synchronize the Quick Access theme live with the main window, and tune the Quick Access window to a compact DPI-aware size.
 
+**Execution status:** Completed and verified on 2026-07-18.
+
 **Architecture:** A presentation-only `QuickAccessFab.svelte` lives in the main `App.svelte` shell while `App.svelte` owns the Tauri invocation and toast handling. A typed preference-sync helper broadcasts optimistic `DockPreferences` changes across webview windows; `QuickAccessApp.svelte` consumes the same preferences and theme engine as the main window. Rust centers and sizes the separate window after converting approved logical dimensions through its active DPI scale factor.
 
 **Tech Stack:** Svelte 5 runes, TypeScript, Tauri 2 event/window APIs, Vitest + Testing Library, Rust, Windows DPI-aware geometry.
@@ -41,7 +43,7 @@ No new IPC command or database field is required.
 - Modify: `src/QuickAccessApp.svelte:12-23,73-163`
 - Modify: `src/QuickAccessApp.test.ts:6-168`
 
-- [ ] **Step 1: Write the failing preference event tests**
+- [x] **Step 1: Write the failing preference event tests**
 
 Create `src/lib/state/preferences-sync.test.ts`:
 
@@ -85,13 +87,13 @@ describe('preferences sync', () => {
 })
 ```
 
-- [ ] **Step 2: Prove the tests fail before implementation**
+- [x] **Step 2: Prove the tests fail before implementation**
 
 Run `pnpm test:unit -- src/lib/state/preferences-sync.test.ts`.
 
 Expected: FAIL because `./preferences-sync` does not exist.
 
-- [ ] **Step 3: Implement the typed event helper**
+- [x] **Step 3: Implement the typed event helper**
 
 Create `src/lib/state/preferences-sync.ts`:
 
@@ -114,13 +116,13 @@ export function listenForPreferenceChanges(
 }
 ```
 
-- [ ] **Step 4: Verify the helper passes**
+- [x] **Step 4: Verify the helper passes**
 
 Run `pnpm test:unit -- src/lib/state/preferences-sync.test.ts`.
 
 Expected: 2 tests PASS.
 
-- [ ] **Step 5: Add a failing Quick Access live-theme test**
+- [x] **Step 5: Add a failing Quick Access live-theme test**
 
 Extend the hoisted mock in `src/QuickAccessApp.test.ts`:
 
@@ -164,13 +166,13 @@ it('applies live preference changes from the main window', async () => {
 })
 ```
 
-- [ ] **Step 6: Prove the live-theme test fails**
+- [x] **Step 6: Prove the live-theme test fails**
 
 Run `pnpm test:unit -- src/QuickAccessApp.test.ts`.
 
 Expected: FAIL because no `dock-preferences-preview` listener is registered.
 
-- [ ] **Step 7: Broadcast optimistic changes from the main window**
+- [x] **Step 7: Broadcast optimistic changes from the main window**
 
 Import `broadcastPreferences` in `src/App.svelte`. Immediately after `preferences = next` in `updatePreferences`, add:
 
@@ -181,7 +183,7 @@ void broadcastPreferences(next).catch(() => {})
 
 Leave existing immediate/debounced persistence unchanged so both windows match before SQLite persistence completes.
 
-- [ ] **Step 8: Consume one shared preference snapshot in Quick Access**
+- [x] **Step 8: Consume one shared preference snapshot in Quick Access**
 
 Import `listenForPreferenceChanges` in `src/QuickAccessApp.svelte`. Add:
 
@@ -206,7 +208,7 @@ unlisteners.push(
 
 Keep the existing `$effect` as the only token/font application path.
 
-- [ ] **Step 9: Run focused synchronization tests**
+- [x] **Step 9: Run focused synchronization tests**
 
 Run:
 
@@ -216,7 +218,7 @@ pnpm test:unit -- src/lib/state/preferences-sync.test.ts src/QuickAccessApp.test
 
 Expected: all selected tests PASS.
 
-- [ ] **Step 10: Commit the synchronization slice**
+- [x] **Step 10: Commit the synchronization slice**
 
 ```powershell
 git add src/App.svelte src/QuickAccessApp.svelte src/QuickAccessApp.test.ts src/lib/state/preferences-sync.ts src/lib/state/preferences-sync.test.ts
@@ -239,7 +241,7 @@ git commit -m "sync quick access theme with main window"
 - Modify: `src/lib/i18n/__tests__/i18n.test.ts:45-65`
 - Modify: `src-tauri/src/lib.rs:367-380`
 
-- [ ] **Step 1: Add failing locale assertions**
+- [x] **Step 1: Add failing locale assertions**
 
 Add to `src/lib/i18n/__tests__/i18n.test.ts`:
 
@@ -252,7 +254,7 @@ Run `pnpm test:unit -- src/lib/i18n/__tests__/i18n.test.ts`.
 
 Expected: FAIL because `openFailed` is missing.
 
-- [ ] **Step 2: Add the typed messages**
+- [x] **Step 2: Add the typed messages**
 
 Add `openFailed: string` to `LocaleMessages.quickAccess`. Add:
 
@@ -266,7 +268,7 @@ openFailed: 'Could not open quick access',
 
 Run the i18n test again. Expected: PASS.
 
-- [ ] **Step 3: Write failing component tests**
+- [x] **Step 3: Write failing component tests**
 
 Create `src/lib/components/QuickAccessFab.test.ts`:
 
@@ -300,13 +302,13 @@ describe('QuickAccessFab', () => {
 })
 ```
 
-- [ ] **Step 4: Prove the component test fails**
+- [x] **Step 4: Prove the component test fails**
 
 Run `pnpm test:unit -- src/lib/components/QuickAccessFab.test.ts`.
 
 Expected: FAIL because `QuickAccessFab.svelte` does not exist.
 
-- [ ] **Step 5: Implement the floating component**
+- [x] **Step 5: Implement the floating component**
 
 Create `src/lib/components/QuickAccessFab.svelte`:
 
@@ -367,13 +369,13 @@ Create `src/lib/components/QuickAccessFab.svelte`:
 </style>
 ```
 
-- [ ] **Step 6: Verify the component tests pass**
+- [x] **Step 6: Verify the component tests pass**
 
 Run `pnpm test:unit -- src/lib/components/QuickAccessFab.test.ts`.
 
 Expected: 2 tests PASS.
 
-- [ ] **Step 7: Wire it into the top-level shell**
+- [x] **Step 7: Wire it into the top-level shell**
 
 Import `QuickAccessFab` in `src/App.svelte`, add:
 
@@ -403,7 +405,7 @@ Mount it inside `{#key langKey}` but after the conditional view branch:
 
 Its `z-index: 90` stays below toast `110`, drag overlay `200`, and confirmation dialog `300`.
 
-- [ ] **Step 8: Make the UI command consistently open and focus**
+- [x] **Step 8: Make the UI command consistently open and focus**
 
 Replace `ipc_open_quick_access` in `src-tauri/src/lib.rs` with:
 
@@ -420,7 +422,7 @@ fn ipc_open_quick_access(app: tauri::AppHandle) -> Result<(), String> {
 
 Update its comment to say that UI activation always shows/recenters/focuses. Do not change the separate global-shortcut callbacks: they continue toggling visibility.
 
-- [ ] **Step 9: Add a failing duplicate-action regression test**
+- [x] **Step 9: Add a failing duplicate-action regression test**
 
 In `src/lib/components/views/VaultView.test.ts`, add:
 
@@ -436,11 +438,11 @@ it('does not render a second Library-only quick access action', async () => {
 
 Expected before cleanup: FAIL because the current header action exists.
 
-- [ ] **Step 10: Remove the duplicate Vault action**
+- [x] **Step 10: Remove the duplicate Vault action**
 
 From `VaultView.svelte`, remove the `invoke` import, `openQuickAccess` function, Quick Access button block, and `.quick-access-btn` styles. Keep the New menu alignment unchanged.
 
-- [ ] **Step 11: Run the focused UI tests**
+- [x] **Step 11: Run the focused UI tests**
 
 ```powershell
 pnpm test:unit -- src/lib/components/QuickAccessFab.test.ts src/lib/components/views/VaultView.test.ts src/lib/i18n/__tests__/i18n.test.ts
@@ -448,7 +450,7 @@ pnpm test:unit -- src/lib/components/QuickAccessFab.test.ts src/lib/components/v
 
 Expected: all selected tests PASS.
 
-- [ ] **Step 12: Commit the persistent-entry slice**
+- [x] **Step 12: Commit the persistent-entry slice**
 
 ```powershell
 git add src/App.svelte src/lib/components/QuickAccessFab.svelte src/lib/components/QuickAccessFab.test.ts src/lib/components/views/VaultView.svelte src/lib/components/views/VaultView.test.ts src/lib/i18n/types.ts src/lib/i18n/locales/zh-CN.ts src/lib/i18n/locales/en.ts src/lib/i18n/__tests__/i18n.test.ts src-tauri/src/lib.rs
@@ -463,7 +465,7 @@ git commit -m "add persistent quick access button"
 - Modify: `src/QuickAccessApp.svelte:210-242,274-317`
 - Modify: `src/QuickAccessApp.test.ts:103-190`
 
-- [ ] **Step 1: Add a failing structural test**
+- [x] **Step 1: Add a failing structural test**
 
 Add to `src/QuickAccessApp.test.ts`:
 
@@ -484,7 +486,7 @@ Run `pnpm test:unit -- src/QuickAccessApp.test.ts`.
 
 Expected: FAIL because the attributes and icons do not exist.
 
-- [ ] **Step 2: Add visible icon-labelled mode markup**
+- [x] **Step 2: Add visible icon-labelled mode markup**
 
 Add `data-primary-mode="record"` to the Record tab and replace its text child with:
 
@@ -508,7 +510,7 @@ Add `data-primary-mode="search"` to the Search tab and replace its text child wi
 
 Do not change IDs, roles, `aria-selected`, `aria-controls`, roving `tabindex`, or `switchMode`.
 
-- [ ] **Step 3: Replace the small-tab CSS with a full-width switch**
+- [x] **Step 3: Replace the small-tab CSS with a full-width switch**
 
 Use:
 
@@ -569,7 +571,7 @@ Use:
 
 Add `border-radius: var(--radius-lg, 0.55rem)` to `.quick-shell` so the undecorated window follows the main theme's corner language.
 
-- [ ] **Step 4: Run Quick Access behavior tests**
+- [x] **Step 4: Run Quick Access behavior tests**
 
 ```powershell
 pnpm test:unit -- src/QuickAccessApp.test.ts src/lib/components/quick-access/CaptureMode.test.ts src/lib/components/quick-access/SearchMode.test.ts
@@ -577,13 +579,13 @@ pnpm test:unit -- src/QuickAccessApp.test.ts src/lib/components/quick-access/Cap
 
 Expected: all tests PASS, including preserved input and `Ctrl+Tab` focus behavior.
 
-- [ ] **Step 5: Run Svelte static checks**
+- [x] **Step 5: Run Svelte static checks**
 
 Run `pnpm check`.
 
 Expected: 0 errors and no new warning in `QuickAccessApp.svelte`.
 
-- [ ] **Step 6: Commit the navigation slice**
+- [x] **Step 6: Commit the navigation slice**
 
 ```powershell
 git add src/QuickAccessApp.svelte src/QuickAccessApp.test.ts
@@ -599,7 +601,7 @@ git commit -m "promote quick access mode navigation"
 - Modify: `src-tauri/src/lib.rs:99-119`
 - Modify: `src-tauri/tauri.conf.json:45-62`
 
-- [ ] **Step 1: Replace geometry expectations with scale-aware tests**
+- [x] **Step 1: Replace geometry expectations with scale-aware tests**
 
 In `src-tauri/src/system/window.rs`, replace the current Quick Access geometry tests with:
 
@@ -648,13 +650,13 @@ fn runtime_min_size_is_scale_aware_and_clamped() {
 }
 ```
 
-- [ ] **Step 2: Prove the Rust tests fail**
+- [x] **Step 2: Prove the Rust tests fail**
 
 From `src-tauri/`, run `cargo test system::window::tests --lib`.
 
 Expected: FAIL because the helpers do not accept a scale factor and still target `760 × 520` / `480 × 320`.
 
-- [ ] **Step 3: Implement logical-to-physical sizing**
+- [x] **Step 3: Implement logical-to-physical sizing**
 
 Replace the Quick Access geometry helpers with:
 
@@ -696,7 +698,7 @@ pub fn runtime_min_size(work_area: &WorkRect, scale_factor: f64) -> (i32, i32) {
 
 Update comments: work-area inputs and outputs are physical pixels; target/minimum constants are logical pixels converted by `scale_factor`.
 
-- [ ] **Step 4: Pass the active Tauri scale factor**
+- [x] **Step 4: Pass the active Tauri scale factor**
 
 In `show_quick_access_centered` in `src-tauri/src/lib.rs`, use:
 
@@ -708,7 +710,7 @@ let (min_w, min_h) = system::window::runtime_min_size(&work, scale_factor);
 
 The cursor still chooses the monitor through `win_monitor_work_area(cx, cy)`; remove the unused cursor arguments from the pure helper call.
 
-- [ ] **Step 5: Align the static logical config**
+- [x] **Step 5: Align the static logical config**
 
 Set the `quick-access` entry in `src-tauri/tauri.conf.json` to:
 
@@ -721,7 +723,7 @@ Set the `quick-access` entry in `src-tauri/tauri.conf.json` to:
 
 Keep all other window properties unchanged.
 
-- [ ] **Step 6: Run focused and full Rust validation**
+- [x] **Step 6: Run focused and full Rust validation**
 
 From `src-tauri/`:
 
@@ -732,7 +734,7 @@ cargo test
 
 Expected: focused geometry tests and full Rust suite PASS.
 
-- [ ] **Step 7: Commit the sizing slice**
+- [x] **Step 7: Commit the sizing slice**
 
 ```powershell
 git add src-tauri/src/system/window.rs src-tauri/src/lib.rs src-tauri/tauri.conf.json
@@ -748,7 +750,7 @@ Do not stage the pre-existing line-ending-only change in `src-tauri/Cargo.toml`.
 **Files:**
 - Modify only after a measured failure: `src/App.svelte`, `src/lib/components/QuickAccessFab.svelte`, `src/QuickAccessApp.svelte`, `src-tauri/src/system/window.rs`, `src-tauri/tauri.conf.json`, plus the directly corresponding tests.
 
-- [ ] **Step 1: Run complete automated frontend validation**
+- [x] **Step 1: Run complete automated frontend validation**
 
 ```powershell
 pnpm test:unit
@@ -758,7 +760,7 @@ pnpm build
 
 Expected: all Vitest tests PASS, `svelte-check` has 0 errors and no new warning in changed files, and the production build completes.
 
-- [ ] **Step 2: Start the desktop app and inspect the floating entry**
+- [x] **Step 2: Start the desktop app and inspect the floating entry**
 
 Run `pnpm tauri dev` and visit `home`, `categories`, `note`, `vault`, and `settings`.
 
@@ -771,7 +773,7 @@ Verify:
 - Clicking the floating entry while Quick Access is already visible focuses/recenters it instead of hiding it; the global shortcut still toggles.
 - The Library page has no duplicate rectangular Quick Access action.
 
-- [ ] **Step 3: Verify the two-mode mental model at both supported sizes**
+- [x] **Step 3: Verify the two-mode mental model at both supported sizes**
 
 At the 680 × 480 target and 480 × 340 minimum:
 
@@ -781,7 +783,7 @@ At the 680 × 480 target and 480 × 340 minimum:
 - Record textarea, Save action, Search input, results, and detail actions remain reachable without horizontal scrolling.
 - Mouse and `Ctrl+Tab` switching preserve both modes' input.
 
-- [ ] **Step 4: Verify live shared themes**
+- [x] **Step 4: Verify live shared themes**
 
 Keep Quick Access visible while selecting Dark Glass, Light Matte, Light Frosted, System theme, and one custom primary-color override in the main Settings page.
 
@@ -791,7 +793,7 @@ For every change, verify without hiding/reopening Quick Access:
 - Text and the inactive mode remain readable.
 - The floating button remains legible on light and dark surfaces.
 
-- [ ] **Step 5: Verify geometry and use objective adjustment criteria**
+- [x] **Step 5: Verify geometry and use objective adjustment criteria**
 
 Use Rust tests as deterministic 100%/125%/150% DPI coverage, then inspect the current Windows scale visually:
 
@@ -802,7 +804,7 @@ Use Rust tests as deterministic 100%/125%/150% DPI coverage, then inspect the cu
 
 Only adjust a dimension if there is clipped content, overlap, horizontal scrolling, an unreachable primary action, or fewer than two useful search results visible at target size. If adjusted, change the logical constant, Tauri config, and exact Rust expectations together, then rerun Task 4 Step 6 and Task 5 Step 1.
 
-- [ ] **Step 6: Review the final diff and workspace**
+- [x] **Step 6: Review the final diff and workspace**
 
 ```powershell
 git diff HEAD~4 --check
@@ -812,7 +814,7 @@ git status --short
 
 Confirm generated output is unstaged, `src-tauri/Cargo.toml` remains unstaged, all colors come from shared theme tokens, and no duplicate Vault action remains.
 
-- [ ] **Step 7: Commit only a measured visual adjustment**
+- [x] **Step 7: Commit only a measured visual adjustment**
 
 If verification required tracked changes, stage only those feature files and tests, then run:
 
