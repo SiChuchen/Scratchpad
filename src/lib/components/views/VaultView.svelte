@@ -463,13 +463,15 @@
           onCancel={cancelEditor}
         />
       {:else}
-        <VaultEntryEditor
-          mode="edit"
-          initial={editorMode.detail}
-          onSave={handleSaveEdit}
-          onCancel={cancelEditor}
-          onRemoveAiTag={handleRemoveAiTag}
-        />
+        {#key editorMode.id}
+          <VaultEntryEditor
+            mode="edit"
+            initial={editorMode.detail}
+            onSave={handleSaveEdit}
+            onCancel={cancelEditor}
+            onRemoveAiTag={handleRemoveAiTag}
+          />
+        {/key}
       {/if}
     </div>
   {/if}
