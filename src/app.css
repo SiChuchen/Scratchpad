@@ -60,6 +60,20 @@ html.minimized-tab-window #app {
   backdrop-filter: none;
 }
 
+html.quick-access-window,
+html.quick-access-window body {
+  background: transparent;
+}
+
+html.quick-access-window body {
+  overflow: hidden;
+}
+
+html.quick-access-window #app {
+  display: flex;
+  background: transparent;
+}
+
 ::-webkit-scrollbar {
   width: 3px;
 }

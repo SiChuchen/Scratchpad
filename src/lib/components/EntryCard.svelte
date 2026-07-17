@@ -15,6 +15,7 @@
     onRename: (id: string, title: string | null) => void
     onCopy: (content: string) => void
     onCopyPath: (path: string) => void
+    onError?: (message: string) => void
   }
 
   let {
@@ -26,6 +27,7 @@
     onRename,
     onCopy,
     onCopyPath,
+    onError,
   }: Props = $props()
 
   let editingTitle = $state(false)
@@ -198,9 +200,9 @@
       {#if entry.kind === 'text'}
         <TextEntryBody {entry} {onUpdateText} {onCopy} />
       {:else if entry.kind === 'image'}
-        <ImageEntryBody {entry} {onCopy} {onCopyPath} />
+        <ImageEntryBody {entry} {onCopy} {onCopyPath} {onError} />
       {:else}
-        <FileEntryBody {entry} {onCopyPath} />
+        <FileEntryBody {entry} {onCopyPath} {onError} />
       {/if}
     </div>
   {/if}

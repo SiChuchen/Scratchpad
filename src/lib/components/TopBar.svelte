@@ -51,7 +51,7 @@
     class="nav-btn"
     class:active={currentView === 'vault'}
     onclick={() => onNavigate('vault')}
-  >保险箱</button>
+  >{messages.nav.library}</button>
   <div class="top-bar-spacer"></div>
   <button
     class="nav-btn pin-btn"

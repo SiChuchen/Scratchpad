@@ -6,7 +6,6 @@ use crate::storage::error::StorageResult;
 
 pub fn save_preferences(conn: &mut Connection, prefs: &DockPreferences) -> StorageResult<()> {
     let tx = conn.transaction()?;
-    tx.execute("DELETE FROM preferences", [])?;
 
     let overrides_json =
         serde_json::to_string(&prefs.theme_overrides).unwrap_or_else(|_| "{}".to_string());
@@ -37,10 +36,23 @@ pub fn save_preferences(conn: &mut Connection, prefs: &DockPreferences) -> Stora
         ("shortcut_modifiers", prefs.shortcut_modifiers.clone()),
         ("shortcut_key", prefs.shortcut_key.clone()),
         ("shortcut_registered", prefs.shortcut_registered.to_string()),
+        (
+            "quick_access_shortcut_modifiers",
+            prefs.quick_access_shortcut_modifiers.clone(),
+        ),
+        (
+            "quick_access_shortcut_key",
+            prefs.quick_access_shortcut_key.clone(),
+        ),
+        (
+            "quick_access_shortcut_registered",
+            prefs.quick_access_shortcut_registered.to_string(),
+        ),
         ("auto_cleanup_days", prefs.auto_cleanup_days.to_string()),
     ] {
         tx.execute(
-            "INSERT INTO preferences(key, value) VALUES (?1, ?2)",
+            "INSERT INTO preferences(key, value) VALUES (?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value=excluded.value",
             params![key, value],
         )?;
     }
@@ -121,6 +133,13 @@ pub fn load_preferences(conn: &Connection) -> StorageResult<DockPreferences> {
         prefs.shortcut_key = v.clone();
     }
     // shortcut_registered is runtime-only, always loaded as false
+    if let Some(v) = map.get("quick_access_shortcut_modifiers") {
+        prefs.quick_access_shortcut_modifiers = v.clone();
+    }
+    if let Some(v) = map.get("quick_access_shortcut_key") {
+        prefs.quick_access_shortcut_key = v.clone();
+    }
+    // quick_access_shortcut_registered is runtime-only, always loaded as false
     if let Some(v) = map.get("auto_cleanup_days") {
         prefs.auto_cleanup_days = v.parse().unwrap_or(0);
     }
@@ -193,6 +212,56 @@ mod preference_tests {
         assert_eq!(loaded.shortcut_modifiers, "Alt+Shift");
         assert_eq!(loaded.shortcut_key, "V");
         assert!(!loaded.shortcut_registered); // always false on load
+        assert_eq!(loaded.quick_access_shortcut_modifiers, "Alt+Shift");
+        assert_eq!(loaded.quick_access_shortcut_key, "Space");
+        assert!(!loaded.quick_access_shortcut_registered); // always false on load
+    }
+
+    #[test]
+    fn shortcut_roundtrip_persists_both_targets() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        ensure_dock_schema(&mut conn, 0).unwrap();
+
+        let prefs = DockPreferences {
+            shortcut_modifiers: "Ctrl+Alt".to_string(),
+            shortcut_key: "V".to_string(),
+            shortcut_registered: true,
+            quick_access_shortcut_modifiers: "Ctrl+Shift".to_string(),
+            quick_access_shortcut_key: "Space".to_string(),
+            quick_access_shortcut_registered: true,
+            ..Default::default()
+        };
+        save_preferences(&mut conn, &prefs).unwrap();
+        let loaded = load_preferences(&conn).unwrap();
+
+        assert_eq!(loaded.shortcut_modifiers, "Ctrl+Alt");
+        assert_eq!(loaded.shortcut_key, "V");
+        assert_eq!(loaded.quick_access_shortcut_modifiers, "Ctrl+Shift");
+        assert_eq!(loaded.quick_access_shortcut_key, "Space");
+    }
+
+    #[test]
+    fn shortcut_legacy_prefs_default_quick_access_to_alt_shift_space() {
+        // 模拟旧版本只有主窗口快捷键、缺少 quick_access_* 字段的偏好快照。
+        let mut conn = Connection::open_in_memory().unwrap();
+        ensure_dock_schema(&mut conn, 0).unwrap();
+        conn.execute(
+            "INSERT INTO preferences(key, value) VALUES ('shortcut_modifiers', 'Ctrl+K')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO preferences(key, value) VALUES ('shortcut_key', 'V')",
+            [],
+        )
+        .unwrap();
+
+        let loaded = load_preferences(&conn).unwrap();
+        assert_eq!(loaded.shortcut_modifiers, "Ctrl+K");
+        assert_eq!(loaded.shortcut_key, "V");
+        // quick_access 应该回落到默认值 Alt+Shift+Space
+        assert_eq!(loaded.quick_access_shortcut_modifiers, "Alt+Shift");
+        assert_eq!(loaded.quick_access_shortcut_key, "Space");
     }
 
     #[test]
@@ -220,5 +289,27 @@ mod preference_tests {
         .unwrap();
 
         assert_eq!(loaded.font_family_zh, "Microsoft YaHei");
+    }
+
+    #[test]
+    fn saving_dock_preferences_preserves_foreign_keys() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        ensure_dock_schema(&mut conn, 0).unwrap();
+        conn.execute(
+            "INSERT INTO preferences(key, value) VALUES ('vault_llm_config', 'secret-config')",
+            [],
+        )
+        .unwrap();
+
+        save_preferences(&mut conn, &DockPreferences::default()).unwrap();
+
+        let value: String = conn
+            .query_row(
+                "SELECT value FROM preferences WHERE key='vault_llm_config'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(value, "secret-config");
     }
 }

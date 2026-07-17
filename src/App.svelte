@@ -41,9 +41,14 @@
       }
       loadLocale(preferences.language)
       langKey++
-      // Warn if global shortcut is not registered
-      if (preferences && !preferences.shortcutRegistered) {
-        showToast(messages.settings.shortcutFailed, 'error')
+      // Warn if either global shortcut failed to register at startup
+      if (preferences) {
+        if (!preferences.shortcutRegistered) {
+          showToast(`${messages.settings.shortcutFailed}（主窗口）`, 'error')
+        }
+        if (!preferences.quickAccessShortcutRegistered) {
+          showToast(`${messages.settings.shortcutFailed}（全局资料入口）`, 'error')
+        }
       }
     } catch (e) {
       showToast(`${messages.toast.loadFailed}: ${formatError(e)}`, 'error')
@@ -665,6 +670,7 @@
     onRename={renameEntry}
     onCopy={copyContent}
     onCopyPath={copyPath}
+    onError={(m) => showToast(m, 'error')}
   />
 {:else if currentView === 'categories'}
   <CategoriesView
@@ -676,6 +682,7 @@
     onRename={renameEntry}
     onCopy={copyContent}
     onCopyPath={copyPath}
+    onError={(m) => showToast(m, 'error')}
   />
 {:else if currentView === 'note'}
   <NoteView
@@ -689,14 +696,16 @@
     onRename={renameEntry}
     onCopy={copyContent}
     onCopyPath={copyPath}
+    onError={(m) => showToast(m, 'error')}
   />
 {:else if currentView === 'vault'}
-  <VaultView />
+  <VaultView notify={showToast} />
 {:else if currentView === 'settings' && preferences}
   <SettingsView
     preferences={preferences}
     onChange={updatePreferences}
     onBack={() => navigate('home')}
+    notify={showToast}
   />
 {/if}
 {/key}

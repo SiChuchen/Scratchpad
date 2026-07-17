@@ -7,6 +7,88 @@ export interface LocaleMessages {
     pin: string
     unpin: string
     minimize: string
+    library: string
+  }
+  library: {
+    title: string
+    searchPlaceholder: string
+    all: string
+    credential: string
+    bookmark: string
+    note: string
+    create: string
+    edit: string
+    delete: string
+    empty: string
+    noMatch: string
+    aiUnderstanding: string
+    localOnly: string
+    copyLabel: string
+    copiedLabel: string
+    showLabel: string
+    hideLabel: string
+    manualTag: string
+    aiTag: string
+    // Capture / editor form labels (Task 19 regression fixes).
+    kind: string
+    titleLabel: string
+    notesLabel: string
+    fieldsLabel: string
+    addField: string
+    fieldKeyPlaceholder: string
+    fieldValuePlaceholder: string
+    titlePlaceholder: string
+    tagsPlaceholder: string
+  }
+  quickAccess: {
+    record: string
+    search: string
+    inputPlaceholder: string
+    markSensitive: string
+    removeSensitiveMark: string
+    localReady: string
+    aiEnhancing: string
+    aiMerged: string
+    aiFallback: string
+    outboundAudit: string
+    save: string
+    saved: string
+    searchPlaceholder: string
+    noSelection: string
+    noResults: string
+    // Audit dialog and AI tag chip labels (Task 19 regression fixes).
+    saving: string
+    close: string
+    auditProvider: string
+    auditModel: string
+    auditSentAt: string
+    convertToManualPrefix: string
+    removeAiTagPrefix: string
+  }
+  aiSettings: {
+    title: string
+    status: string
+    autoEnrich: string
+    autoSearch: string
+    provider: string
+    apiKey: string
+    savedKeyPlaceholder: string
+    saveAndVerify: string
+    retest: string
+    deleteConfig: string
+    advanced: string
+    model: string
+    baseUrl: string
+    sendCapture: string
+    sendSearch: string
+    noCatalog: string
+    noSensitiveOriginal: string
+    localKey: string
+    noEncryption: string
+    clipboardClear: string
+    authBlocked: string
+    cooldown: string
+    dataNotice: string
   }
   home: {
     search: string
@@ -105,6 +187,9 @@ export interface LocaleMessages {
     shortcutRecord: string
     shortcutRecording: string
     shortcutHint: string
+    shortcutMainLabel: string
+    shortcutQuickLabel: string
+    shortcutConflict: string
     language: string
     restartHint: string
     restartNow: string

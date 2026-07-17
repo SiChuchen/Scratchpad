@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use reqwest::Client;
 use serde_json::{json, Value};
 
-use super::{ChatMessage, LlmAdapter, LlmError, LlmRequest, LlmResponse};
+use super::{LlmAdapter, LlmError, LlmRequest, LlmResponse};
 
 pub struct OpenAiCompatAdapter {
     base_url: String,

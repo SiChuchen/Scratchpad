@@ -15,6 +15,7 @@
     onRename: (id: string, title: string | null) => void
     onCopy: (content: string) => void
     onCopyPath: (path: string) => void
+    onError?: (message: string) => void
   }
 
   let {
@@ -28,6 +29,7 @@
     onRename,
     onCopy,
     onCopyPath,
+    onError,
   }: Props = $props()
 
   let showNewForm = $state(false)
@@ -211,6 +213,7 @@
               {onRename}
               {onCopy}
               {onCopyPath}
+              {onError}
             />
           </div>
         {/each}
