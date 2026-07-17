@@ -36,7 +36,7 @@ Add a circular floating action button to the top-level `App.svelte` shell so it 
 - Position: bottom-right inside the main window, with a consistent inset from both edges.
 - Form: circular, approximately 48 px, using the primary theme color and a lightning/quick-action icon.
 - Labeling: localized accessible name and tooltip describing “Open quick access”.
-- Action: invoke the existing `ipc_open_quick_access` command.
+- Action: invoke the existing `ipc_open_quick_access` command. From this UI entry the command always shows, centers, and focuses Quick Access; if the window is already visible, it must focus rather than hide it. The global keyboard shortcut keeps its separate toggle behavior.
 - State: prevent duplicate invocations while an open request is in flight.
 - Failure: show a localized error toast in the main window and restore the enabled state.
 - Layering: appear above normal page content and menus, but below blocking confirmation and drag/drop overlays.
@@ -163,6 +163,7 @@ Reuse existing Record, Search, and Open Quick Access labels where their meaning 
 
 - A circular Quick Access button is continuously visible on all main-window pages.
 - Clicking it opens the existing Quick Access window and preserves both windows' current state.
+- Clicking the main-window entry never hides an already-visible Quick Access window; it brings that window back to the foreground.
 - Record/Search switching is the most visually prominent control in Quick Access.
 - Quick Access changes theme and fonts together with the main window without requiring hide/show or restart.
 - The default window is compact and balanced at 680 × 480 logical pixels, while the minimum and clamped sizes keep all primary actions reachable.
