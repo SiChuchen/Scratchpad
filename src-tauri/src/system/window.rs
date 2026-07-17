@@ -117,40 +117,42 @@ pub fn restore_from_tab(app: &tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-/// Compute the centered position and clamped size for the quick-access window
-/// given the cursor position and the work area of the monitor the cursor is on.
-///
-/// Pure function — caller is responsible for obtaining the Win32 work area so
-/// this can be unit-tested without FFI.
-///
-/// Returns `(x, y, width, height)` in physical pixels.
+const QUICK_ACCESS_WIDTH_LOGICAL: f64 = 680.0;
+const QUICK_ACCESS_HEIGHT_LOGICAL: f64 = 480.0;
+const QUICK_ACCESS_MIN_WIDTH_LOGICAL: f64 = 480.0;
+const QUICK_ACCESS_MIN_HEIGHT_LOGICAL: f64 = 340.0;
+
+fn logical_pixels(value: f64, scale_factor: f64) -> i32 {
+    (value * scale_factor).round() as i32
+}
+
+/// Compute the centered, clamped Quick Access geometry in physical pixels.
+/// Target dimensions are logical pixels converted through `scale_factor`.
 pub fn fit_and_center_quick_access(
-    _cursor_x: i32,
-    _cursor_y: i32,
     work_area: WorkRect,
+    scale_factor: f64,
 ) -> (i32, i32, i32, i32) {
     let work_width = work_area.right - work_area.left;
     let work_height = work_area.bottom - work_area.top;
-    let width = 760.min(work_width * 9 / 10);
-    let height = 520.min(work_height * 9 / 10);
+    let width = logical_pixels(QUICK_ACCESS_WIDTH_LOGICAL, scale_factor)
+        .min(work_width * 9 / 10);
+    let height = logical_pixels(QUICK_ACCESS_HEIGHT_LOGICAL, scale_factor)
+        .min(work_height * 9 / 10);
     let x = work_area.left + (work_width - width) / 2;
     let y = work_area.top + (work_height - height) / 2;
     (x, y, width, height)
 }
 
-/// Compute the runtime minimum size for the quick-access window, clamped to
-/// 90% of the work area so a small work area cannot push the static minimum
-/// above what the screen can actually display.
-///
-/// Spec: `min(480, work_width*0.9) x min(320, work_height*0.9)`.
-///
-/// Pure function — returns `(min_width, min_height)` in physical pixels.
-pub fn runtime_min_size(work_area: &WorkRect) -> (i32, i32) {
-    let work_w = work_area.right - work_area.left;
-    let work_h = work_area.bottom - work_area.top;
-    let min_w = (480).min(work_w * 9 / 10);
-    let min_h = (320).min(work_h * 9 / 10);
-    (min_w, min_h)
+/// Compute the scale-aware runtime minimum in physical pixels, clamped to 90%
+/// of the current monitor work area.
+pub fn runtime_min_size(work_area: &WorkRect, scale_factor: f64) -> (i32, i32) {
+    let work_width = work_area.right - work_area.left;
+    let work_height = work_area.bottom - work_area.top;
+    let min_width = logical_pixels(QUICK_ACCESS_MIN_WIDTH_LOGICAL, scale_factor)
+        .min(work_width * 9 / 10);
+    let min_height = logical_pixels(QUICK_ACCESS_MIN_HEIGHT_LOGICAL, scale_factor)
+        .min(work_height * 9 / 10);
+    (min_width, min_height)
 }
 
 /// Work-area rectangle in physical pixels. Mirrors `windows_sys::Win32::Foundation::RECT`
@@ -178,62 +180,46 @@ impl WorkRect {
 mod tests {
     use super::*;
 
-    /// 760×520 on a large monitor stays at 760×520 and is centered.
     #[test]
-    fn fit_and_center_quick_access_large_monitor() {
-        // 1920×1080 work area at origin
+    fn fit_and_center_quick_access_uses_logical_target_at_100_percent() {
         let work = WorkRect::new(0, 0, 1920, 1080);
-        let (x, y, w, h) = fit_and_center_quick_access(960, 540, work);
-        assert_eq!((w, h), (760, 520));
-        assert_eq!(x, (1920 - 760) / 2);
-        assert_eq!(y, (1080 - 520) / 2);
+        let (x, y, w, h) = fit_and_center_quick_access(work, 1.0);
+        assert_eq!((w, h), (680, 480));
+        assert_eq!((x, y), ((1920 - 680) / 2, (1080 - 480) / 2));
     }
 
-    /// Small work area clamps the window to 90% and centers it.
     #[test]
-    fn fit_and_center_quick_access_small_work_area() {
-        // 800×500 work area
+    fn fit_and_center_quick_access_scales_logical_target() {
+        let work = WorkRect::new(0, 0, 2560, 1440);
+        assert_eq!(fit_and_center_quick_access(work, 1.25).2, 850);
+        assert_eq!(fit_and_center_quick_access(work, 1.25).3, 600);
+        assert_eq!(fit_and_center_quick_access(work, 1.5).2, 1020);
+        assert_eq!(fit_and_center_quick_access(work, 1.5).3, 720);
+    }
+
+    #[test]
+    fn fit_and_center_quick_access_clamps_small_work_area() {
         let work = WorkRect::new(0, 0, 800, 500);
-        let (x, y, w, h) = fit_and_center_quick_access(400, 250, work);
-        assert_eq!(w, 800 * 9 / 10); // 720
-        assert_eq!(h, 500 * 9 / 10); // 450
-        assert_eq!(x, (800 - w) / 2);
-        assert_eq!(y, (500 - h) / 2);
+        let (x, y, w, h) = fit_and_center_quick_access(work, 1.0);
+        assert_eq!((w, h), (680, 450));
+        assert_eq!((x, y), ((800 - 680) / 2, (500 - 450) / 2));
     }
 
-    /// Negative-coordinate secondary monitor is handled correctly.
     #[test]
-    fn fit_and_center_quick_access_negative_coords_secondary() {
-        // Work area on a secondary monitor placed to the left of the primary:
-        // (-1920, 0) .. (0, 1080)
+    fn fit_and_center_quick_access_handles_negative_monitor_coordinates() {
         let work = WorkRect::new(-1920, 0, 0, 1080);
-        let (x, y, w, h) = fit_and_center_quick_access(-960, 540, work);
-        assert_eq!((w, h), (760, 520));
-        let work_width = 0 - (-1920); // 1920
-        let work_height = 1080;
-        assert_eq!(x, -1920 + (work_width - w) / 2);
-        assert_eq!(y, (work_height - h) / 2);
+        let (x, y, w, h) = fit_and_center_quick_access(work, 1.0);
+        assert_eq!((w, h), (680, 480));
+        assert_eq!((x, y), (-1920 + (1920 - 680) / 2, (1080 - 480) / 2));
     }
 
-    /// On a large monitor the runtime min stays at the static 480×320.
     #[test]
-    fn runtime_min_size_clamps_below_static() {
-        // Large monitor: stays at 480×320
-        let large = WorkRect {
-            left: 0,
-            top: 0,
-            right: 1920,
-            bottom: 1080,
-        };
-        assert_eq!(runtime_min_size(&large), (480, 320));
+    fn runtime_min_size_is_scale_aware_and_clamped() {
+        let large = WorkRect::new(0, 0, 2560, 1440);
+        assert_eq!(runtime_min_size(&large, 1.0), (480, 340));
+        assert_eq!(runtime_min_size(&large, 1.5), (720, 510));
 
-        // Small work area: clamped to 90%
-        let small = WorkRect {
-            left: 0,
-            top: 0,
-            right: 400,
-            bottom: 300,
-        };
-        assert_eq!(runtime_min_size(&small), (360, 270)); // 90% of 400×300
+        let small = WorkRect::new(0, 0, 400, 300);
+        assert_eq!(runtime_min_size(&small, 1.5), (360, 270));
     }
 }

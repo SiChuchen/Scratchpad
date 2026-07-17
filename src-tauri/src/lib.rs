@@ -105,8 +105,9 @@ fn show_quick_access_centered(app: &tauri::AppHandle) {
     };
     let (cx, cy) = win_cursor_pos();
     let work = win_monitor_work_area(cx, cy);
-    let (x, y, w, h) = system::window::fit_and_center_quick_access(cx, cy, work);
-    let (min_w, min_h) = system::window::runtime_min_size(&work);
+    let scale_factor = quick.scale_factor().unwrap_or(1.0);
+    let (x, y, w, h) = system::window::fit_and_center_quick_access(work, scale_factor);
+    let (min_w, min_h) = system::window::runtime_min_size(&work, scale_factor);
     let _ = quick.set_position(PhysPos::new(x as f64, y as f64));
     let _ = quick.set_size(PhysSize::new(w as f64, h as f64));
     let _ = quick.set_min_size(Some(Size::Physical(PhysSize::new(
