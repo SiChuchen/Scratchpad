@@ -19,6 +19,7 @@
   import type { DockPreferences } from '$lib/types/dock'
   import type { QuickAccessState } from '$lib/types/quick-access'
   import { handleKeydown } from '$lib/state/quick-access'
+  import { listenForPreferenceChanges } from '$lib/state/preferences-sync'
   import CaptureMode from '$lib/components/quick-access/CaptureMode.svelte'
   import SearchMode from '$lib/components/quick-access/SearchMode.svelte'
   import type { VaultEntryDetail } from '$lib/types/vault'
@@ -62,6 +63,13 @@
     // For now we just rely on the success notification.
   }
 
+  function applyPreferences(next: DockPreferences) {
+    if (next.language && preferences?.language !== next.language) {
+      loadLocale(next.language)
+    }
+    preferences = next
+  }
+
   async function onOpenAiSettings() {
     try {
       await invoke('ipc_open_main_settings')
@@ -97,8 +105,7 @@
       if (!prefs.language) {
         prefs.language = detectLanguage()
       }
-      loadLocale(prefs.language)
-      preferences = prefs
+      applyPreferences(prefs)
     } catch (e) {
       console.error('QuickAccessApp: failed to load preferences', e)
     }
@@ -121,15 +128,18 @@
         // Reload preferences so theme/locale changes in main window reflect here.
         invoke<DockPreferences>('ipc_preferences_get')
           .then((prefs) => {
-            if (prefs.language && preferences?.language !== prefs.language) {
-              loadLocale(prefs.language)
-            }
-            preferences = prefs
+            applyPreferences(prefs)
           })
           .catch(() => {})
         // 关键：每次呼出都重读 AI 配置 — 用户可能在主窗口刚保存配置，
         // 否则 quick-access 持续使用首次挂载时的 stale 快照（"成功但没整理"）。
         void reloadAiState()
+      }),
+    )
+
+    unlisteners.push(
+      await listenForPreferenceChanges((next) => {
+        applyPreferences(next)
       }),
     )
 

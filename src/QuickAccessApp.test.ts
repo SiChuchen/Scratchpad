@@ -6,6 +6,7 @@ import { loadLocale } from '$lib/i18n'
 const mocks = vi.hoisted(() => ({
   invoke: vi.fn(),
   listen: vi.fn(),
+  listeners: new Map<string, (event: { payload: unknown }) => void>(),
   hide: vi.fn(),
   getLlmConfig: vi.fn(),
   getAiSettings: vi.fn(),
@@ -33,6 +34,8 @@ vi.mock('$lib/api/vault', () => ({
   },
 }))
 
+import { PREFERENCES_PREVIEW_EVENT } from '$lib/state/preferences-sync'
+import { computeThemeTokens } from '$lib/themes/engine'
 import QuickAccessApp from './QuickAccessApp.svelte'
 
 function preferences(language = 'zh-CN'): DockPreferences {
@@ -76,7 +79,13 @@ beforeEach(() => {
       removeEventListener: vi.fn(),
     })),
   })
-  mocks.listen.mockResolvedValue(vi.fn())
+  mocks.listeners.clear()
+  mocks.listen.mockImplementation(
+    async (event: string, handler: (event: { payload: unknown }) => void) => {
+      mocks.listeners.set(event, handler)
+      return vi.fn()
+    },
+  )
   mocks.hide.mockResolvedValue(undefined)
   mocks.getLlmConfig.mockResolvedValue(null)
   mocks.getAiSettings.mockResolvedValue({
@@ -101,6 +110,28 @@ afterEach(() => {
 })
 
 describe('QuickAccessApp', () => {
+  it('applies live preference changes from the main window', async () => {
+    render(QuickAccessApp)
+    await screen.findByRole('tab', { name: '记录' })
+
+    const next = preferences()
+    next.themePresetId = 'light-matte'
+    next.fontFamilyZh = 'SimSun'
+    await waitFor(() => {
+      expect(mocks.listeners.get(PREFERENCES_PREVIEW_EVENT)).toBeDefined()
+    })
+    const listener = mocks.listeners.get(PREFERENCES_PREVIEW_EVENT)
+    listener?.({ payload: next })
+
+    const expected = computeThemeTokens(next, true)
+    await waitFor(() => {
+      expect(document.documentElement.style.getPropertyValue('--surface-0')).toBe(
+        expected['--surface-0'],
+      )
+      expect(document.documentElement.style.getPropertyValue('--font-family-zh')).toBe('SimSun')
+    })
+  })
+
   it('renders the persisted English locale after preferences load', async () => {
     mocks.invoke.mockImplementation(async (command: string) => {
       if (command === 'ipc_preferences_get') return preferences('en')

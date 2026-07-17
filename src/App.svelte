@@ -10,6 +10,7 @@
   import VaultView from '$lib/components/views/VaultView.svelte'
   import { dockApi } from '$lib/api/dock'
   import { insertHomeEntry } from '$lib/state/dock'
+  import { broadcastPreferences } from '$lib/state/preferences-sync'
   import { computeThemeTokens } from '$lib/themes/engine'
   import { messages, loadLocale, detectLanguage } from '$lib/i18n'
 
@@ -331,6 +332,7 @@
     const prev = preferences
     const prevLang = prev?.language ?? ''
     preferences = next  // immediate visual effect via $effect
+    void broadcastPreferences(next).catch(() => {})
 
     // Detect if language changed — apply immediately
     if (prevLang && prevLang !== next.language) {
