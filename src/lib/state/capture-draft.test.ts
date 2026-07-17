@@ -226,6 +226,45 @@ describe('CaptureDraftController', () => {
     expect(users[0].value).toBe('AI value')
   })
 
+  it.each([
+    ['Username', 'user'],
+    ['login_name', 'user'],
+    ['用户名', 'user'],
+    ['passwd', 'password'],
+    ['pwd', 'password'],
+    ['密码', 'password'],
+  ])('merges suggested %s into local %s', async (suggestedKey, localKey) => {
+    const { api } = makeApi({
+      raw: enrichment(
+        suggestion({
+          fields: [
+            { key: suggestedKey, value: 'AI value', isSensitive: false },
+          ],
+        }),
+      ),
+    })
+    const ctrl = new CaptureDraftController({ api })
+    ctrl.startSession()
+    ctrl.setLocalDraft(
+      baseDraft({
+        fields: [
+          {
+            draftId: 'f1',
+            key: localKey,
+            value: 'local value',
+            isSensitive: false,
+          },
+        ],
+      }),
+    )
+
+    await ctrl.enrich('raw', [])
+
+    expect(ctrl.draft.fields).toHaveLength(1)
+    expect(ctrl.draft.fields[0].key).toBe(localKey)
+    expect(ctrl.draft.fields[0].value).toBe('AI value')
+  })
+
   it('save failure keeps request id; success generates new session', async () => {
     let saveShouldFail = true
     const { api, spy } = makeApi({}, async (d, rid) => {

@@ -60,6 +60,23 @@ const NOTES_PATH = 'notes'
 const KIND_PATH = 'kind'
 const MANUAL_TAGS_PATH = 'manualTags'
 
+const FIELD_KEY_ALIASES: Readonly<Record<string, string>> = {
+  user: 'user',
+  username: 'user',
+  login: 'user',
+  login_name: 'user',
+  '用户名': 'user',
+  password: 'password',
+  passwd: 'password',
+  pwd: 'password',
+  '密码': 'password',
+}
+
+function canonicalFieldKey(key: string): string {
+  const normalized = key.trim().toLowerCase()
+  return FIELD_KEY_ALIASES[normalized] ?? normalized
+}
+
 function fieldKeyPath(draftId: string): string {
   return `field:${draftId}:key`
 }
@@ -256,15 +273,14 @@ export class CaptureDraftController {
     }
     // fields
     if (suggestion.fields.length > 0) {
-      // 用 lowercase key 归一化索引，避免本地解析器输出 "user" 与 LLM 输出
-      // "Username" 同时存在导致重复行。
+      // 对常见凭据字段别名做保守归一，未知字段仍按大小写不敏感匹配。
       const byKey = new Map<string, CaptureField>()
       for (const f of draft.fields) {
-        const lk = f.key.trim().toLowerCase()
+        const lk = canonicalFieldKey(f.key)
         if (lk && !byKey.has(lk)) byKey.set(lk, f)
       }
       for (const sug of suggestion.fields) {
-        const lk = sug.key.trim().toLowerCase()
+        const lk = canonicalFieldKey(sug.key)
         if (!lk) continue
         const existing = byKey.get(lk)
         if (existing) {
