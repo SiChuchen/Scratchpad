@@ -19,6 +19,7 @@ use crate::AppState;
 const DELETE_GRACE: Duration = Duration::seconds(10);
 const DEFAULT_SEARCH_LIMIT: usize = 50;
 const UNDO_EXPIRED: &str = "content_delete_undo_expired";
+const DELETE_WORKER_MAX_SLEEP: StdDuration = StdDuration::from_secs(60 * 60);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct PendingDelete {
@@ -369,20 +370,6 @@ fn pending_by_token(conn: &Connection, token: &str) -> StorageResult<Option<Pend
     .transpose()
 }
 
-fn next_pending_delete(conn: &Connection) -> StorageResult<Option<PendingDelete>> {
-    let token = conn
-        .query_row(
-            "SELECT token FROM content_pending_deletes WHERE status='pending' ORDER BY expires_at, token LIMIT 1",
-            [],
-            |row| row.get::<_, String>(0),
-        )
-        .optional()?;
-    token
-        .map(|token| pending_by_token(conn, &token))
-        .transpose()
-        .map(Option::flatten)
-}
-
 fn pending_worker_step(
     conn: &mut Connection,
     token: &str,
@@ -409,13 +396,12 @@ fn is_retryable_busy(error: &StorageError) -> bool {
 }
 
 fn worker_delay(expires_at: DateTime<Utc>, now: DateTime<Utc>) -> StdDuration {
-    const MAX_SLEEP: StdDuration = StdDuration::from_secs(60 * 60);
     if expires_at <= now {
         return StdDuration::ZERO;
     }
     match (expires_at - now).to_std() {
-        Ok(delay) => delay.min(MAX_SLEEP),
-        Err(_) => MAX_SLEEP,
+        Ok(delay) => delay.min(DELETE_WORKER_MAX_SLEEP),
+        Err(_) => DELETE_WORKER_MAX_SLEEP,
     }
 }
 
@@ -490,7 +476,7 @@ async fn run_delete_worker<R: tauri::Runtime>(
                 let has_work = {
                     let state = app.state::<AppState>();
                     let conn = lock_app_db(&state);
-                    next_pending_delete(&conn).ok().flatten().is_some()
+                    list_pending_deletes(&conn).is_ok_and(|records| !records.is_empty())
                 };
                 if has_work && scheduler.gate.claim() {
                     continue;
@@ -511,23 +497,17 @@ async fn run_delete_worker<R: tauri::Runtime>(
         };
         token_backoff.retain(|token, _| records.iter().any(|record| &record.token == token));
         let instant_now = Instant::now();
-        let pending = select_eligible_pending(&records, &token_backoff, instant_now);
-        let Some(pending) = pending else {
-            let delay = token_backoff
-                .values()
-                .map(|(until, _)| until.saturating_duration_since(instant_now))
-                .min()
-                .unwrap_or(StdDuration::from_secs(1));
+        let plan = plan_pending_work(&records, &token_backoff, instant_now, Utc::now());
+        let Some(pending) = plan.eligible else {
             tokio::select! {
-                () = tokio::time::sleep(delay) => {}
+                () = tokio::time::sleep(plan.wake_after) => {}
                 () = scheduler.notify.notified() => {}
             }
             continue;
         };
-        let delay = worker_delay(pending.expires_at, Utc::now());
-        if !delay.is_zero() {
+        if !plan.wake_after.is_zero() {
             tokio::select! {
-                () = tokio::time::sleep(delay) => {}
+                () = tokio::time::sleep(plan.wake_after) => {}
                 () = scheduler.notify.notified() => {}
             }
             continue;
@@ -596,35 +576,74 @@ async fn run_delete_worker<R: tauri::Runtime>(
     }
 }
 
-fn select_eligible_pending(
+struct PendingWorkPlan {
+    eligible: Option<PendingDelete>,
+    wake_after: StdDuration,
+}
+
+fn plan_pending_work(
     records: &[PendingDelete],
     token_backoff: &HashMap<String, (Instant, u32)>,
     instant_now: Instant,
-) -> Option<PendingDelete> {
-    records
+    wall_now: DateTime<Utc>,
+) -> PendingWorkPlan {
+    let eligible = records
         .iter()
         .find(|record| {
             token_backoff
                 .get(&record.token)
                 .is_none_or(|(until, _)| *until <= instant_now)
         })
-        .cloned()
+        .cloned();
+    let deferred_wake = records
+        .iter()
+        .filter_map(|record| token_backoff.get(&record.token))
+        .filter_map(|(until, _)| (*until > instant_now).then_some(*until - instant_now))
+        .min();
+    let selected_wake = eligible
+        .as_ref()
+        .map(|record| worker_delay(record.expires_at, wall_now));
+    let wake_after = match (selected_wake, deferred_wake) {
+        (Some(selected), Some(deferred)) => selected.min(deferred),
+        (Some(selected), None) => selected,
+        (None, Some(deferred)) => deferred,
+        (None, None) => DELETE_WORKER_MAX_SLEEP,
+    }
+    .min(DELETE_WORKER_MAX_SLEEP);
+    PendingWorkPlan {
+        eligible,
+        wake_after,
+    }
 }
 
 fn list_pending_deletes(conn: &Connection) -> StorageResult<Vec<PendingDelete>> {
-    let tokens = {
-        let mut statement = conn.prepare(
-            "SELECT token FROM content_pending_deletes WHERE status='pending' ORDER BY expires_at, token",
-        )?;
-        let tokens = statement
-            .query_map([], |row| row.get::<_, String>(0))?
-            .collect::<Result<Vec<_>, _>>()?;
-        tokens
-    };
-    tokens
-        .into_iter()
-        .filter_map(|token| pending_by_token(conn, &token).transpose())
-        .collect()
+    let mut statement = conn.prepare(
+        "SELECT token, unified_id, created_at, expires_at
+         FROM content_pending_deletes
+         WHERE status='pending'
+         ORDER BY expires_at, token",
+    )?;
+    let rows = statement
+        .query_map([], pending_from_row)?
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut pending = Vec::with_capacity(rows.len());
+    for (token, id, created_at, expires_at) in rows {
+        let parsed = UnifiedContentId::parse(&id)
+            .map_err(StorageError::Validation)
+            .and_then(|_| {
+                Ok(PendingDelete {
+                    created_at: parse_pending_timestamp(&created_at, "created_at", &token)?,
+                    expires_at: parse_pending_timestamp(&expires_at, "expires_at", &token)?,
+                    token: token.clone(),
+                    id,
+                })
+            });
+        match parsed {
+            Ok(record) => pending.push(record),
+            Err(error) => eprintln!("ignoring invalid pending delete token {token}: {error}"),
+        }
+    }
+    Ok(pending)
 }
 
 #[derive(Default)]
@@ -698,7 +717,7 @@ fn ensure_delete_worker_running<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
                     let has_work = {
                         let state = app.state::<AppState>();
                         let conn = lock_app_db(&state);
-                        next_pending_delete(&conn).ok().flatten().is_some()
+                        list_pending_deletes(&conn).is_ok_and(|records| !records.is_empty())
                     };
                     if !has_work || !scheduler.gate.claim() {
                         return;
@@ -1532,7 +1551,9 @@ mod tests {
             (selection_time + StdDuration::from_secs(1), 1),
         );
         let records = list_pending_deletes(&conn).unwrap();
-        let selected = select_eligible_pending(&records, &backoff, selection_time).unwrap();
+        let selected = plan_pending_work(&records, &backoff, selection_time, now())
+            .eligible
+            .unwrap();
         assert_eq!(selected.token, healthy.token);
         assert!(matches!(
             pending_worker_step(&mut conn, &selected.token, now()).unwrap(),
@@ -1542,15 +1563,19 @@ mod tests {
 
         let records = list_pending_deletes(&conn).unwrap();
         for _ in 0..1_000 {
-            assert!(select_eligible_pending(&records, &backoff, selection_time).is_none());
+            assert!(plan_pending_work(&records, &backoff, selection_time, now())
+                .eligible
+                .is_none());
         }
         conn.execute_batch("DROP TRIGGER fail_token_delete; DROP TRIGGER fail_token_mark;")
             .unwrap();
-        let selected = select_eligible_pending(
+        let selected = plan_pending_work(
             &records,
             &backoff,
             selection_time + StdDuration::from_secs(2),
+            now(),
         )
+        .eligible
         .unwrap();
         assert_eq!(selected.token, failed.token);
         assert!(matches!(
@@ -1558,6 +1583,109 @@ mod tests {
             PendingWorkerStep::Deleted(_)
         ));
         assert_eq!(current_revision(&conn).unwrap(), 2);
+    }
+
+    #[test]
+    fn deferred_due_token_sets_wake_before_eligible_future_token() {
+        let wall_now = now();
+        let instant_now = Instant::now();
+        let deferred = PendingDelete {
+            token: "deferred".to_string(),
+            id: "dock:text-deferred".to_string(),
+            created_at: wall_now - Duration::seconds(1),
+            expires_at: wall_now,
+        };
+        let future = PendingDelete {
+            token: "future".to_string(),
+            id: "dock:text-future".to_string(),
+            created_at: wall_now,
+            expires_at: wall_now + Duration::hours(1),
+        };
+        let records = vec![deferred.clone(), future.clone()];
+        let mut backoff = HashMap::new();
+        backoff.insert(
+            deferred.token.clone(),
+            (instant_now + StdDuration::from_millis(250), 1),
+        );
+
+        let plan = plan_pending_work(&records, &backoff, instant_now, wall_now);
+        assert_eq!(plan.eligible.unwrap().token, future.token);
+        assert_eq!(plan.wake_after, StdDuration::from_millis(250));
+
+        let after_backoff = instant_now + StdDuration::from_millis(250);
+        let plan = plan_pending_work(&records, &backoff, after_backoff, wall_now);
+        assert_eq!(plan.eligible.unwrap().token, deferred.token);
+        assert_eq!(plan.wake_after, StdDuration::ZERO);
+
+        let later = PendingDelete {
+            token: "later".to_string(),
+            id: "dock:text-later".to_string(),
+            created_at: wall_now,
+            expires_at: wall_now + Duration::hours(2),
+        };
+        let records = vec![deferred.clone(), later.clone()];
+        backoff.insert(
+            deferred.token.clone(),
+            (instant_now + StdDuration::from_millis(500), 2),
+        );
+        backoff.insert(
+            later.token.clone(),
+            (instant_now + StdDuration::from_millis(100), 1),
+        );
+        backoff.insert(
+            "already-removed".to_string(),
+            (instant_now + StdDuration::from_millis(10), 1),
+        );
+        let plan = plan_pending_work(&records, &backoff, instant_now, wall_now);
+        assert!(plan.eligible.is_none());
+        assert_eq!(plan.wake_after, StdDuration::from_millis(100));
+
+        backoff.clear();
+        let plan = plan_pending_work(
+            &[later],
+            &backoff,
+            instant_now,
+            wall_now - Duration::hours(2),
+        );
+        assert_eq!(plan.wake_after, DELETE_WORKER_MAX_SLEEP);
+    }
+
+    #[test]
+    fn pending_scan_parses_many_rows_and_isolates_bad_timestamp() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE content_pending_deletes(
+                token TEXT PRIMARY KEY,
+                unified_id TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL,
+                status TEXT NOT NULL
+             );",
+        )
+        .unwrap();
+        let created_at = now().to_rfc3339();
+        for index in 0..100 {
+            conn.execute(
+                "INSERT INTO content_pending_deletes VALUES (?1, ?2, ?3, ?4, 'pending')",
+                params![
+                    format!("token-{index:03}"),
+                    format!("dock:text-{index:03}"),
+                    created_at,
+                    (now() + Duration::seconds(index)).to_rfc3339(),
+                ],
+            )
+            .unwrap();
+        }
+        conn.execute(
+            "INSERT INTO content_pending_deletes VALUES ('bad', 'dock:text-bad', ?1, 'not-rfc3339', 'pending')",
+            params![created_at],
+        )
+        .unwrap();
+
+        let records = list_pending_deletes(&conn).unwrap();
+        assert_eq!(records.len(), 100);
+        assert_eq!(records.first().unwrap().token, "token-000");
+        assert_eq!(records.last().unwrap().token, "token-099");
     }
 
     #[test]
