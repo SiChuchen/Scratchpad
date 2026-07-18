@@ -1,5 +1,5 @@
 // src-tauri/src/vault/migrations.rs
-// Vault 独立 schema 版本管理 + v1→v2 迁移逻辑
+// Vault 独立 schema 版本管理 + 顺序迁移逻辑
 use rusqlite::{params, Connection};
 
 use crate::storage::error::{StorageError, StorageResult};
@@ -59,7 +59,7 @@ fn write_vault_version(conn: &Connection, version: u32) -> StorageResult<()> {
     Ok(())
 }
 
-/// 入口：将 vault schema 从当前版本升级到最新（v2）。
+/// 入口：将 vault schema 从当前版本升级到最新（v3）。
 /// 调用方必须已确保 v1 表存在（即 storage::ensure_vault_schema 的 v1 建表 SQL 已执行）。
 pub fn migrate_vault_schema(conn: &mut Connection) -> StorageResult<()> {
     // 全新数据库 / 旧版无版本表：先创建版本表并写入 version=1 作为基线
@@ -74,12 +74,16 @@ pub fn migrate_vault_schema(conn: &mut Connection) -> StorageResult<()> {
         write_vault_version(conn, 1)?;
     }
     let current = read_vault_version(conn)?;
-    if current >= 2 {
-        return Ok(());
+    if current < 2 {
+        migrate_v1_to_v2(conn)?;
     }
+    if read_vault_version(conn)? < 3 {
+        migrate_v2_to_v3(conn)?;
+    }
+    Ok(())
+}
 
-    // === v1 → v2 ===
-    // 整个迁移在一个事务内完成，保证原子性。
+fn migrate_v1_to_v2(conn: &mut Connection) -> StorageResult<()> {
     let tx = conn.transaction()?;
 
     // 1) 读出旧 vault_tags 到内存
@@ -152,63 +156,20 @@ pub fn migrate_vault_schema(conn: &mut Connection) -> StorageResult<()> {
         "#,
     )?;
 
-    // 5) 重建 FTS 索引（vault_fts 已由 v1 SQL 创建；先清空，再从 entry+非敏感 field+tag 重建）
-    tx.execute("DELETE FROM vault_fts", [])?;
-    {
-        let entries: Vec<(String, String, Option<String>)> = {
-            let mut stmt =
-                tx.prepare("SELECT id, title, notes FROM vault_entries ORDER BY created_at")?;
-            let rows = stmt.query_map([], |r| {
-                Ok((
-                    r.get::<_, String>(0)?,
-                    r.get::<_, String>(1)?,
-                    r.get::<_, Option<String>>(2)?,
-                ))
-            })?;
-            let mut v = Vec::new();
-            for row in rows {
-                v.push(row?);
-            }
-            v
-        };
-        for (id, title, notes) in entries {
-            let searchable = rebuild_searchable(&tx, &id)?;
-            tx.execute(
-                "INSERT INTO vault_fts(entry_id, title, notes, searchable)
-                 VALUES (?1, ?2, ?3, ?4)",
-                params![id, title, notes.unwrap_or_default(), searchable],
-            )?;
-        }
-    }
-
-    // 6) 写入 version=2
     write_vault_version(&tx, 2)
         .map_err(|e| StorageError::Migration(format!("write version 2: {e}")))?;
-
     tx.commit()?;
     Ok(())
 }
 
-/// 仅用于迁移：从 entry、非敏感 field、tag 构建可搜索文本
-/// （迁移路径专用，避免引用 storage 模块私有函数）。
-fn rebuild_searchable(conn: &Connection, entry_id: &str) -> StorageResult<String> {
-    let mut parts: Vec<String> = Vec::new();
-    {
-        let mut stmt =
-            conn.prepare("SELECT value FROM vault_fields WHERE entry_id=?1 AND is_sensitive=0")?;
-        let rows = stmt.query_map(params![entry_id], |r| r.get::<_, String>(0))?;
-        for r in rows {
-            parts.push(r?);
-        }
-    }
-    {
-        let mut stmt = conn.prepare("SELECT tag FROM vault_tags WHERE entry_id=?1")?;
-        let rows = stmt.query_map(params![entry_id], |r| r.get::<_, String>(0))?;
-        for r in rows {
-            parts.push(r?);
-        }
-    }
-    Ok(parts.join(" "))
+fn migrate_v2_to_v3(conn: &mut Connection) -> StorageResult<()> {
+    let tx = conn.transaction()?;
+    crate::vault::storage::rebuild_vault_fts(&tx)
+        .map_err(|e| StorageError::Migration(format!("rebuild safe vault FTS: {e}")))?;
+    write_vault_version(&tx, 3)
+        .map_err(|e| StorageError::Migration(format!("write version 3: {e}")))?;
+    tx.commit()?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -263,6 +224,152 @@ mod tests {
         .unwrap();
     }
 
+    fn seed_v2_vault(conn: &mut Connection) {
+        seed_legacy_vault(conn);
+        conn.execute_batch(
+            r#"
+            DROP TABLE vault_tags;
+            CREATE TABLE vault_tags (
+                entry_id TEXT NOT NULL REFERENCES vault_entries(id) ON DELETE CASCADE,
+                tag TEXT NOT NULL,
+                normalized_tag TEXT NOT NULL,
+                source TEXT NOT NULL CHECK (source IN ('manual', 'ai')),
+                PRIMARY KEY (entry_id, normalized_tag, source)
+            );
+            CREATE TABLE vault_ai_metadata (
+                entry_id TEXT PRIMARY KEY REFERENCES vault_entries(id) ON DELETE CASCADE,
+                summary TEXT,
+                search_aliases_json TEXT NOT NULL DEFAULT '[]',
+                content_hash TEXT NOT NULL,
+                provider_id TEXT,
+                model TEXT,
+                generated_at TEXT,
+                status TEXT NOT NULL CHECK (status IN ('ready', 'pending', 'error'))
+            );
+            CREATE TABLE vault_capture_requests (
+                request_id TEXT PRIMARY KEY,
+                entry_id TEXT NOT NULL REFERENCES vault_entries(id) ON DELETE CASCADE,
+                created_at TEXT NOT NULL
+            );
+            CREATE TABLE vault_schema_version (
+                singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+                version INTEGER NOT NULL
+            );
+            INSERT INTO vault_schema_version(singleton, version) VALUES (1, 2);
+            "#,
+        )
+        .unwrap();
+    }
+
+    fn insert_legacy_field(conn: &Connection, id: &str, entry_id: &str, key: &str, value: &str) {
+        conn.execute(
+            "INSERT INTO vault_fields(id, entry_id, key, value, is_sensitive, sort_order)
+             VALUES (?1, ?2, ?3, ?4, 0, 0)",
+            params![id, entry_id, key, value],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn v1_upgrade_rebuilds_fts_without_default_sensitive_values() {
+        const SECRET: &str = "NeverIndexMePassword";
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", "ON").unwrap();
+        seed_legacy_vault(&mut conn);
+        insert_legacy_entry(&mut conn, "v1", &format!("{SECRET} server"));
+        conn.execute(
+            "UPDATE vault_entries SET notes=?1 WHERE id='v1'",
+            params![format!("notes containing {SECRET}")],
+        )
+        .unwrap();
+        insert_legacy_field(&conn, "username", "v1", "username", "alice");
+        insert_legacy_field(&conn, "password", "v1", "password", SECRET);
+
+        ensure_vault_schema(&mut conn).unwrap();
+
+        let indexed: (String, String, String) = conn
+            .query_row(
+                "SELECT title, notes, searchable FROM vault_fts WHERE entry_id='v1'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        for value in [&indexed.0, &indexed.1, &indexed.2] {
+            assert!(!value.contains(SECRET), "unsafe vault_fts value: {value}");
+        }
+        assert!(indexed.2.contains("alice"));
+    }
+
+    #[test]
+    fn v2_startup_repairs_unsafe_fts_once_and_is_idempotent() {
+        const SECRET: &str = "NeverIndexMeToken";
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", "ON").unwrap();
+        seed_v2_vault(&mut conn);
+        insert_legacy_entry(&mut conn, "v2", &format!("{SECRET} console"));
+        conn.execute(
+            "UPDATE vault_entries SET notes=?1 WHERE id='v2'",
+            params![format!("notes containing {SECRET}")],
+        )
+        .unwrap();
+        insert_legacy_field(&conn, "username", "v2", "username", "bob");
+        insert_legacy_field(&conn, "token", "v2", "token", SECRET);
+        conn.execute(
+            "INSERT INTO vault_fts(entry_id, title, notes, searchable)
+             VALUES ('v2', ?1, ?2, ?3)",
+            params![
+                format!("{SECRET} console"),
+                format!("notes containing {SECRET}"),
+                format!("bob {SECRET}")
+            ],
+        )
+        .unwrap();
+
+        ensure_vault_schema(&mut conn).unwrap();
+
+        let indexed: (String, String, String) = conn
+            .query_row(
+                "SELECT title, notes, searchable FROM vault_fts WHERE entry_id='v2'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        for value in [&indexed.0, &indexed.1, &indexed.2] {
+            assert!(!value.contains(SECRET), "unsafe vault_fts value: {value}");
+        }
+        assert!(indexed.2.contains("bob"));
+        conn.execute(
+            "UPDATE vault_fts SET title='migration-sentinel' WHERE entry_id='v2'",
+            [],
+        )
+        .unwrap();
+        ensure_vault_schema(&mut conn).unwrap();
+        let title_after_second_start: String = conn
+            .query_row(
+                "SELECT title FROM vault_fts WHERE entry_id='v2'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(title_after_second_start, "migration-sentinel");
+        let row_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM vault_fts WHERE entry_id='v2'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(row_count, 1);
+        let version: i64 = conn
+            .query_row(
+                "SELECT version FROM vault_schema_version WHERE singleton=1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(version, 3);
+    }
+
     #[test]
     fn migration_preserves_legacy_tags_as_manual() {
         let mut conn = Connection::open_in_memory().unwrap();
@@ -308,7 +415,7 @@ mod tests {
         .unwrap();
 
         ensure_vault_schema(&mut conn).unwrap();
-        // 再跑一次：ensure_vault_schema 应该幂等（版本已=2，跳过）
+        // 再跑一次：ensure_vault_schema 应该幂等（版本已=3，跳过）
         ensure_vault_schema(&mut conn).unwrap();
 
         let v: i64 = conn
@@ -318,7 +425,7 @@ mod tests {
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(v, 2);
+        assert_eq!(v, 3);
 
         let count: i64 = conn
             .query_row(

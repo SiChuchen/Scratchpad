@@ -1101,6 +1101,20 @@ fn fts5_upsert(conn: &Connection, entry_id: &str) -> StorageResult<()> {
     Ok(())
 }
 
+/// Rebuilds the legacy Vault FTS table through the same privacy projection used by mutations.
+pub(crate) fn rebuild_vault_fts(conn: &Connection) -> StorageResult<()> {
+    let entry_ids = {
+        let mut stmt = conn.prepare("SELECT id FROM vault_entries ORDER BY created_at, id")?;
+        let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+        rows.collect::<Result<Vec<_>, _>>()?
+    };
+    conn.execute("DELETE FROM vault_fts", [])?;
+    for entry_id in entry_ids {
+        fts5_upsert(conn, &entry_id)?;
+    }
+    Ok(())
+}
+
 fn sensitive_values(conn: &Connection, entry_id: &str) -> StorageResult<Vec<String>> {
     let mut stmt = conn.prepare(
         "SELECT key, value, is_sensitive FROM vault_fields
