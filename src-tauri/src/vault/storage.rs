@@ -2250,6 +2250,81 @@ mod tests {
     }
 
     #[test]
+    fn whitespace_padded_default_sensitive_key_never_reaches_either_fts_index() {
+        let mut conn = open_unified_db();
+        let detail = create_entry(
+            &mut conn,
+            &VaultEntryInput {
+                kind: EntryKind::Credential,
+                title: "HUNTER2 Server".into(),
+                fields: vec![
+                    FieldInput {
+                        key: " password ".into(),
+                        value: "hunter2".into(),
+                        is_sensitive: false,
+                    },
+                    FieldInput {
+                        key: " username ".into(),
+                        value: "alice".into(),
+                        is_sensitive: false,
+                    },
+                ],
+                notes: Some("notes HuNtEr2 production".into()),
+                manual_tags: vec!["hunter2-tag".into(), "production".into()],
+            },
+        )
+        .unwrap();
+
+        assert!(
+            detail
+                .fields
+                .iter()
+                .find(|field| field.key == " password ")
+                .unwrap()
+                .is_sensitive
+        );
+        assert!(
+            !detail
+                .fields
+                .iter()
+                .find(|field| field.key == " username ")
+                .unwrap()
+                .is_sensitive
+        );
+        let vault_text: String = conn
+            .query_row(
+                "SELECT title || ' ' || notes || ' ' || searchable
+                 FROM vault_fts WHERE entry_id=?1",
+                params![detail.entry.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let content_text: String = conn
+            .query_row(
+                "SELECT title || ' ' || body || ' ' || tags || ' ' || aliases
+                 FROM content_fts WHERE unified_id=?1",
+                params![format!("vault:{}", detail.entry.id)],
+                |row| row.get(0),
+            )
+            .unwrap();
+        for indexed in [&vault_text, &content_text] {
+            assert!(!indexed.to_lowercase().contains("hunter2"));
+            assert!(indexed.contains("alice"));
+            assert!(indexed.contains("production"));
+        }
+        for table in ["vault_fts", "content_fts"] {
+            let matches: i64 = conn
+                .query_row(
+                    &format!("SELECT COUNT(*) FROM {table} WHERE {table} MATCH 'hunter2'"),
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(matches, 0);
+        }
+    }
+
+    #[test]
     fn ready_ai_enrichment_applies_tags_metadata_projection_and_one_revision_atomically() {
         let mut conn = open_unified_db();
         let detail = create_entry(

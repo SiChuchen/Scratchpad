@@ -169,13 +169,18 @@ impl VaultRuntimeState {
         if *self.auth_blocked.lock().unwrap() {
             return Some("auth".to_string());
         }
-        let guard = self.cooldown_until.lock().unwrap();
-        if let Some(until) = *guard {
-            if Instant::now() < until {
-                return Some("cooldown".to_string());
-            }
+        if self.cooldown_remaining().is_some() {
+            return Some("cooldown".to_string());
         }
         None
+    }
+
+    /// 返回自动调用 cooldown 的剩余时间。过期或未进入 cooldown 时返回 `None`。
+    pub fn cooldown_remaining(&self) -> Option<Duration> {
+        self.cooldown_until
+            .lock()
+            .unwrap()
+            .and_then(|until| until.checked_duration_since(Instant::now()))
     }
 
     /// 把 `LlmError` 映射到稳定的用户事件 code（绝不泄露响应 body）。
@@ -549,6 +554,11 @@ mod runtime_tests {
         let runtime = VaultRuntimeState::load(&conn);
         runtime.record_failure(&LlmError::RateLimit);
         assert!(runtime.has_cooldown());
+        let remaining = runtime
+            .cooldown_remaining()
+            .expect("rate limit must expose a remaining cooldown");
+        assert!(remaining > Duration::ZERO);
+        assert!(remaining <= Duration::from_secs(RATE_LIMIT_COOLDOWN_SECS));
         assert_eq!(
             runtime.should_skip_automatic_call(),
             Some("cooldown".to_string())

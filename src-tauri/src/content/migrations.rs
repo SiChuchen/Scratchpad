@@ -774,7 +774,7 @@ mod tests {
             INSERT INTO vault_fields(
                 id, entry_id, key, value, is_sensitive, sort_order
             ) VALUES
-                ('legacy-password', 'legacy-v3', 'password', 'NeverIndexMe', 0, 0),
+                ('legacy-password', 'legacy-v3', ' password ', 'NeverIndexMe', 0, 0),
                 ('legacy-user', 'legacy-v3', 'username', 'alice', 0, 1);
             INSERT INTO vault_tags(entry_id, tag, normalized_tag, source) VALUES
                 ('legacy-v3', 'NeVeRiNdExMe-tag', 'neverindexme-tag', 'manual'),
@@ -812,7 +812,7 @@ mod tests {
             detail
                 .fields
                 .iter()
-                .find(|field| field.key == "password")
+                .find(|field| field.key == " password ")
                 .unwrap()
                 .is_sensitive
         );

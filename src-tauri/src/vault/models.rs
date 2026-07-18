@@ -277,7 +277,7 @@ pub const DEFAULT_SENSITIVE_KEYS: &[&str] = &[
 ];
 
 pub fn is_default_sensitive_key(key: &str) -> bool {
-    let lower = key.to_lowercase();
+    let lower = key.trim().to_lowercase();
     DEFAULT_SENSITIVE_KEYS.iter().any(|k| lower == *k)
 }
 
@@ -298,8 +298,10 @@ mod tests {
         assert!(is_default_sensitive_key("password"));
         assert!(is_default_sensitive_key("API_KEY"));
         assert!(is_default_sensitive_key("privateKey"));
+        assert!(is_default_sensitive_key(" \tpassword\u{2003}"));
         assert!(!is_default_sensitive_key("username"));
         assert!(!is_default_sensitive_key("url"));
+        assert!(!is_default_sensitive_key("  username  "));
     }
 
     #[test]

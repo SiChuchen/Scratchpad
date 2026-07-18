@@ -14,6 +14,7 @@
 //   * app setup：若 config 存在且 auto_enrich=true，spawn 一个 worker；
 //   * verify_and_save 成功后：再次 trigger（worker mutex 保证重复触发是 no-op）。
 
+use std::future::Future;
 use std::time::Duration;
 
 use serde::Serialize;
@@ -44,6 +45,13 @@ static WORKER_PERMIT: Semaphore = Semaphore::const_new(1);
 enum ProcessOutcome {
     Continue,
     Skip,
+    Stop,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BackfillGate {
+    Ready,
+    Cooldown(Duration),
     Stop,
 }
 
@@ -98,8 +106,8 @@ pub struct AiMetadataUpdatedEvent {
 /// 判断"当前是否应当启动 backfill worker"。
 ///
 /// 条件：config 存在 AND auto_enrich=true AND 未被 auth-blocked。
-/// 注意：cooldown 不会阻止启动 worker —— worker 在每条 entry 内部自行
-/// 通过 `should_skip_automatic_call` 检查；这里只检查持久性约束。
+/// 注意：cooldown 不会阻止启动 worker；worker 会在查询 pending 前和每条
+/// entry 前等待剩余 cooldown。这里只检查持久性约束。
 pub fn should_run_backfill(runtime: &VaultRuntimeState) -> bool {
     let has_config = runtime.config.lock().unwrap().is_some();
     if !has_config {
@@ -113,6 +121,42 @@ pub fn should_run_backfill(runtime: &VaultRuntimeState) -> bool {
         return false;
     }
     true
+}
+
+fn backfill_gate(runtime: &VaultRuntimeState) -> BackfillGate {
+    if !should_run_backfill(runtime) {
+        return BackfillGate::Stop;
+    }
+    match runtime.cooldown_remaining() {
+        Some(remaining) => BackfillGate::Cooldown(remaining),
+        None => BackfillGate::Ready,
+    }
+}
+
+async fn wait_for_backfill_gate_with<Gate, Delay, DelayFuture>(
+    mut gate: Gate,
+    mut delay: Delay,
+) -> bool
+where
+    Gate: FnMut() -> BackfillGate,
+    Delay: FnMut(Duration) -> DelayFuture,
+    DelayFuture: Future<Output = ()>,
+{
+    loop {
+        match gate() {
+            BackfillGate::Ready => return true,
+            BackfillGate::Stop => return false,
+            BackfillGate::Cooldown(remaining) => delay(remaining).await,
+        }
+    }
+}
+
+async fn wait_for_backfill_gate(runtime: &VaultRuntimeState) -> bool {
+    wait_for_backfill_gate_with(
+        || backfill_gate(runtime),
+        |remaining| tokio::time::sleep(remaining),
+    )
+    .await
 }
 
 /// 尝试启动一个 backfill worker。如果已有 worker 在运行，直接返回（不排队）。
@@ -137,9 +181,10 @@ pub fn try_start_backfill(app: &AppHandle) {
 /// Worker 主循环：每次取一批 pending entries，逐条处理，期间检查终止条件。
 async fn run_backfill_loop(app: AppHandle) {
     loop {
-        // 终止条件：config 删除 / auto_enrich 关闭 / auth_blocked
+        // 终止条件：config 删除 / auto_enrich 关闭 / auth_blocked。
+        // cooldown 期间在查询 pending 前异步等待，避免 DB 空转轮询。
         let vault = app.state::<VaultRuntimeState>();
-        if !should_run_backfill(&vault) {
+        if !wait_for_backfill_gate(&vault).await {
             return;
         }
 
@@ -162,14 +207,11 @@ async fn run_backfill_loop(app: AppHandle) {
         }
 
         for entry_id in entries {
-            // 每条开始前再次检查终止条件
+            // 每条开始前再次检查终止条件。上一次请求可能刚触发 cooldown；
+            // 等待结束后重新检查 config/settings/auth，再继续当前 pending。
             let vault = app.state::<VaultRuntimeState>();
-            if !should_run_backfill(&vault) {
+            if !wait_for_backfill_gate(&vault).await {
                 return;
-            }
-            // 门控：auth-blocked 或 cooldown → 跳过本条但继续循环
-            if vault.should_skip_automatic_call().is_some() {
-                continue;
             }
 
             if process_one_entry(&app, &entry_id).await == ProcessOutcome::Stop {
@@ -466,6 +508,90 @@ mod tests {
     }
 
     #[test]
+    fn backfill_gate_stops_for_auth_and_waits_for_cooldown() {
+        let mut conn = open_db();
+        save_stored_config(&mut conn, &sample_stored()).unwrap();
+        save_ai_settings(
+            &mut conn,
+            &VaultAiSettings {
+                auto_enrich: true,
+                auto_hybrid_search: true,
+                sensitive_clipboard_clear_seconds: Some(30),
+            },
+        )
+        .unwrap();
+        let runtime = VaultRuntimeState::load(&conn);
+
+        assert_eq!(backfill_gate(&runtime), BackfillGate::Ready);
+        runtime.record_failure(&crate::vault::llm::LlmError::RateLimit);
+        assert!(matches!(
+            backfill_gate(&runtime),
+            BackfillGate::Cooldown(remaining) if remaining > Duration::ZERO
+        ));
+        runtime.set_auth_blocked(true);
+        assert_eq!(backfill_gate(&runtime), BackfillGate::Stop);
+    }
+
+    #[tokio::test]
+    async fn cooldown_gate_awaits_then_rechecks_before_continuing() {
+        use std::collections::VecDeque;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::{Arc, Mutex};
+
+        let delay_completed = Arc::new(AtomicBool::new(false));
+        let decisions = Arc::new(Mutex::new(VecDeque::from([
+            BackfillGate::Cooldown(Duration::from_millis(5)),
+            BackfillGate::Ready,
+        ])));
+        let gate_delay_completed = delay_completed.clone();
+        let gate_decisions = decisions.clone();
+        let delay_flag = delay_completed.clone();
+
+        let ready = wait_for_backfill_gate_with(
+            move || {
+                let decision = gate_decisions.lock().unwrap().pop_front().unwrap();
+                if decision == BackfillGate::Ready {
+                    assert!(gate_delay_completed.load(Ordering::SeqCst));
+                }
+                decision
+            },
+            move |duration| {
+                assert_eq!(duration, Duration::from_millis(5));
+                let delay_flag = delay_flag.clone();
+                async move {
+                    delay_flag.store(true, Ordering::SeqCst);
+                }
+            },
+        )
+        .await;
+
+        assert!(ready);
+        assert!(delay_completed.load(Ordering::SeqCst));
+        assert!(decisions.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn cooldown_gate_rechecks_stop_conditions_after_waiting() {
+        use std::collections::VecDeque;
+        use std::sync::{Arc, Mutex};
+
+        let decisions = Arc::new(Mutex::new(VecDeque::from([
+            BackfillGate::Cooldown(Duration::from_millis(5)),
+            BackfillGate::Stop,
+        ])));
+        let gate_decisions = decisions.clone();
+
+        let ready = wait_for_backfill_gate_with(
+            move || gate_decisions.lock().unwrap().pop_front().unwrap(),
+            |_| async {},
+        )
+        .await;
+
+        assert!(!ready);
+        assert!(decisions.lock().unwrap().is_empty());
+    }
+
+    #[test]
     fn backfill_status_query_returns_correct_counts() {
         // 复用 capture.rs 的同一组断言，但这里直接验证 storage::backfill_status
         let mut conn = open_db();
@@ -529,7 +655,7 @@ mod tests {
                 title: "NEVERINDEXME console".into(),
                 fields: vec![
                     FieldInput {
-                        key: "password".into(),
+                        key: " password ".into(),
                         value: "NeverIndexMe".into(),
                         is_sensitive: false,
                     },
@@ -551,7 +677,7 @@ mod tests {
         .unwrap();
         conn.execute(
             "UPDATE vault_fields SET is_sensitive=0
-             WHERE entry_id=?1 AND key='password'",
+             WHERE entry_id=?1 AND key=' password '",
             params![detail.entry.id],
         )
         .unwrap();
