@@ -97,12 +97,12 @@ Reproducible command, run from src-tauri:
 
     cargo run --example create_validation_fixtures -- ..\test-data\unified-validation
 
-The example checks both target names and sidecars before creating anything,
-rejects symlink targets/output directories, never opens the application data
-directory, uses fixed IDs/timestamps/positions, cleans all newly created
-database/sidecar files after any failure, and validates the completed databases
-through read-only Rust connections. SQLite file-byte determinism is not
-promised; logical fixture content is deterministic.
+The example checks both target names and every SQLite sidecar (-wal, -shm, and
+-journal) before creating anything, rejects symlink targets/output directories,
+never opens the application data directory, uses fixed IDs/timestamps/positions,
+cleans all newly created database and sidecar files after any failure, and
+validates the completed databases through read-only Rust connections. SQLite
+file-byte determinism is not promised; logical fixture content is deterministic.
 
 Read-only validation output:
 
@@ -127,6 +127,14 @@ command above reproduces them. The available Android SDK sqlite3 binary could
 not load FTS5, so FTS/count/privacy validation used the example's bundled
 rusqlite read-only verifier instead.
 
+Journal safety was exercised independently for both target names. A pre-existing
+fresh-validation.sqlite3-journal caused the real CLI to exit 1 before creating
+either database, and hashes/mtimes for the journal and an unrelated sentinel
+were unchanged (CHANGED=0). Two example regressions also verify legacy and fresh
+journal preflight plus simulated mid-creation failure cleanup: DB, wal, shm, and
+journal files created by the run are removed, while a pre-existing unrelated
+file and its mtime/hash are preserved.
+
 ## Commands
 
 | Command | Result |
@@ -135,7 +143,9 @@ rusqlite read-only verifier instead.
 | cargo test upgrade_preserves_all_legacy_payload_counts_and_membership | exit 0, 1 passed |
 | cargo test failed_projection_write_rolls_back_payload_and_revision | exit 0, 1 passed |
 | privacy boundary regression filter | exit 0, 1 passed |
+| cargo test --example create_validation_fixtures | exit 0; 2 passed |
 | fixture generation | exit 0; counts shown above |
+| fixture preflight with a pre-existing fresh -journal | inner exit 1; wrapper exit 0, CHANGED=0 |
 | fixture generation into the same directory | inner exit 1; wrapper exit 0 after unchanged hash/mtime check |
 | pnpm test:unit | exit 0; 19 files, 138 tests passed |
 | pnpm check | exit 0; 0 errors, 7 pre-existing UI accessibility warnings |

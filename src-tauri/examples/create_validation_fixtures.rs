@@ -236,11 +236,12 @@ fn cleanup_created_targets(targets: &[PathBuf; 2]) {
     }
 }
 
-fn sidecar_paths(database: &Path) -> [PathBuf; 3] {
+fn sidecar_paths(database: &Path) -> [PathBuf; 4] {
     [
         database.to_path_buf(),
         PathBuf::from(format!("{}-wal", database.display())),
         PathBuf::from(format!("{}-shm", database.display())),
+        PathBuf::from(format!("{}-journal", database.display())),
     ]
 }
 
@@ -355,4 +356,84 @@ fn insert_fixed_payloads(connection: &Connection) -> rusqlite::Result<()> {
             ('credential-secondary', 'Secondary credential', '', '');
         "#,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::SystemTime;
+
+    use super::*;
+
+    fn temporary_directory(label: &str) -> PathBuf {
+        let path = env::temp_dir().join(format!(
+            "scratchpad-fixture-example-{label}-{}",
+            rand::random::<u64>()
+        ));
+        fs::create_dir(&path).unwrap();
+        path
+    }
+
+    fn fingerprint(path: &Path) -> (Vec<u8>, SystemTime) {
+        (
+            fs::read(path).unwrap(),
+            fs::metadata(path).unwrap().modified().unwrap(),
+        )
+    }
+
+    #[test]
+    fn preflight_rejects_either_journal_without_modifying_existing_files() {
+        for database_name in [LEGACY_NAME, FRESH_NAME] {
+            let directory = temporary_directory("journal-preflight");
+            let journal = PathBuf::from(format!(
+                "{}-journal",
+                directory.join(database_name).display()
+            ));
+            let unrelated = directory.join("keep-me.txt");
+            fs::write(&journal, b"existing journal").unwrap();
+            fs::write(&unrelated, b"unrelated").unwrap();
+            let before = [fingerprint(&journal), fingerprint(&unrelated)];
+
+            assert!(reject_existing_target(&directory.join(database_name)).is_err());
+
+            assert_eq!([fingerprint(&journal), fingerprint(&unrelated)], before);
+            fs::remove_file(journal).unwrap();
+            fs::remove_file(unrelated).unwrap();
+            fs::remove_dir(directory).unwrap();
+        }
+    }
+
+    #[test]
+    fn failed_creation_cleanup_removes_all_database_files_but_not_unrelated_files() {
+        let directory = temporary_directory("journal-cleanup");
+        let targets = [directory.join(LEGACY_NAME), directory.join(FRESH_NAME)];
+        let unrelated = directory.join("keep-me.txt");
+        fs::write(&unrelated, b"unrelated").unwrap();
+        let unrelated_before = fingerprint(&unrelated);
+        for target in &targets {
+            for path in [
+                target.to_path_buf(),
+                PathBuf::from(format!("{}-wal", target.display())),
+                PathBuf::from(format!("{}-shm", target.display())),
+                PathBuf::from(format!("{}-journal", target.display())),
+            ] {
+                fs::write(path, b"created during failed run").unwrap();
+            }
+        }
+
+        cleanup_created_targets(&targets);
+
+        for target in &targets {
+            for path in [
+                target.to_path_buf(),
+                PathBuf::from(format!("{}-wal", target.display())),
+                PathBuf::from(format!("{}-shm", target.display())),
+                PathBuf::from(format!("{}-journal", target.display())),
+            ] {
+                assert!(!path.exists(), "cleanup left {}", path.display());
+            }
+        }
+        assert_eq!(fingerprint(&unrelated), unrelated_before);
+        fs::remove_file(unrelated).unwrap();
+        fs::remove_dir(directory).unwrap();
+    }
 }
