@@ -362,14 +362,11 @@ fn save_at(
             params![identity.source_id, transition, position],
         )?;
     }
+    let summary = summary_by_id(&tx, id, true)?;
     let revision = bump_revision(&tx)?;
     tx.commit()?;
 
-    Ok(retention_mutation(
-        summary_by_id(conn, id, true)?,
-        revision,
-        id,
-    ))
+    Ok(retention_mutation(summary, revision, id))
 }
 
 fn unsave_at(
@@ -422,14 +419,11 @@ fn unsave_at(
             params![identity.source_id, transition, position],
         )?;
     }
+    let summary = summary_by_id(&tx, id, true)?;
     let revision = bump_revision(&tx)?;
     tx.commit()?;
 
-    Ok(retention_mutation(
-        summary_by_id(conn, id, true)?,
-        revision,
-        id,
-    ))
+    Ok(retention_mutation(summary, revision, id))
 }
 
 fn retention_mutation(
@@ -1000,6 +994,98 @@ mod tests {
             )
             .unwrap(),
             "saved"
+        );
+    }
+
+    #[test]
+    fn save_projection_failure_rolls_back_retention_membership_position_and_revision() {
+        let mut conn = fixture_with_all_kinds();
+        let before: (String, Option<String>, Option<f64>, Option<f64>) = conn
+            .query_row(
+                "SELECT retention_state, cleanup_at, inbox_position, saved_position
+                 FROM content_catalog WHERE unified_id='dock:text-1'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .unwrap();
+        let start = revision(&conn);
+        conn.execute("DELETE FROM content_fts WHERE unified_id='dock:text-1'", [])
+            .unwrap();
+
+        assert!(matches!(
+            save(&mut conn, "dock:text-1"),
+            Err(StorageError::Validation(_))
+        ));
+
+        let after: (String, Option<String>, Option<f64>, Option<f64>) = conn
+            .query_row(
+                "SELECT retention_state, cleanup_at, inbox_position, saved_position
+                 FROM content_catalog WHERE unified_id='dock:text-1'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(after, before);
+        assert_eq!(revision(&conn), start);
+        assert_eq!(
+            scalar_i64(
+                &conn,
+                "SELECT COUNT(*) FROM home_entries WHERE entry_id='text-1'"
+            ),
+            1
+        );
+        assert_eq!(
+            scalar_i64(
+                &conn,
+                "SELECT COUNT(*) FROM note_entries WHERE entry_id='text-1'"
+            ),
+            0
+        );
+    }
+
+    #[test]
+    fn unsave_projection_failure_rolls_back_retention_membership_position_and_revision() {
+        let mut conn = fixture_with_all_kinds();
+        let before: (String, Option<String>, Option<f64>, Option<f64>) = conn
+            .query_row(
+                "SELECT retention_state, cleanup_at, inbox_position, saved_position
+                 FROM content_catalog WHERE unified_id='dock:file-1'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .unwrap();
+        let start = revision(&conn);
+        conn.execute("DELETE FROM content_fts WHERE unified_id='dock:file-1'", [])
+            .unwrap();
+
+        assert!(matches!(
+            unsave(&mut conn, "dock:file-1", 7),
+            Err(StorageError::Validation(_))
+        ));
+
+        let after: (String, Option<String>, Option<f64>, Option<f64>) = conn
+            .query_row(
+                "SELECT retention_state, cleanup_at, inbox_position, saved_position
+                 FROM content_catalog WHERE unified_id='dock:file-1'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(after, before);
+        assert_eq!(revision(&conn), start);
+        assert_eq!(
+            scalar_i64(
+                &conn,
+                "SELECT COUNT(*) FROM home_entries WHERE entry_id='file-1'"
+            ),
+            0
+        );
+        assert_eq!(
+            scalar_i64(
+                &conn,
+                "SELECT COUNT(*) FROM note_entries WHERE entry_id='file-1'"
+            ),
+            1
         );
     }
 
