@@ -239,7 +239,9 @@ pub fn cleanup_expired(
 fn delete_in_transaction(conn: &Connection, id: &str) -> StorageResult<Option<String>> {
     let identity = catalog_entry_by_id(conn, id)?;
     ensure_payload_identity(conn, id, &identity)?;
-    let attachment = if identity.source == ContentSource::Dock {
+    let attachment = if identity.source == ContentSource::Dock
+        && matches!(identity.kind, ContentKind::Image | ContentKind::File)
+    {
         conn.query_row(
             "SELECT file_path FROM entries WHERE id=?1",
             params![identity.source_id],
@@ -520,11 +522,18 @@ fn dock_detail(
     }
 
     match identity.kind {
-        ContentKind::Text => Ok(ContentDetail::Text {
-            title: title.unwrap_or_else(|| summary.title.clone()),
-            body: content.unwrap_or_default(),
-            summary,
-        }),
+        ContentKind::Text => {
+            let title = title
+                .as_deref()
+                .map(crate::content::projection::normalize_text)
+                .filter(|title| !title.is_empty())
+                .unwrap_or_else(|| summary.title.clone());
+            Ok(ContentDetail::Text {
+                title,
+                body: content.unwrap_or_default(),
+                summary,
+            })
+        }
         ContentKind::Image => {
             let asset_path = asset_path.unwrap_or_default();
             Ok(ContentDetail::Image {
@@ -674,7 +683,9 @@ mod tests {
     use crate::content::models::{
         BrowseScope, ContentDetail, ContentKind, RetentionState, UnifiedQueryPlan,
     };
-    use crate::content::projection::tests::{fixture_with_all_kinds, FILE_PATH_LITERAL};
+    use crate::content::projection::tests::{
+        fixture_with_all_kinds, refresh_all_projections, FILE_PATH_LITERAL,
+    };
     use crate::storage::error::StorageError;
 
     fn revision(conn: &Connection) -> i64 {
@@ -866,6 +877,37 @@ mod tests {
             detail(&conn, "dock:file-1"),
             Err(StorageError::Validation(_))
         ));
+    }
+
+    #[test]
+    fn text_detail_normalizes_persisted_title_and_falls_back_to_list_summary() {
+        for (persisted, expected) in [
+            (None, "数据库维护窗口"),
+            (Some(""), "数据库维护窗口"),
+            (Some("  \t\n  "), "数据库维护窗口"),
+            (Some("\u{0007}\u{0000}"), "数据库维护窗口"),
+            (Some("  Stored\u{0007}   title  "), "Stored title"),
+        ] {
+            let conn = fixture_with_all_kinds();
+            conn.execute(
+                "UPDATE entries SET title=?1 WHERE id='text-1'",
+                params![persisted],
+            )
+            .unwrap();
+            refresh_all_projections(&conn);
+
+            let listed = list(&conn, BrowseScope::Temporary, Some(ContentKind::Text))
+                .unwrap()
+                .remove(0);
+            match detail(&conn, "dock:text-1").unwrap() {
+                ContentDetail::Text { summary, title, .. } => {
+                    assert_eq!(listed.title, expected, "persisted={persisted:?}");
+                    assert_eq!(title, listed.title, "persisted={persisted:?}");
+                    assert_eq!(summary.title, listed.title, "persisted={persisted:?}");
+                }
+                other => panic!("unexpected detail: {other:?}"),
+            }
+        }
     }
 
     #[test]
@@ -1337,6 +1379,26 @@ mod tests {
     }
 
     #[test]
+    fn delete_removes_file_attachment_after_database_commit() {
+        let mut conn = fixture_with_all_kinds();
+        let path = temp_asset("file-delete");
+        std::fs::write(&path, b"file asset").unwrap();
+        conn.execute(
+            "UPDATE entries SET file_path=?1 WHERE id='file-1'",
+            params![path.to_string_lossy()],
+        )
+        .unwrap();
+
+        delete(&mut conn, "dock:file-1").unwrap();
+
+        assert_eq!(
+            scalar_i64(&conn, "SELECT COUNT(*) FROM entries WHERE id='file-1'"),
+            0
+        );
+        assert!(!path.exists());
+    }
+
+    #[test]
     fn delete_vault_explicitly_removes_all_children_and_both_search_indexes() {
         let mut conn = fixture_with_all_kinds();
         conn.execute(
@@ -1421,6 +1483,27 @@ mod tests {
         );
         assert!(path.is_file());
         std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn deleting_text_never_removes_legacy_file_path() {
+        let mut conn = fixture_with_all_kinds();
+        let sentinel = temp_asset("text-delete-sentinel");
+        std::fs::write(&sentinel, b"must survive text deletion").unwrap();
+        conn.execute(
+            "UPDATE entries SET file_path=?1 WHERE id='text-1'",
+            params![sentinel.to_string_lossy()],
+        )
+        .unwrap();
+
+        delete(&mut conn, "dock:text-1").unwrap();
+
+        assert_eq!(
+            scalar_i64(&conn, "SELECT COUNT(*) FROM entries WHERE id='text-1'"),
+            0
+        );
+        assert!(sentinel.is_file());
+        std::fs::remove_file(sentinel).unwrap();
     }
 
     #[test]
@@ -1568,5 +1651,36 @@ mod tests {
                 1
             );
         }
+    }
+
+    #[test]
+    fn cleanup_of_expired_text_never_removes_legacy_file_path() {
+        let mut conn = fixture_with_all_kinds();
+        let sentinel = temp_asset("text-cleanup-sentinel");
+        std::fs::write(&sentinel, b"must survive text cleanup").unwrap();
+        conn.execute(
+            "UPDATE entries SET file_path=?1 WHERE id='text-1'",
+            params![sentinel.to_string_lossy()],
+        )
+        .unwrap();
+        conn.execute(
+            "UPDATE content_catalog SET cleanup_at='2020-01-01T00:00:00Z'
+             WHERE unified_id='dock:text-1'",
+            [],
+        )
+        .unwrap();
+        let now = DateTime::parse_from_rfc3339("2020-01-02T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+
+        let mutation = cleanup_expired(&mut conn, now).unwrap();
+
+        assert_eq!(mutation.value, 1);
+        assert_eq!(
+            scalar_i64(&conn, "SELECT COUNT(*) FROM entries WHERE id='text-1'"),
+            0
+        );
+        assert!(sentinel.is_file());
+        std::fs::remove_file(sentinel).unwrap();
     }
 }
