@@ -96,7 +96,7 @@ pub fn ensure_content_schema(conn: &mut Connection, cleanup_days: i64) -> Storag
     Ok(())
 }
 
-fn validate_cleanup_days(cleanup_days: i64) -> StorageResult<Duration> {
+pub(crate) fn validate_cleanup_days(cleanup_days: i64) -> StorageResult<Duration> {
     if cleanup_days < 0 {
         return Err(StorageError::Validation(format!(
             "cleanup days cannot be negative: {cleanup_days}"

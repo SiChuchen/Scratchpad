@@ -765,16 +765,90 @@ fn ipc_dock_minimize_to_tab(
 
 // --- DB initialization ---
 
+fn initialize_schemas(
+    conn: &mut Connection,
+    cleanup_days: i64,
+) -> storage::error::StorageResult<()> {
+    content::migrations::validate_cleanup_days(cleanup_days)?;
+    scratchpad::storage::ensure_dock_schema(conn, cleanup_days)?;
+    vault::storage::ensure_vault_schema(conn)?;
+    content::migrations::ensure_content_schema(conn, cleanup_days)?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod init_db_tests {
+    use rusqlite::{params, Connection};
+
+    use super::initialize_schemas;
+    use crate::scratchpad::storage::ensure_dock_schema;
+    use crate::storage::error::StorageError;
+    use crate::storage::migration::get_schema_version;
+
+    #[test]
+    fn invalid_cleanup_days_stop_before_legacy_cleanup_or_schema_changes() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", "ON").unwrap();
+        ensure_dock_schema(&mut conn, 7).unwrap();
+        conn.execute(
+            "INSERT INTO entries(
+                id, kind, content, source, created_at, updated_at
+             ) VALUES (?1, 'text', 'keep me', 'fixture', ?2, ?2)",
+            params!["home-only", "2026-07-18T08:00:00+00:00"],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO home_entries(entry_id, created_at, sort_order)
+             VALUES (?1, ?2, 0.0)",
+            params!["home-only", "2026-07-18T08:00:00+00:00"],
+        )
+        .unwrap();
+
+        let error = initialize_schemas(&mut conn, -1).unwrap_err();
+
+        assert!(matches!(error, StorageError::Validation(_)));
+        assert_eq!(get_schema_version(&conn).unwrap(), 2);
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM entries WHERE id = 'home-only'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+            1
+        );
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM home_entries WHERE entry_id = 'home-only'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+            1
+        );
+        for table in ["vault_entries", "content_catalog"] {
+            assert_eq!(
+                conn.query_row(
+                    "SELECT EXISTS(
+                         SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1
+                     )",
+                    params![table],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+                0,
+                "{table} should not be created"
+            );
+        }
+    }
+}
+
 fn init_db() -> Connection {
     let mut conn = storage::connection::open_db().expect("Failed to open scratchpad DB");
     let cleanup_days = scratchpad::preferences::load_preferences(&conn)
         .map(|p| p.auto_cleanup_days)
         .unwrap_or(0);
-    scratchpad::storage::ensure_dock_schema(&mut conn, cleanup_days)
-        .expect("Failed to init scratch dock schema");
-    vault::storage::ensure_vault_schema(&mut conn).expect("Failed to init vault schema");
-    content::migrations::ensure_content_schema(&mut conn, cleanup_days)
-        .expect("Failed to init unified content schema");
+    initialize_schemas(&mut conn, cleanup_days).expect("Failed to initialize database schemas");
     conn
 }
 
