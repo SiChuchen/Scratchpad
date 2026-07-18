@@ -16,7 +16,6 @@
 
 use std::time::Duration;
 
-use rusqlite::Connection;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::Semaphore;
@@ -147,6 +146,7 @@ async fn process_one_entry(app: &AppHandle, entry_id: &str) {
         vstore::get_entry_detail(&conn, entry_id).ok()
     };
     let Some(detail) = detail else { return };
+    let snapshot_hash = vstore::compute_entry_content_hash(&detail.entry, &detail.fields);
 
     // 2) 取 config + adapter
     let vault = app.state::<VaultRuntimeState>();
@@ -197,8 +197,7 @@ async fn process_one_entry(app: &AppHandle, entry_id: &str) {
         }
         Err(e) => {
             vault.record_failure(&e);
-            // 失败：把 metadata 置为 error 并发事件
-            write_status_and_emit(app, entry_id, AiMetadataStatus::Error, Vec::new(), None).await;
+            write_error_status_and_emit(app, entry_id, &snapshot_hash).await;
             return;
         }
     };
@@ -208,61 +207,41 @@ async fn process_one_entry(app: &AppHandle, entry_id: &str) {
         Ok(s) => s,
         Err(e) => {
             vault.record_failure(&e);
-            write_status_and_emit(app, entry_id, AiMetadataStatus::Error, Vec::new(), None).await;
+            write_error_status_and_emit(app, entry_id, &snapshot_hash).await;
             return;
         }
     };
 
-    // 6) 计算 content_hash（保持与 create_entry 时一致）
-    let content_hash = vstore::compute_entry_content_hash(&detail.entry, &detail.fields);
-
-    // 6.5) **竞态保护**：LLM 调用可能持续数十秒。期间 `update_entry` 可能
-    // 已经把 entry 改成了新内容（删 ai tags、置 pending、写新 content_hash）。
-    // 若直接用旧 snapshot 的 hash 写回，会把用户编辑触发的 pending 状态用
-    // ready + stale 数据覆盖，且该 entry 不会再次回填（status 已变 ready）。
-    //
-    // 解决方案：写之前在 DB 锁下重新读取 entry 的当前 ai content_hash，
-    // 若与 snapshot 不一致，放弃本次写。entry 会保持 pending 状态，由
-    // 下一轮回填处理。
-    {
-        let app_state = app.state::<crate::AppState>();
-        let Ok(conn) = app_state.db.lock() else {
-            return;
-        };
-        let current_hash = vstore::ai_content_hash_for_entry(&conn, entry_id).unwrap_or_default();
-        // 读 metadata 当前 status，只有仍为 pending（未变 ready/error）才写
-        let current_status = vstore::get_ai_metadata(&conn, entry_id)
-            .ok()
-            .flatten()
-            .map(|m| m.status);
-        if current_hash != content_hash || current_status != Some(AiMetadataStatus::Pending) {
-            // entry 已被修改或已处理；放弃本次写入
-            return;
-        }
-    }
-
-    // 7) 写入 ready metadata + replace ai tags
+    // 6) 在一个事务中重新检查 snapshot 并原子写入 ready metadata + AI tags。
     let metadata = VaultAiMetadata {
         entry_id: entry_id.to_string(),
         summary: suggestion.ai_summary.clone(),
         search_aliases: suggestion.search_aliases.clone(),
-        content_hash,
+        content_hash: snapshot_hash.clone(),
         provider_id: Some(config.provider_id.clone()),
         model: Some(config.model.clone()),
         generated_at: Some(chrono::Utc::now().to_rfc3339()),
         status: AiMetadataStatus::Ready,
     };
-    {
+    let mutation = {
         let app_state = app.state::<crate::AppState>();
         let Ok(mut conn) = app_state.db.lock() else {
             return;
         };
-        let _ = vstore::replace_ai_tags(&mut conn, entry_id, &suggestion.ai_tags);
-        let _ = vstore::set_ai_metadata(&mut conn, &metadata);
-    }
+        match vstore::apply_ai_enrichment_if_pending(
+            &mut conn,
+            entry_id,
+            &snapshot_hash,
+            &suggestion.ai_tags,
+            &metadata,
+        ) {
+            Ok(Some(mutation)) => mutation,
+            Ok(None) | Err(_) => return,
+        }
+    };
 
-    // 8) 发事件
-    write_status_and_emit(
+    crate::emit_content_changed(app, &mutation);
+    emit_status_events(
         app,
         entry_id,
         AiMetadataStatus::Ready,
@@ -272,23 +251,29 @@ async fn process_one_entry(app: &AppHandle, entry_id: &str) {
     .await;
 }
 
-/// 把 metadata 状态写回 DB（用于 error 路径），并 emit 两个事件。
-async fn write_status_and_emit(
+async fn write_error_status_and_emit(app: &AppHandle, entry_id: &str, expected_hash: &str) {
+    let mutation = {
+        let app_state = app.state::<crate::AppState>();
+        let Ok(mut conn) = app_state.db.lock() else {
+            return;
+        };
+        match vstore::mark_ai_metadata_error_if_pending(&mut conn, entry_id, expected_hash) {
+            Ok(Some(mutation)) => mutation,
+            Ok(None) | Err(_) => return,
+        }
+    };
+    crate::emit_content_changed(app, &mutation);
+    emit_status_events(app, entry_id, AiMetadataStatus::Error, Vec::new(), None).await;
+}
+
+/// 发出旧 Vault 专用事件。调用前相应数据库事务必须已经成功提交。
+async fn emit_status_events(
     app: &AppHandle,
     entry_id: &str,
     status: AiMetadataStatus,
     tags: Vec<String>,
     metadata: Option<VaultAiMetadata>,
 ) {
-    if status == AiMetadataStatus::Error {
-        // 把 metadata 标 error
-        let app_state = app.state::<crate::AppState>();
-        let lock_result = app_state.db.lock();
-        if let Ok(mut conn) = lock_result {
-            let _ = mark_metadata_error(&mut conn, entry_id);
-        }
-    }
-
     // emit metadata-updated
     let payload = AiMetadataUpdatedEvent {
         entry_id: entry_id.to_string(),
@@ -310,17 +295,6 @@ async fn write_status_and_emit(
     let _ = app.emit("vault-ai-backfill-progress", progress);
 }
 
-/// 把 entry 的 metadata status 置为 error（保留 content_hash 不变）。
-fn mark_metadata_error(conn: &mut Connection, entry_id: &str) -> Result<(), String> {
-    // 简单 update：若不存在 metadata 行，忽略（pending 时还没创建则无所谓）
-    conn.execute(
-        "UPDATE vault_ai_metadata SET status='error' WHERE entry_id=?1",
-        rusqlite::params![entry_id],
-    )
-    .map_err(|e| e.to_string())?;
-    Ok(())
-}
-
 // ---- Tests -----------------------------------------------------------------
 
 #[cfg(test)]
@@ -334,6 +308,7 @@ mod tests {
         let mut conn = Connection::open_in_memory().unwrap();
         ensure_dock_schema(&mut conn).unwrap();
         vstore::ensure_vault_schema(&mut conn).unwrap();
+        crate::content::migrations::ensure_content_schema(&mut conn, 7).unwrap();
         conn
     }
 

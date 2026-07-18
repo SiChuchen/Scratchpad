@@ -1,9 +1,15 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use chrono::Utc;
-use rusqlite::{params, Connection, Row};
+use rusqlite::{params, Connection, OptionalExtension, Row};
 use sha2::{Digest, Sha256};
 
+use crate::content::catalog::{bump_revision, top_position};
+use crate::content::models::{
+    ContentChange, ContentMutation, ContentOperation, ContentSource, RetentionState,
+    UnifiedContentId,
+};
+use crate::content::projection::{build_search_document, replace_projection};
 use crate::storage::error::{StorageError, StorageResult};
 use crate::vault::models::{
     is_default_sensitive_key, AiMetadataStatus, BackfillStatus, CaptureDraft, EntryKind, TagSource,
@@ -75,39 +81,146 @@ fn now_rfc3339() -> String {
     Utc::now().to_rfc3339()
 }
 
+fn content_schema_exists(conn: &Connection) -> StorageResult<bool> {
+    Ok(conn.query_row(
+        "SELECT EXISTS(
+             SELECT 1 FROM sqlite_master
+             WHERE type='table' AND name='content_state'
+         )",
+        [],
+        |row| row.get(0),
+    )?)
+}
+
+fn vault_unified_id(entry_id: &str) -> StorageResult<String> {
+    Ok(UnifiedContentId::new(ContentSource::Vault, entry_id)
+        .map_err(StorageError::Validation)?
+        .as_str()
+        .to_string())
+}
+
+fn sync_vault_content(conn: &Connection, source_id: &str) -> StorageResult<String> {
+    let (kind, created_at, updated_at) = conn.query_row(
+        "SELECT kind, created_at, updated_at FROM vault_entries WHERE id=?1",
+        params![source_id],
+        |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        },
+    )?;
+    let unified_id = vault_unified_id(source_id)?;
+    let exists: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM content_catalog WHERE unified_id=?1)",
+        params![unified_id],
+        |row| row.get(0),
+    )?;
+    let saved_position = if exists {
+        None
+    } else {
+        Some(top_position(conn, RetentionState::Saved)?)
+    };
+    conn.execute(
+        "INSERT INTO content_catalog(
+             unified_id, source, source_id, kind, retention_state,
+             retention_changed_at, cleanup_at, inbox_position, saved_position,
+             created_at, updated_at
+         ) VALUES (?1, 'vault', ?2, ?3, 'saved', ?4, NULL, NULL, ?5, ?4, ?6)
+         ON CONFLICT(unified_id) DO UPDATE SET
+             kind=excluded.kind,
+             created_at=excluded.created_at,
+             updated_at=excluded.updated_at",
+        params![
+            unified_id,
+            source_id,
+            kind,
+            created_at,
+            saved_position,
+            updated_at,
+        ],
+    )?;
+    let document = build_search_document(conn, &unified_id)?;
+    replace_projection(conn, &document)?;
+    Ok(unified_id)
+}
+
+fn content_mutation<T>(
+    value: T,
+    revision: i64,
+    unified_id: String,
+    operation: ContentOperation,
+) -> ContentMutation<T> {
+    ContentMutation {
+        value,
+        revision,
+        changes: vec![ContentChange {
+            id: unified_id,
+            operation,
+        }],
+    }
+}
+
 pub fn create_entry(
     conn: &mut Connection,
     input: &VaultEntryInput,
 ) -> StorageResult<VaultEntryDetail> {
+    if content_schema_exists(conn)? {
+        return Ok(create_entry_with_revision(conn, input)?.value);
+    }
+
     let tx = conn.transaction()?;
+    let id = insert_entry(&tx, input)?;
+    tx.commit()?;
+    get_entry_detail(conn, &id)
+}
+
+pub fn create_entry_with_revision(
+    conn: &mut Connection,
+    input: &VaultEntryInput,
+) -> StorageResult<ContentMutation<VaultEntryDetail>> {
+    let tx = conn.transaction()?;
+    let id = insert_entry(&tx, input)?;
+    let unified_id = sync_vault_content(&tx, &id)?;
+    let revision = bump_revision(&tx)?;
+    let detail = get_entry_detail(&tx, &id)?;
+    tx.commit()?;
+    Ok(content_mutation(
+        detail,
+        revision,
+        unified_id,
+        ContentOperation::Created,
+    ))
+}
+
+fn insert_entry(conn: &Connection, input: &VaultEntryInput) -> StorageResult<String> {
     let id = next_entry_id();
     let now = now_rfc3339();
-    tx.execute(
+    conn.execute(
         "INSERT INTO vault_entries(id, kind, title, notes, created_at, updated_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
         params![id, input.kind.as_str(), input.title, input.notes, now, now],
     )?;
-
-    for (i, f) in input.fields.iter().enumerate() {
-        let sensitive = f.is_sensitive || is_default_sensitive_key(&f.key);
-        let fid = next_field_id();
-        tx.execute(
+    for (index, field) in input.fields.iter().enumerate() {
+        let sensitive = field.is_sensitive || is_default_sensitive_key(&field.key);
+        conn.execute(
             "INSERT INTO vault_fields(id, entry_id, key, value, is_sensitive, sort_order)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![fid, id, f.key, f.value, sensitive as i32, i as i64],
+            params![
+                next_field_id(),
+                id,
+                field.key,
+                field.value,
+                sensitive as i32,
+                index as i64,
+            ],
         )?;
     }
-
-    // 写入手动标签（manual source）
-    write_manual_tags(&tx, &id, &input.manual_tags)?;
-
-    // 写入 pending AI metadata + 触发 FTS 更新（同事务）
-    let new_hash = ai_content_hash(input);
-    upsert_ai_metadata_pending(&tx, &id, &new_hash)?;
-    fts5_upsert(&tx, &id)?;
-
-    tx.commit()?;
-    get_entry_detail(conn, &id)
+    write_manual_tags(conn, &id, &input.manual_tags)?;
+    upsert_ai_metadata_pending(conn, &id, &ai_content_hash(input))?;
+    fts5_upsert(conn, &id)?;
+    Ok(id)
 }
 
 pub fn list_fields(conn: &Connection, entry_id: &str) -> StorageResult<Vec<VaultField>> {
@@ -170,65 +283,91 @@ pub fn update_entry(
     id: &str,
     input: &VaultEntryInput,
 ) -> StorageResult<VaultEntryDetail> {
-    let tx = conn.transaction()?;
-    let now = now_rfc3339();
+    if content_schema_exists(conn)? {
+        return Ok(update_entry_with_revision(conn, id, input)?.value);
+    }
 
-    // 读取旧 hash（如有）以判断内容是否变化
-    let old_hash: Option<String> = tx
+    let tx = conn.transaction()?;
+    update_entry_rows(&tx, id, input)?;
+    tx.commit()?;
+    get_entry_detail(conn, id)
+}
+
+pub fn update_entry_with_revision(
+    conn: &mut Connection,
+    id: &str,
+    input: &VaultEntryInput,
+) -> StorageResult<ContentMutation<VaultEntryDetail>> {
+    let tx = conn.transaction()?;
+    update_entry_rows(&tx, id, input)?;
+    let unified_id = sync_vault_content(&tx, id)?;
+    let revision = bump_revision(&tx)?;
+    let detail = get_entry_detail(&tx, id)?;
+    tx.commit()?;
+    Ok(content_mutation(
+        detail,
+        revision,
+        unified_id,
+        ContentOperation::Updated,
+    ))
+}
+
+fn update_entry_rows(conn: &Connection, id: &str, input: &VaultEntryInput) -> StorageResult<()> {
+    let old_hash: Option<String> = conn
         .query_row(
             "SELECT content_hash FROM vault_ai_metadata WHERE entry_id=?1",
             params![id],
-            |r| r.get::<_, String>(0),
+            |row| row.get(0),
         )
-        .ok();
-
-    let affected = tx.execute(
+        .optional()?;
+    let affected = conn.execute(
         "UPDATE vault_entries SET kind=?1, title=?2, notes=?3, updated_at=?4 WHERE id=?5",
-        params![input.kind.as_str(), input.title, input.notes, now, id],
+        params![
+            input.kind.as_str(),
+            input.title,
+            input.notes,
+            now_rfc3339(),
+            id
+        ],
     )?;
     if affected == 0 {
         return Err(StorageError::Other(format!("entry not found: {id}")));
     }
-    tx.execute("DELETE FROM vault_fields WHERE entry_id=?1", params![id])?;
-    for (i, f) in input.fields.iter().enumerate() {
-        let sensitive = f.is_sensitive || is_default_sensitive_key(&f.key);
-        tx.execute(
+    conn.execute("DELETE FROM vault_fields WHERE entry_id=?1", params![id])?;
+    for (index, field) in input.fields.iter().enumerate() {
+        let sensitive = field.is_sensitive || is_default_sensitive_key(&field.key);
+        conn.execute(
             "INSERT INTO vault_fields(id, entry_id, key, value, is_sensitive, sort_order)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![
                 next_field_id(),
                 id,
-                f.key,
-                f.value,
+                field.key,
+                field.value,
                 sensitive as i32,
-                i as i64
+                index as i64,
             ],
         )?;
     }
-
-    // 用 manual_tags 覆盖手动标签（不影响 AI 标签）
-    write_manual_tags(&tx, id, &input.manual_tags)?;
-
-    // 比较 content hash：仅当内容真的变化时清除 AI tags 并把 metadata 重置为 pending。
+    write_manual_tags(conn, id, &input.manual_tags)?;
     let new_hash = ai_content_hash(input);
-    let content_changed = old_hash.as_deref() != Some(new_hash.as_str());
-    if content_changed {
-        // 清掉旧的 AI tags（manual 不动），并把 metadata 重置为 pending
-        tx.execute(
+    if old_hash.as_deref() != Some(new_hash.as_str()) {
+        conn.execute(
             "DELETE FROM vault_tags WHERE entry_id=?1 AND source='ai'",
             params![id],
         )?;
-        upsert_ai_metadata_pending(&tx, id, &new_hash)?;
+        upsert_ai_metadata_pending(conn, id, &new_hash)?;
     }
-
-    // FTS 始终刷新（标题/notes/字段值/标签都可能改变）
-    fts5_upsert(&tx, id)?;
-
-    tx.commit()?;
-    get_entry_detail(conn, id)
+    fts5_upsert(conn, id)?;
+    Ok(())
 }
 
 pub fn delete_entry(conn: &mut Connection, id: &str) -> StorageResult<()> {
+    if content_schema_exists(conn)? {
+        delete_entry_with_revision(conn, id)?;
+        return Ok(());
+    }
+
     let tx = conn.transaction()?;
     fts5_delete(&tx, id)?;
     let n = tx.execute("DELETE FROM vault_entries WHERE id=?1", params![id])?;
@@ -279,6 +418,11 @@ fn build_preview(
     fields: &[VaultField],
 ) -> Option<String> {
     const MAX_LEN: usize = 120;
+    let sensitive_values = fields
+        .iter()
+        .filter(|field| field.is_sensitive || is_default_sensitive_key(&field.key))
+        .map(|field| field.value.clone())
+        .collect::<Vec<_>>();
 
     let mut trim_to = |s: &str| -> Option<String> {
         let t = s.trim();
@@ -292,8 +436,11 @@ fn build_preview(
     let candidate: Option<String> = match entry.kind {
         EntryKind::Credential => {
             // 取前两个非敏感字段 value
-            let non_sensitive: Vec<&VaultField> =
-                fields.iter().filter(|f| !f.is_sensitive).take(2).collect();
+            let non_sensitive: Vec<&VaultField> = fields
+                .iter()
+                .filter(|field| !field.is_sensitive && !is_default_sensitive_key(&field.key))
+                .take(2)
+                .collect();
             if non_sensitive.is_empty() {
                 entry.notes.as_deref().and_then(&mut trim_to)
             } else {
@@ -314,7 +461,11 @@ fn build_preview(
             // 优先 URL，然后 notes
             let url = fields
                 .iter()
-                .find(|f| f.key.eq_ignore_ascii_case("url") && !f.is_sensitive)
+                .find(|field| {
+                    field.key.eq_ignore_ascii_case("url")
+                        && !field.is_sensitive
+                        && !is_default_sensitive_key(&field.key)
+                })
                 .map(|f| f.value.trim())
                 .filter(|s| !s.is_empty());
             url.and_then(&mut trim_to)
@@ -323,6 +474,10 @@ fn build_preview(
         EntryKind::Note => entry.notes.as_deref().and_then(&mut trim_to),
     };
     candidate
+        .map(|preview| {
+            crate::content::projection::redact_sensitive_values(&preview, &sensitive_values)
+        })
+        .filter(|preview| !preview.is_empty())
 }
 
 fn unicode_truncate(s: &str, max_chars: usize) -> &str {
@@ -356,11 +511,74 @@ pub fn set_manual_tags(
     entry_id: &str,
     tags: &[String],
 ) -> StorageResult<()> {
+    if content_schema_exists(conn)? {
+        set_manual_tags_with_revision(conn, entry_id, tags)?;
+        return Ok(());
+    }
+
     let tx = conn.transaction()?;
     write_manual_tags(&tx, entry_id, tags)?;
     fts5_upsert(&tx, entry_id)?;
     tx.commit()?;
     Ok(())
+}
+
+pub fn delete_entry_with_revision(
+    conn: &mut Connection,
+    id: &str,
+) -> StorageResult<ContentMutation<()>> {
+    let tx = conn.transaction()?;
+    let unified_id = vault_unified_id(id)?;
+    fts5_delete(&tx, id)?;
+    tx.execute(
+        "DELETE FROM content_pending_deletes WHERE unified_id=?1",
+        params![unified_id],
+    )?;
+    tx.execute(
+        "DELETE FROM content_fts WHERE unified_id=?1",
+        params![unified_id],
+    )?;
+    let catalog_rows = tx.execute(
+        "DELETE FROM content_catalog WHERE unified_id=?1",
+        params![unified_id],
+    )?;
+    if catalog_rows != 1 {
+        return Err(StorageError::Validation(format!(
+            "content catalog row not found: {unified_id}"
+        )));
+    }
+    let payload_rows = tx.execute("DELETE FROM vault_entries WHERE id=?1", params![id])?;
+    if payload_rows != 1 {
+        return Err(StorageError::Other(format!("entry not found: {id}")));
+    }
+    let revision = bump_revision(&tx)?;
+    tx.commit()?;
+    Ok(content_mutation(
+        (),
+        revision,
+        unified_id,
+        ContentOperation::Deleted,
+    ))
+}
+
+pub fn set_manual_tags_with_revision(
+    conn: &mut Connection,
+    entry_id: &str,
+    tags: &[String],
+) -> StorageResult<ContentMutation<VaultEntryDetail>> {
+    let tx = conn.transaction()?;
+    write_manual_tags(&tx, entry_id, tags)?;
+    fts5_upsert(&tx, entry_id)?;
+    let unified_id = sync_vault_content(&tx, entry_id)?;
+    let revision = bump_revision(&tx)?;
+    let detail = get_entry_detail(&tx, entry_id)?;
+    tx.commit()?;
+    Ok(content_mutation(
+        detail,
+        revision,
+        unified_id,
+        ContentOperation::Updated,
+    ))
 }
 
 /// 事务内写入 manual tags：先清除该 entry 的所有 manual 行（不动 ai 行），
@@ -389,23 +607,51 @@ pub fn replace_ai_tags(
     entry_id: &str,
     tags: &[String],
 ) -> StorageResult<()> {
+    if content_schema_exists(conn)? {
+        replace_ai_tags_with_revision(conn, entry_id, tags)?;
+        return Ok(());
+    }
+
     let tx = conn.transaction()?;
-    tx.execute(
+    write_ai_tags(&tx, entry_id, tags)?;
+    fts5_upsert(&tx, entry_id)?;
+    tx.commit()?;
+    Ok(())
+}
+
+pub fn replace_ai_tags_with_revision(
+    conn: &mut Connection,
+    entry_id: &str,
+    tags: &[String],
+) -> StorageResult<ContentMutation<()>> {
+    let tx = conn.transaction()?;
+    write_ai_tags(&tx, entry_id, tags)?;
+    fts5_upsert(&tx, entry_id)?;
+    let unified_id = sync_vault_content(&tx, entry_id)?;
+    let revision = bump_revision(&tx)?;
+    tx.commit()?;
+    Ok(content_mutation(
+        (),
+        revision,
+        unified_id,
+        ContentOperation::Updated,
+    ))
+}
+
+fn write_ai_tags(conn: &Connection, entry_id: &str, tags: &[String]) -> StorageResult<()> {
+    conn.execute(
         "DELETE FROM vault_tags WHERE entry_id=?1 AND source='ai'",
         params![entry_id],
     )?;
-    for t in tags {
-        if let Some(norm) = crate::vault::migrations::normalize_tag(t) {
-            let display = t.trim().to_string();
-            tx.execute(
+    for tag in tags {
+        if let Some(normalized) = crate::vault::migrations::normalize_tag(tag) {
+            conn.execute(
                 "INSERT OR IGNORE INTO vault_tags(entry_id, tag, normalized_tag, source)
                  VALUES (?1, ?2, ?3, 'ai')",
-                params![entry_id, display, norm],
+                params![entry_id, tag.trim(), normalized],
             )?;
         }
     }
-    fts5_upsert(&tx, entry_id)?;
-    tx.commit()?;
     Ok(())
 }
 
@@ -415,6 +661,11 @@ pub fn remove_ai_tag(
     entry_id: &str,
     normalized_tag: &str,
 ) -> StorageResult<()> {
+    if content_schema_exists(conn)? {
+        remove_ai_tag_with_revision(conn, entry_id, normalized_tag)?;
+        return Ok(());
+    }
+
     let tx = conn.transaction()?;
     tx.execute(
         "DELETE FROM vault_tags
@@ -426,12 +677,67 @@ pub fn remove_ai_tag(
     Ok(())
 }
 
+pub fn remove_ai_tag_with_revision(
+    conn: &mut Connection,
+    entry_id: &str,
+    normalized_tag: &str,
+) -> StorageResult<ContentMutation<VaultEntryDetail>> {
+    let tx = conn.transaction()?;
+    tx.execute(
+        "DELETE FROM vault_tags
+         WHERE entry_id=?1 AND source='ai' AND normalized_tag=?2",
+        params![entry_id, normalized_tag],
+    )?;
+    fts5_upsert(&tx, entry_id)?;
+    let unified_id = sync_vault_content(&tx, entry_id)?;
+    let revision = bump_revision(&tx)?;
+    let detail = get_entry_detail(&tx, entry_id)?;
+    tx.commit()?;
+    Ok(content_mutation(
+        detail,
+        revision,
+        unified_id,
+        ContentOperation::Updated,
+    ))
+}
+
 /// 写入完整的 ready AI metadata（status='ready'）。同事务刷新 FTS 以反映 search_aliases。
 pub fn set_ai_metadata(conn: &mut Connection, metadata: &VaultAiMetadata) -> StorageResult<()> {
+    if content_schema_exists(conn)? {
+        set_ai_metadata_with_revision(conn, metadata)?;
+        return Ok(());
+    }
+
     let tx = conn.transaction()?;
+    write_ai_metadata(&tx, metadata)?;
+    // 状态从 pending→ready 或 ready→pending 时刷新 FTS
+    fts5_upsert(&tx, &metadata.entry_id)?;
+    tx.commit()?;
+    Ok(())
+}
+
+pub fn set_ai_metadata_with_revision(
+    conn: &mut Connection,
+    metadata: &VaultAiMetadata,
+) -> StorageResult<ContentMutation<()>> {
+    let tx = conn.transaction()?;
+    write_ai_metadata(&tx, metadata)?;
+    fts5_upsert(&tx, &metadata.entry_id)?;
+    let unified_id = sync_vault_content(&tx, &metadata.entry_id)?;
+    let revision = bump_revision(&tx)?;
+    tx.commit()?;
+    Ok(content_mutation(
+        (),
+        revision,
+        unified_id,
+        ContentOperation::Updated,
+    ))
+}
+
+fn write_ai_metadata(conn: &Connection, metadata: &VaultAiMetadata) -> StorageResult<()> {
     let aliases_json = serde_json::to_string(&metadata.search_aliases)
         .map_err(|e| StorageError::Other(e.to_string()))?;
-    tx.execute(
+    conn.execute(
         "INSERT INTO vault_ai_metadata
             (entry_id, summary, search_aliases_json, content_hash,
              provider_id, model, generated_at, status)
@@ -455,9 +761,6 @@ pub fn set_ai_metadata(conn: &mut Connection, metadata: &VaultAiMetadata) -> Sto
             metadata.status.as_str(),
         ],
     )?;
-    // 状态从 pending→ready 或 ready→pending 时刷新 FTS
-    fts5_upsert(&tx, &metadata.entry_id)?;
-    tx.commit()?;
     Ok(())
 }
 
@@ -468,11 +771,143 @@ pub fn mark_ai_metadata_pending(
     entry_id: &str,
     content_hash: &str,
 ) -> StorageResult<()> {
+    if content_schema_exists(conn)? {
+        mark_ai_metadata_pending_with_revision(conn, entry_id, content_hash)?;
+        return Ok(());
+    }
+
     let tx = conn.transaction()?;
     upsert_ai_metadata_pending(&tx, entry_id, content_hash)?;
     fts5_upsert(&tx, entry_id)?;
     tx.commit()?;
     Ok(())
+}
+
+pub fn mark_ai_metadata_pending_with_revision(
+    conn: &mut Connection,
+    entry_id: &str,
+    content_hash: &str,
+) -> StorageResult<ContentMutation<()>> {
+    let tx = conn.transaction()?;
+    upsert_ai_metadata_pending(&tx, entry_id, content_hash)?;
+    fts5_upsert(&tx, entry_id)?;
+    let unified_id = sync_vault_content(&tx, entry_id)?;
+    let revision = bump_revision(&tx)?;
+    tx.commit()?;
+    Ok(content_mutation(
+        (),
+        revision,
+        unified_id,
+        ContentOperation::Updated,
+    ))
+}
+
+pub fn refresh_ai_metadata_with_revision(
+    conn: &mut Connection,
+    entry_id: &str,
+) -> StorageResult<ContentMutation<()>> {
+    let tx = conn.transaction()?;
+    let entry = get_entry_by_id(&tx, entry_id)?
+        .ok_or_else(|| StorageError::Other(format!("entry not found: {entry_id}")))?;
+    let fields = list_fields(&tx, entry_id)?;
+    let content_hash = compute_entry_content_hash(&entry, &fields);
+    upsert_ai_metadata_pending(&tx, entry_id, &content_hash)?;
+    fts5_upsert(&tx, entry_id)?;
+    let unified_id = sync_vault_content(&tx, entry_id)?;
+    let revision = bump_revision(&tx)?;
+    tx.commit()?;
+    Ok(content_mutation(
+        (),
+        revision,
+        unified_id,
+        ContentOperation::Updated,
+    ))
+}
+
+pub fn apply_ai_enrichment_if_pending(
+    conn: &mut Connection,
+    entry_id: &str,
+    expected_hash: &str,
+    ai_tags: &[String],
+    metadata: &VaultAiMetadata,
+) -> StorageResult<Option<ContentMutation<()>>> {
+    if metadata.entry_id != entry_id
+        || metadata.content_hash != expected_hash
+        || metadata.status != AiMetadataStatus::Ready
+    {
+        return Err(StorageError::Validation(
+            "AI enrichment metadata does not match the pending snapshot".to_string(),
+        ));
+    }
+    let tx = conn.transaction()?;
+    if !pending_snapshot_matches(&tx, entry_id, expected_hash)? {
+        return Ok(None);
+    }
+    write_ai_tags(&tx, entry_id, ai_tags)?;
+    write_ai_metadata(&tx, metadata)?;
+    fts5_upsert(&tx, entry_id)?;
+    let unified_id = sync_vault_content(&tx, entry_id)?;
+    let revision = bump_revision(&tx)?;
+    tx.commit()?;
+    Ok(Some(content_mutation(
+        (),
+        revision,
+        unified_id,
+        ContentOperation::Updated,
+    )))
+}
+
+pub fn mark_ai_metadata_error_if_pending(
+    conn: &mut Connection,
+    entry_id: &str,
+    expected_hash: &str,
+) -> StorageResult<Option<ContentMutation<()>>> {
+    let tx = conn.transaction()?;
+    if !pending_snapshot_matches(&tx, entry_id, expected_hash)? {
+        return Ok(None);
+    }
+    let affected = tx.execute(
+        "UPDATE vault_ai_metadata SET status='error'
+         WHERE entry_id=?1 AND status='pending' AND content_hash=?2",
+        params![entry_id, expected_hash],
+    )?;
+    if affected != 1 {
+        return Ok(None);
+    }
+    fts5_upsert(&tx, entry_id)?;
+    let unified_id = sync_vault_content(&tx, entry_id)?;
+    let revision = bump_revision(&tx)?;
+    tx.commit()?;
+    Ok(Some(content_mutation(
+        (),
+        revision,
+        unified_id,
+        ContentOperation::Updated,
+    )))
+}
+
+fn pending_snapshot_matches(
+    conn: &Connection,
+    entry_id: &str,
+    expected_hash: &str,
+) -> StorageResult<bool> {
+    let metadata_matches: bool = conn.query_row(
+        "SELECT EXISTS(
+             SELECT 1 FROM vault_ai_metadata
+             WHERE entry_id=?1 AND status='pending' AND content_hash=?2
+         )",
+        params![entry_id, expected_hash],
+        |row| row.get(0),
+    )?;
+    if !metadata_matches {
+        return Ok(false);
+    }
+    let entry = match get_entry_by_id(conn, entry_id)? {
+        Some(entry) => entry,
+        None => return Ok(false),
+    };
+    let fields = list_fields(conn, entry_id)?;
+    Ok(compute_entry_content_hash(&entry, &fields) == expected_hash)
 }
 
 /// 事务内的辅助：upsert 一条 pending metadata 行（summary=NULL，aliases=[]）。
@@ -619,11 +1054,22 @@ fn build_searchable(conn: &Connection, entry_id: &str) -> StorageResult<String> 
     // 拼接所有非敏感字段的 value + 所有 tag
     let mut parts: Vec<String> = Vec::new();
 
-    let mut stmt =
-        conn.prepare("SELECT value FROM vault_fields WHERE entry_id=?1 AND is_sensitive=0")?;
-    let values = stmt.query_map(params![entry_id], |r| r.get::<_, String>(0))?;
-    for v in values {
-        parts.push(v?);
+    let mut stmt = conn.prepare(
+        "SELECT key, value, is_sensitive FROM vault_fields
+         WHERE entry_id=?1 ORDER BY sort_order ASC, id ASC",
+    )?;
+    let values = stmt.query_map(params![entry_id], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, i64>(2)? != 0,
+        ))
+    })?;
+    for value in values {
+        let (key, value, sensitive) = value?;
+        if !sensitive && !is_default_sensitive_key(&key) {
+            parts.push(value);
+        }
     }
 
     let mut stmt = conn.prepare("SELECT tag FROM vault_tags WHERE entry_id=?1")?;
@@ -638,17 +1084,44 @@ fn fts5_upsert(conn: &Connection, entry_id: &str) -> StorageResult<()> {
     let entry = get_entry_by_id(conn, entry_id)?
         .ok_or_else(|| StorageError::Other(format!("entry {entry_id} missing for fts")))?;
     let searchable = build_searchable(conn, entry_id)?;
+    let sensitive_values = sensitive_values(conn, entry_id)?;
+    let title =
+        crate::content::projection::redact_sensitive_values(&entry.title, &sensitive_values);
+    let notes = crate::content::projection::redact_sensitive_values(
+        entry.notes.as_deref().unwrap_or_default(),
+        &sensitive_values,
+    );
+    let searchable =
+        crate::content::projection::redact_sensitive_values(&searchable, &sensitive_values);
     conn.execute("DELETE FROM vault_fts WHERE entry_id=?1", params![entry_id])?;
     conn.execute(
         "INSERT INTO vault_fts(entry_id, title, notes, searchable) VALUES (?1, ?2, ?3, ?4)",
-        params![
-            entry_id,
-            entry.title,
-            entry.notes.unwrap_or_default(),
-            searchable
-        ],
+        params![entry_id, title, notes, searchable],
     )?;
     Ok(())
+}
+
+fn sensitive_values(conn: &Connection, entry_id: &str) -> StorageResult<Vec<String>> {
+    let mut stmt = conn.prepare(
+        "SELECT key, value, is_sensitive FROM vault_fields
+         WHERE entry_id=?1
+         ORDER BY sort_order ASC, id ASC",
+    )?;
+    let values = stmt
+        .query_map(params![entry_id], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, i64>(2)? != 0,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(values
+        .into_iter()
+        .filter_map(|(key, value, sensitive)| {
+            (sensitive || is_default_sensitive_key(&key)).then_some(value)
+        })
+        .collect())
 }
 
 fn fts5_delete(conn: &Connection, entry_id: &str) -> StorageResult<()> {
@@ -755,23 +1228,69 @@ pub fn create_from_capture(
     draft: &CaptureDraft,
     request_id: &str,
 ) -> StorageResult<VaultEntryDetail> {
-    // 幂等检查：request_id 已存在则返回原 entry
-    let existing_entry_id: Option<String> = conn
+    if content_schema_exists(conn)? {
+        return Ok(create_from_capture_with_revision(conn, draft, request_id)?.value);
+    }
+    let tx = conn.transaction()?;
+    if let Some(id) = capture_entry_id(&tx, request_id)? {
+        tx.commit()?;
+        return get_entry_detail(conn, &id);
+    }
+    let id = insert_capture_entry(&tx, draft, request_id)?;
+    fts5_upsert(&tx, &id)?;
+    tx.commit()?;
+    get_entry_detail(conn, &id)
+}
+
+pub fn create_from_capture_with_revision(
+    conn: &mut Connection,
+    draft: &CaptureDraft,
+    request_id: &str,
+) -> StorageResult<ContentMutation<VaultEntryDetail>> {
+    let tx = conn.transaction()?;
+    if let Some(id) = capture_entry_id(&tx, request_id)? {
+        let revision = crate::content::catalog::current_revision(&tx)?;
+        let detail = get_entry_detail(&tx, &id)?;
+        tx.commit()?;
+        return Ok(ContentMutation {
+            value: detail,
+            revision,
+            changes: Vec::new(),
+        });
+    }
+    let id = insert_capture_entry(&tx, draft, request_id)?;
+    fts5_upsert(&tx, &id)?;
+    let unified_id = sync_vault_content(&tx, &id)?;
+    let revision = bump_revision(&tx)?;
+    let detail = get_entry_detail(&tx, &id)?;
+    tx.commit()?;
+    Ok(content_mutation(
+        detail,
+        revision,
+        unified_id,
+        ContentOperation::Created,
+    ))
+}
+
+fn capture_entry_id(conn: &Connection, request_id: &str) -> StorageResult<Option<String>> {
+    Ok(conn
         .query_row(
             "SELECT entry_id FROM vault_capture_requests WHERE request_id=?1",
             params![request_id],
-            |r| r.get::<_, String>(0),
+            |row| row.get(0),
         )
-        .ok();
-    if let Some(id) = existing_entry_id {
-        return get_entry_detail(conn, &id);
-    }
+        .optional()?)
+}
 
-    let tx = conn.transaction()?;
+fn insert_capture_entry(
+    conn: &Connection,
+    draft: &CaptureDraft,
+    request_id: &str,
+) -> StorageResult<String> {
     let id = next_entry_id();
     let now = now_rfc3339();
 
-    tx.execute(
+    conn.execute(
         "INSERT INTO vault_entries(id, kind, title, notes, created_at, updated_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
         params![id, draft.kind.as_str(), draft.title, draft.notes, now, now],
@@ -780,7 +1299,7 @@ pub fn create_from_capture(
     for (i, f) in draft.fields.iter().enumerate() {
         let sensitive = f.is_sensitive || is_default_sensitive_key(&f.key);
         let fid = next_field_id();
-        tx.execute(
+        conn.execute(
             "INSERT INTO vault_fields(id, entry_id, key, value, is_sensitive, sort_order)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![fid, id, f.key, f.value, sensitive as i32, i as i64],
@@ -788,13 +1307,13 @@ pub fn create_from_capture(
     }
 
     // 写入手动标签
-    write_manual_tags(&tx, &id, &draft.manual_tags)?;
+    write_manual_tags(conn, &id, &draft.manual_tags)?;
 
     // 写入 AI 标签（source='ai'）
     for t in &draft.ai_tags {
         if let Some(norm) = crate::vault::migrations::normalize_tag(t) {
             let display = t.trim().to_string();
-            tx.execute(
+            conn.execute(
                 "INSERT OR IGNORE INTO vault_tags(entry_id, tag, normalized_tag, source)
                  VALUES (?1, ?2, ?3, 'ai')",
                 params![id, display, norm],
@@ -827,7 +1346,7 @@ pub fn create_from_capture(
     } else {
         "pending"
     };
-    tx.execute(
+    conn.execute(
         "INSERT INTO vault_ai_metadata
             (entry_id, summary, search_aliases_json, content_hash,
              provider_id, model, generated_at, status)
@@ -845,15 +1364,12 @@ pub fn create_from_capture(
     )?;
 
     // 记录 request_id 用于幂等
-    tx.execute(
+    conn.execute(
         "INSERT INTO vault_capture_requests(request_id, entry_id, created_at)
          VALUES (?1, ?2, ?3)",
         params![request_id, id, now],
     )?;
-
-    fts5_upsert(&tx, &id)?;
-    tx.commit()?;
-    get_entry_detail(conn, &id)
+    Ok(id)
 }
 
 /// 用与 VaultEntryInput 相同的 canonical 算法计算 capture draft 的内容哈希。
@@ -893,6 +1409,1029 @@ mod tests {
         conn.pragma_update(None, "foreign_keys", "ON").unwrap();
         ensure_vault_schema(&mut conn).unwrap();
         conn
+    }
+
+    fn open_unified_db() -> Connection {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", "ON").unwrap();
+        crate::scratchpad::storage::ensure_dock_schema(&mut conn).unwrap();
+        ensure_vault_schema(&mut conn).unwrap();
+        crate::content::migrations::ensure_content_schema(&mut conn, 7).unwrap();
+        conn
+    }
+
+    #[test]
+    fn vault_writes_refresh_unified_projection_without_sensitive_fields() {
+        let mut conn = open_unified_db();
+        let detail = create_entry(
+            &mut conn,
+            &VaultEntryInput {
+                kind: EntryKind::Credential,
+                title: "Server".into(),
+                fields: vec![
+                    FieldInput {
+                        key: "username".into(),
+                        value: "alice".into(),
+                        is_sensitive: false,
+                    },
+                    FieldInput {
+                        key: "password".into(),
+                        value: "NeverIndexMe".into(),
+                        is_sensitive: false,
+                    },
+                ],
+                notes: None,
+                manual_tags: Vec::new(),
+            },
+        )
+        .unwrap();
+        let unified_id = format!("vault:{}", detail.entry.id);
+
+        let catalog: (String, Option<String>, i64, i64) = conn
+            .query_row(
+                "SELECT retention_state, cleanup_at,
+                        (SELECT COUNT(*) FROM content_catalog WHERE unified_id=?1),
+                        (SELECT COUNT(*) FROM content_fts WHERE unified_id=?1)
+                 FROM content_catalog WHERE unified_id=?1",
+                params![unified_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(catalog, ("saved".into(), None, 1, 1));
+
+        let document =
+            crate::content::projection::build_search_document(&conn, &unified_id).unwrap();
+        assert!(document.body.contains("alice"));
+        for safe_text in [
+            document.title,
+            document.body,
+            document.tags,
+            document.aliases,
+        ] {
+            assert!(!safe_text.contains("NeverIndexMe"));
+        }
+
+        set_manual_tags(&mut conn, &detail.entry.id, &["production".into()]).unwrap();
+        let tags: String = conn
+            .query_row(
+                "SELECT tags FROM content_fts WHERE unified_id=?1",
+                params![unified_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(tags.contains("production"));
+        let revision: i64 = conn
+            .query_row(
+                "SELECT revision FROM content_state WHERE singleton=1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(revision, 2);
+    }
+
+    #[test]
+    fn ai_metadata_write_refreshes_aliases_without_exposing_sensitive_values() {
+        let mut conn = open_unified_db();
+        let detail = create_entry(
+            &mut conn,
+            &VaultEntryInput {
+                kind: EntryKind::Credential,
+                title: "Server".into(),
+                fields: vec![
+                    FieldInput {
+                        key: "username".into(),
+                        value: "alice".into(),
+                        is_sensitive: false,
+                    },
+                    FieldInput {
+                        key: "password".into(),
+                        value: "NeverIndexMe".into(),
+                        is_sensitive: true,
+                    },
+                ],
+                notes: None,
+                manual_tags: Vec::new(),
+            },
+        )
+        .unwrap();
+        let unified_id = format!("vault:{}", detail.entry.id);
+        let content_hash = ai_content_hash_for_entry(&conn, &detail.entry.id).unwrap();
+
+        set_ai_metadata(
+            &mut conn,
+            &VaultAiMetadata {
+                entry_id: detail.entry.id,
+                summary: Some("production login".into()),
+                search_aliases: vec!["prod console".into()],
+                content_hash,
+                provider_id: Some("provider".into()),
+                model: Some("model".into()),
+                generated_at: Some("2026-07-18T00:00:00Z".into()),
+                status: AiMetadataStatus::Ready,
+            },
+        )
+        .unwrap();
+
+        let (title, body, tags, aliases): (String, String, String, String) = conn
+            .query_row(
+                "SELECT title, body, tags, aliases FROM content_fts WHERE unified_id=?1",
+                params![unified_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .unwrap();
+        assert!(aliases.contains("prod console"));
+        for safe_text in [title, body, tags, aliases] {
+            assert!(!safe_text.contains("NeverIndexMe"));
+        }
+    }
+
+    #[test]
+    fn update_entry_refreshes_unified_projection_without_resetting_saved_membership() {
+        let mut conn = open_unified_db();
+        let detail = create_entry(
+            &mut conn,
+            &VaultEntryInput {
+                kind: EntryKind::Credential,
+                title: "Old Server".into(),
+                fields: Vec::new(),
+                notes: None,
+                manual_tags: Vec::new(),
+            },
+        )
+        .unwrap();
+        let unified_id = format!("vault:{}", detail.entry.id);
+        let original_position: f64 = conn
+            .query_row(
+                "SELECT saved_position FROM content_catalog WHERE unified_id=?1",
+                params![unified_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+
+        update_entry(
+            &mut conn,
+            &detail.entry.id,
+            &VaultEntryInput {
+                kind: EntryKind::Credential,
+                title: "New Server".into(),
+                fields: vec![FieldInput {
+                    key: "username".into(),
+                    value: "new-alice".into(),
+                    is_sensitive: false,
+                }],
+                notes: Some("new notes".into()),
+                manual_tags: vec!["updated".into()],
+            },
+        )
+        .unwrap();
+
+        let (retention, cleanup_at, saved_position): (String, Option<String>, f64) = conn
+            .query_row(
+                "SELECT retention_state, cleanup_at, saved_position
+                 FROM content_catalog WHERE unified_id=?1",
+                params![unified_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(retention, "saved");
+        assert_eq!(cleanup_at, None);
+        assert_eq!(saved_position, original_position);
+        let (title, body, tags): (String, String, String) = conn
+            .query_row(
+                "SELECT title, body, tags FROM content_fts WHERE unified_id=?1",
+                params![unified_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(title, "New Server");
+        assert!(body.contains("new-alice"));
+        assert!(body.contains("new notes"));
+        assert!(tags.contains("updated"));
+        assert_eq!(crate::content::catalog::current_revision(&conn).unwrap(), 2);
+    }
+
+    #[test]
+    fn ai_tag_mutations_refresh_unified_tags_and_bump_once_each() {
+        let mut conn = open_unified_db();
+        let detail = create_entry(
+            &mut conn,
+            &VaultEntryInput {
+                kind: EntryKind::Note,
+                title: "Console".into(),
+                fields: Vec::new(),
+                notes: None,
+                manual_tags: vec!["manual".into()],
+            },
+        )
+        .unwrap();
+        let unified_id = format!("vault:{}", detail.entry.id);
+
+        replace_ai_tags(
+            &mut conn,
+            &detail.entry.id,
+            &["ai-one".into(), "ai-two".into()],
+        )
+        .unwrap();
+        let tags: String = conn
+            .query_row(
+                "SELECT tags FROM content_fts WHERE unified_id=?1",
+                params![unified_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(tags.contains("manual"));
+        assert!(tags.contains("ai-one"));
+        assert!(tags.contains("ai-two"));
+        assert_eq!(crate::content::catalog::current_revision(&conn).unwrap(), 2);
+
+        remove_ai_tag(&mut conn, &detail.entry.id, "ai-one").unwrap();
+        let tags: String = conn
+            .query_row(
+                "SELECT tags FROM content_fts WHERE unified_id=?1",
+                params![unified_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(!tags.contains("ai-one"));
+        assert!(tags.contains("ai-two"));
+        assert_eq!(crate::content::catalog::current_revision(&conn).unwrap(), 3);
+    }
+
+    #[test]
+    fn mark_pending_clears_ready_projection_and_bumps_once() {
+        let mut conn = open_unified_db();
+        let detail = create_entry(
+            &mut conn,
+            &VaultEntryInput {
+                kind: EntryKind::Note,
+                title: "Console".into(),
+                fields: Vec::new(),
+                notes: None,
+                manual_tags: Vec::new(),
+            },
+        )
+        .unwrap();
+        let unified_id = format!("vault:{}", detail.entry.id);
+        let hash = ai_content_hash_for_entry(&conn, &detail.entry.id).unwrap();
+        set_ai_metadata(
+            &mut conn,
+            &VaultAiMetadata {
+                entry_id: detail.entry.id.clone(),
+                summary: Some("ready summary".into()),
+                search_aliases: vec!["ready alias".into()],
+                content_hash: hash.clone(),
+                provider_id: None,
+                model: None,
+                generated_at: None,
+                status: AiMetadataStatus::Ready,
+            },
+        )
+        .unwrap();
+
+        mark_ai_metadata_pending(&mut conn, &detail.entry.id, &hash).unwrap();
+        let (body, aliases): (String, String) = conn
+            .query_row(
+                "SELECT body, aliases FROM content_fts WHERE unified_id=?1",
+                params![unified_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert!(!body.contains("ready summary"));
+        assert!(!aliases.contains("ready alias"));
+        assert_eq!(crate::content::catalog::current_revision(&conn).unwrap(), 3);
+    }
+
+    #[test]
+    fn delete_entry_removes_unified_rows_and_bumps_once() {
+        let mut conn = open_unified_db();
+        let detail = create_entry(
+            &mut conn,
+            &VaultEntryInput {
+                kind: EntryKind::Note,
+                title: "Delete".into(),
+                fields: Vec::new(),
+                notes: None,
+                manual_tags: Vec::new(),
+            },
+        )
+        .unwrap();
+        let unified_id = format!("vault:{}", detail.entry.id);
+
+        delete_entry(&mut conn, &detail.entry.id).unwrap();
+
+        for table in ["content_catalog", "content_fts"] {
+            let count: i64 = conn
+                .query_row(
+                    &format!("SELECT COUNT(*) FROM {table} WHERE unified_id=?1"),
+                    params![unified_id],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(count, 0, "{table} row must be deleted");
+        }
+        assert_eq!(crate::content::catalog::current_revision(&conn).unwrap(), 2);
+    }
+
+    #[test]
+    fn capture_retry_keeps_one_projection_and_does_not_bump_again() {
+        let mut conn = open_unified_db();
+        let draft = make_capture_draft("Captured");
+
+        let first = create_from_capture(&mut conn, &draft, "capture-once").unwrap();
+        let first_revision = crate::content::catalog::current_revision(&conn).unwrap();
+        let second = create_from_capture(&mut conn, &draft, "capture-once").unwrap();
+
+        assert_eq!(first.entry.id, second.entry.id);
+        assert_eq!(first_revision, 1);
+        assert_eq!(
+            crate::content::catalog::current_revision(&conn).unwrap(),
+            first_revision
+        );
+        let unified_id = format!("vault:{}", first.entry.id);
+        for table in ["content_catalog", "content_fts"] {
+            let count: i64 = conn
+                .query_row(
+                    &format!("SELECT COUNT(*) FROM {table} WHERE unified_id=?1"),
+                    params![unified_id],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(count, 1, "{table} must contain one row");
+        }
+    }
+
+    #[test]
+    fn unified_sync_failure_rolls_back_every_vault_update_and_revision() {
+        let mut conn = open_unified_db();
+        let detail = create_entry(
+            &mut conn,
+            &VaultEntryInput {
+                kind: EntryKind::Credential,
+                title: "Before".into(),
+                fields: vec![FieldInput {
+                    key: "username".into(),
+                    value: "before-user".into(),
+                    is_sensitive: false,
+                }],
+                notes: Some("before notes".into()),
+                manual_tags: vec!["before-manual".into()],
+            },
+        )
+        .unwrap();
+        let id = detail.entry.id;
+        replace_ai_tags(&mut conn, &id, &["before-ai".into()]).unwrap();
+        let hash = ai_content_hash_for_entry(&conn, &id).unwrap();
+        set_ai_metadata(
+            &mut conn,
+            &VaultAiMetadata {
+                entry_id: id.clone(),
+                summary: Some("before summary".into()),
+                search_aliases: vec!["before alias".into()],
+                content_hash: hash,
+                provider_id: Some("provider".into()),
+                model: Some("model".into()),
+                generated_at: Some("2026-07-18T00:00:00Z".into()),
+                status: AiMetadataStatus::Ready,
+            },
+        )
+        .unwrap();
+        let unified_id = format!("vault:{id}");
+        let before_detail = serde_json::to_value(get_entry_detail(&conn, &id).unwrap()).unwrap();
+        let before_legacy_fts: (String, String, String) = conn
+            .query_row(
+                "SELECT title, notes, searchable FROM vault_fts WHERE entry_id=?1",
+                params![id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        let before_projection: (String, String, String, String) = conn
+            .query_row(
+                "SELECT title, body, tags, aliases FROM content_fts WHERE unified_id=?1",
+                params![unified_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .unwrap();
+        let before_revision = crate::content::catalog::current_revision(&conn).unwrap();
+        conn.execute_batch(
+            "CREATE TRIGGER fail_vault_catalog_update
+             BEFORE UPDATE ON content_catalog
+             WHEN OLD.unified_id = 'vault:' || OLD.source_id
+             BEGIN SELECT RAISE(FAIL, 'forced catalog sync failure'); END;",
+        )
+        .unwrap();
+
+        let result = update_entry(
+            &mut conn,
+            &id,
+            &VaultEntryInput {
+                kind: EntryKind::Bookmark,
+                title: "After".into(),
+                fields: vec![FieldInput {
+                    key: "url".into(),
+                    value: "https://after.invalid".into(),
+                    is_sensitive: false,
+                }],
+                notes: Some("after notes".into()),
+                manual_tags: vec!["after-manual".into()],
+            },
+        );
+
+        assert!(result.is_err());
+        assert_eq!(
+            serde_json::to_value(get_entry_detail(&conn, &id).unwrap()).unwrap(),
+            before_detail
+        );
+        assert_eq!(
+            conn.query_row(
+                "SELECT title, notes, searchable FROM vault_fts WHERE entry_id=?1",
+                params![id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap(),
+            before_legacy_fts
+        );
+        assert_eq!(
+            conn.query_row(
+                "SELECT title, body, tags, aliases FROM content_fts WHERE unified_id=?1",
+                params![unified_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .unwrap(),
+            before_projection
+        );
+        assert_eq!(
+            crate::content::catalog::current_revision(&conn).unwrap(),
+            before_revision
+        );
+    }
+
+    #[test]
+    fn unified_delete_failure_preserves_vault_catalog_projection_and_revision() {
+        let mut conn = open_unified_db();
+        let detail = create_entry(
+            &mut conn,
+            &VaultEntryInput {
+                kind: EntryKind::Note,
+                title: "Keep".into(),
+                fields: Vec::new(),
+                notes: Some("keep body".into()),
+                manual_tags: vec!["keep-tag".into()],
+            },
+        )
+        .unwrap();
+        let id = detail.entry.id;
+        let unified_id = format!("vault:{id}");
+        let before_revision = crate::content::catalog::current_revision(&conn).unwrap();
+        conn.execute_batch(
+            "CREATE TRIGGER fail_vault_catalog_delete
+             BEFORE DELETE ON content_catalog
+             WHEN OLD.unified_id = 'vault:' || OLD.source_id
+             BEGIN SELECT RAISE(FAIL, 'forced catalog delete failure'); END;",
+        )
+        .unwrap();
+
+        assert!(delete_entry(&mut conn, &id).is_err());
+
+        assert!(get_entry_by_id(&conn, &id).unwrap().is_some());
+        assert_eq!(list_tags(&conn, &id).unwrap().len(), 1);
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM vault_fts WHERE entry_id=?1",
+                params![id],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+            1
+        );
+        for table in ["content_catalog", "content_fts"] {
+            assert_eq!(
+                conn.query_row(
+                    &format!("SELECT COUNT(*) FROM {table} WHERE unified_id=?1"),
+                    params![unified_id],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+                1
+            );
+        }
+        assert_eq!(
+            crate::content::catalog::current_revision(&conn).unwrap(),
+            before_revision
+        );
+    }
+
+    #[test]
+    fn sensitive_field_values_are_redacted_from_every_unified_projection_column() {
+        let mut conn = open_unified_db();
+        let detail = create_entry(
+            &mut conn,
+            &VaultEntryInput {
+                kind: EntryKind::Credential,
+                title: "NeverIndexMe Server".into(),
+                fields: vec![
+                    FieldInput {
+                        key: "username".into(),
+                        value: "alice".into(),
+                        is_sensitive: false,
+                    },
+                    FieldInput {
+                        key: "password".into(),
+                        value: "NeverIndexMe".into(),
+                        is_sensitive: true,
+                    },
+                ],
+                notes: Some("NeverIndexMe production notes".into()),
+                manual_tags: vec!["NeverIndexMe-tag".into(), "production".into()],
+            },
+        )
+        .unwrap();
+        let hash = ai_content_hash_for_entry(&conn, &detail.entry.id).unwrap();
+        set_ai_metadata(
+            &mut conn,
+            &VaultAiMetadata {
+                entry_id: detail.entry.id.clone(),
+                summary: Some("NeverIndexMe production summary".into()),
+                search_aliases: vec!["NeverIndexMe alias".into(), "prod console".into()],
+                content_hash: hash,
+                provider_id: Some("provider-key-must-not-project".into()),
+                model: Some("model".into()),
+                generated_at: Some("2026-07-18T00:00:00Z".into()),
+                status: AiMetadataStatus::Ready,
+            },
+        )
+        .unwrap();
+        let unified_id = format!("vault:{}", detail.entry.id);
+        let columns: (String, String, String, String) = conn
+            .query_row(
+                "SELECT title, body, tags, aliases FROM content_fts WHERE unified_id=?1",
+                params![unified_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .unwrap();
+
+        for safe_text in [&columns.0, &columns.1, &columns.2, &columns.3] {
+            assert!(!safe_text.contains("NeverIndexMe"));
+            assert!(!safe_text.contains("provider-key-must-not-project"));
+        }
+        assert!(columns.1.contains("alice"));
+        assert!(columns.2.contains("production"));
+        assert!(columns.3.contains("prod console"));
+
+        let legacy_columns: (String, String, String) = conn
+            .query_row(
+                "SELECT title, notes, searchable FROM vault_fts WHERE entry_id=?1",
+                params![detail.entry.id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        for safe_text in [&legacy_columns.0, &legacy_columns.1, &legacy_columns.2] {
+            assert!(!safe_text.contains("NeverIndexMe"));
+        }
+        assert!(legacy_columns.2.contains("alice"));
+        assert!(legacy_columns.2.contains("production"));
+    }
+
+    #[test]
+    fn ready_ai_enrichment_applies_tags_metadata_projection_and_one_revision_atomically() {
+        let mut conn = open_unified_db();
+        let detail = create_entry(
+            &mut conn,
+            &VaultEntryInput {
+                kind: EntryKind::Note,
+                title: "Pending".into(),
+                fields: Vec::new(),
+                notes: Some("body".into()),
+                manual_tags: vec!["manual".into()],
+            },
+        )
+        .unwrap();
+        let id = detail.entry.id;
+        let hash = ai_content_hash_for_entry(&conn, &id).unwrap();
+        let metadata = VaultAiMetadata {
+            entry_id: id.clone(),
+            summary: Some("ready summary".into()),
+            search_aliases: vec!["ready alias".into()],
+            content_hash: hash.clone(),
+            provider_id: Some("provider".into()),
+            model: Some("model".into()),
+            generated_at: Some("2026-07-18T00:00:00Z".into()),
+            status: AiMetadataStatus::Ready,
+        };
+
+        let mutation =
+            apply_ai_enrichment_if_pending(&mut conn, &id, &hash, &["ai-ready".into()], &metadata)
+                .unwrap()
+                .expect("pending snapshot must be applied");
+
+        assert_eq!(mutation.revision, 2);
+        assert_eq!(mutation.changes[0].id, format!("vault:{id}"));
+        assert_eq!(mutation.changes[0].operation, ContentOperation::Updated);
+        let written = get_ai_metadata(&conn, &id).unwrap().unwrap();
+        assert_eq!(written.status, AiMetadataStatus::Ready);
+        assert_eq!(written.search_aliases, vec!["ready alias"]);
+        assert!(list_tags(&conn, &id)
+            .unwrap()
+            .iter()
+            .any(|tag| tag.tag == "ai-ready" && tag.source == TagSource::Ai));
+        let (body, aliases): (String, String) = conn
+            .query_row(
+                "SELECT body, aliases FROM content_fts WHERE unified_id=?1",
+                params![format!("vault:{id}")],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert!(body.contains("ready summary"));
+        assert!(aliases.contains("ready alias"));
+
+        let stale_metadata = VaultAiMetadata {
+            content_hash: "stale-hash".into(),
+            ..metadata.clone()
+        };
+        assert!(apply_ai_enrichment_if_pending(
+            &mut conn,
+            &id,
+            "stale-hash",
+            &["stale-tag".into()],
+            &stale_metadata,
+        )
+        .unwrap()
+        .is_none());
+        assert_eq!(crate::content::catalog::current_revision(&conn).unwrap(), 2);
+        assert!(!list_tags(&conn, &id)
+            .unwrap()
+            .iter()
+            .any(|tag| tag.tag == "stale-tag"));
+    }
+
+    #[test]
+    fn failed_ready_ai_enrichment_rolls_back_tags_metadata_fts_and_revision() {
+        let mut conn = open_unified_db();
+        let detail = create_entry(
+            &mut conn,
+            &VaultEntryInput {
+                kind: EntryKind::Note,
+                title: "Pending".into(),
+                fields: Vec::new(),
+                notes: Some("body".into()),
+                manual_tags: vec!["manual".into()],
+            },
+        )
+        .unwrap();
+        let id = detail.entry.id;
+        let hash = ai_content_hash_for_entry(&conn, &id).unwrap();
+        let before_detail = serde_json::to_value(get_entry_detail(&conn, &id).unwrap()).unwrap();
+        let before_legacy_fts: (String, String, String) = conn
+            .query_row(
+                "SELECT title, notes, searchable FROM vault_fts WHERE entry_id=?1",
+                params![id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        let before_revision = crate::content::catalog::current_revision(&conn).unwrap();
+        conn.execute_batch(
+            "CREATE TRIGGER fail_ready_catalog_update
+             BEFORE UPDATE ON content_catalog
+             BEGIN SELECT RAISE(FAIL, 'forced ready sync failure'); END;",
+        )
+        .unwrap();
+        let metadata = VaultAiMetadata {
+            entry_id: id.clone(),
+            summary: Some("must rollback".into()),
+            search_aliases: vec!["must rollback".into()],
+            content_hash: hash.clone(),
+            provider_id: Some("provider".into()),
+            model: Some("model".into()),
+            generated_at: Some("2026-07-18T00:00:00Z".into()),
+            status: AiMetadataStatus::Ready,
+        };
+
+        assert!(apply_ai_enrichment_if_pending(
+            &mut conn,
+            &id,
+            &hash,
+            &["must-rollback".into()],
+            &metadata,
+        )
+        .is_err());
+
+        assert_eq!(
+            serde_json::to_value(get_entry_detail(&conn, &id).unwrap()).unwrap(),
+            before_detail
+        );
+        assert_eq!(
+            conn.query_row(
+                "SELECT title, notes, searchable FROM vault_fts WHERE entry_id=?1",
+                params![id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap(),
+            before_legacy_fts
+        );
+        assert_eq!(
+            crate::content::catalog::current_revision(&conn).unwrap(),
+            before_revision
+        );
+    }
+
+    #[test]
+    fn metadata_error_only_updates_the_matching_pending_snapshot_once() {
+        let mut conn = open_unified_db();
+        let detail = create_entry(
+            &mut conn,
+            &VaultEntryInput {
+                kind: EntryKind::Note,
+                title: "Pending".into(),
+                fields: Vec::new(),
+                notes: None,
+                manual_tags: Vec::new(),
+            },
+        )
+        .unwrap();
+        let id = detail.entry.id;
+        let hash = ai_content_hash_for_entry(&conn, &id).unwrap();
+
+        assert!(
+            mark_ai_metadata_error_if_pending(&mut conn, &id, "stale-hash")
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(crate::content::catalog::current_revision(&conn).unwrap(), 1);
+
+        let mutation = mark_ai_metadata_error_if_pending(&mut conn, &id, &hash)
+            .unwrap()
+            .expect("matching pending snapshot must transition to error");
+        assert_eq!(mutation.revision, 2);
+        assert_eq!(
+            get_ai_metadata(&conn, &id).unwrap().unwrap().status,
+            AiMetadataStatus::Error
+        );
+        assert!(mark_ai_metadata_error_if_pending(&mut conn, &id, &hash)
+            .unwrap()
+            .is_none());
+        assert_eq!(crate::content::catalog::current_revision(&conn).unwrap(), 2);
+    }
+
+    #[test]
+    fn unified_create_and_capture_failures_leave_no_partial_rows_or_revision() {
+        let mut conn = open_unified_db();
+        conn.execute_batch(
+            "CREATE TRIGGER fail_new_vault_catalog
+             BEFORE INSERT ON content_catalog
+             WHEN NEW.source='vault'
+             BEGIN SELECT RAISE(FAIL, 'forced create sync failure'); END;",
+        )
+        .unwrap();
+        let input = VaultEntryInput {
+            kind: EntryKind::Credential,
+            title: "Must Roll Back".into(),
+            fields: vec![FieldInput {
+                key: "username".into(),
+                value: "alice".into(),
+                is_sensitive: false,
+            }],
+            notes: None,
+            manual_tags: vec!["manual".into()],
+        };
+
+        assert!(create_entry(&mut conn, &input).is_err());
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM vault_entries WHERE title='Must Roll Back'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+            0
+        );
+        for table in [
+            "vault_fields",
+            "vault_tags",
+            "vault_ai_metadata",
+            "vault_fts",
+            "content_catalog",
+            "content_fts",
+        ] {
+            assert_eq!(
+                conn.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .unwrap(),
+                0,
+                "{table} must remain empty"
+            );
+        }
+        assert_eq!(crate::content::catalog::current_revision(&conn).unwrap(), 0);
+
+        let draft = make_capture_draft("Capture Must Roll Back");
+        assert!(create_from_capture(&mut conn, &draft, "capture-failed-sync").is_err());
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM vault_capture_requests", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap(),
+            0
+        );
+        assert_eq!(crate::content::catalog::current_revision(&conn).unwrap(), 0);
+    }
+
+    #[test]
+    fn pending_and_error_projection_failures_roll_back_metadata_and_revision() {
+        let mut conn = open_unified_db();
+        let detail = create_entry(
+            &mut conn,
+            &VaultEntryInput {
+                kind: EntryKind::Note,
+                title: "Metadata".into(),
+                fields: Vec::new(),
+                notes: None,
+                manual_tags: Vec::new(),
+            },
+        )
+        .unwrap();
+        let id = detail.entry.id;
+        let hash = ai_content_hash_for_entry(&conn, &id).unwrap();
+        set_ai_metadata(
+            &mut conn,
+            &VaultAiMetadata {
+                entry_id: id.clone(),
+                summary: Some("ready summary".into()),
+                search_aliases: vec!["ready alias".into()],
+                content_hash: hash.clone(),
+                provider_id: None,
+                model: None,
+                generated_at: None,
+                status: AiMetadataStatus::Ready,
+            },
+        )
+        .unwrap();
+        let before_revision = crate::content::catalog::current_revision(&conn).unwrap();
+        conn.execute_batch(
+            "CREATE TRIGGER fail_metadata_catalog_update
+             BEFORE UPDATE ON content_catalog
+             BEGIN SELECT RAISE(FAIL, 'forced metadata sync failure'); END;",
+        )
+        .unwrap();
+
+        assert!(mark_ai_metadata_pending(&mut conn, &id, &hash).is_err());
+        let metadata = get_ai_metadata(&conn, &id).unwrap().unwrap();
+        assert_eq!(metadata.status, AiMetadataStatus::Ready);
+        assert_eq!(metadata.search_aliases, vec!["ready alias"]);
+        assert_eq!(
+            crate::content::catalog::current_revision(&conn).unwrap(),
+            before_revision
+        );
+
+        conn.execute("DROP TRIGGER fail_metadata_catalog_update", [])
+            .unwrap();
+        mark_ai_metadata_pending(&mut conn, &id, &hash).unwrap();
+        let pending_revision = crate::content::catalog::current_revision(&conn).unwrap();
+        conn.execute_batch(
+            "CREATE TRIGGER fail_error_catalog_update
+             BEFORE UPDATE ON content_catalog
+             BEGIN SELECT RAISE(FAIL, 'forced error sync failure'); END;",
+        )
+        .unwrap();
+        assert!(mark_ai_metadata_error_if_pending(&mut conn, &id, &hash).is_err());
+        assert_eq!(
+            get_ai_metadata(&conn, &id).unwrap().unwrap().status,
+            AiMetadataStatus::Pending
+        );
+        assert_eq!(
+            crate::content::catalog::current_revision(&conn).unwrap(),
+            pending_revision
+        );
+    }
+
+    #[test]
+    fn organized_vault_entries_always_get_distinct_saved_top_positions() {
+        let mut conn = open_unified_db();
+        let first = create_entry(
+            &mut conn,
+            &VaultEntryInput {
+                kind: EntryKind::Note,
+                title: "First".into(),
+                fields: Vec::new(),
+                notes: None,
+                manual_tags: Vec::new(),
+            },
+        )
+        .unwrap();
+        let second =
+            create_from_capture(&mut conn, &make_capture_draft("Second"), "saved-top").unwrap();
+        let first_position: f64 = conn
+            .query_row(
+                "SELECT saved_position FROM content_catalog WHERE source_id=?1",
+                params![first.entry.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let (retention, cleanup_at, second_position): (String, Option<String>, f64) = conn
+            .query_row(
+                "SELECT retention_state, cleanup_at, saved_position
+                 FROM content_catalog WHERE source_id=?1",
+                params![second.entry.id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(retention, "saved");
+        assert_eq!(cleanup_at, None);
+        assert!(second_position < first_position);
+        assert_ne!(second_position, first_position);
+    }
+
+    #[test]
+    fn default_sensitive_keys_stay_private_even_if_a_legacy_flag_is_false() {
+        let mut conn = open_unified_db();
+        let detail = create_entry(
+            &mut conn,
+            &VaultEntryInput {
+                kind: EntryKind::Credential,
+                title: "Legacy".into(),
+                fields: vec![
+                    FieldInput {
+                        key: "username".into(),
+                        value: "alice".into(),
+                        is_sensitive: false,
+                    },
+                    FieldInput {
+                        key: "password".into(),
+                        value: "LegacySecretValue".into(),
+                        is_sensitive: true,
+                    },
+                ],
+                notes: None,
+                manual_tags: Vec::new(),
+            },
+        )
+        .unwrap();
+        conn.execute(
+            "UPDATE vault_fields SET is_sensitive=0
+             WHERE entry_id=?1 AND key='password'",
+            params![detail.entry.id],
+        )
+        .unwrap();
+
+        set_manual_tags(&mut conn, &detail.entry.id, &["refreshed".into()]).unwrap();
+
+        let unified: (String, String, String, String) = conn
+            .query_row(
+                "SELECT title, body, tags, aliases FROM content_fts WHERE unified_id=?1",
+                params![format!("vault:{}", detail.entry.id)],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .unwrap();
+        let legacy: (String, String, String) = conn
+            .query_row(
+                "SELECT title, notes, searchable FROM vault_fts WHERE entry_id=?1",
+                params![detail.entry.id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        for safe_text in [
+            unified.0, unified.1, unified.2, unified.3, legacy.0, legacy.1, legacy.2,
+        ] {
+            assert!(!safe_text.contains("LegacySecretValue"));
+        }
+        let preview = list_entries(&conn, None).unwrap()[0]
+            .preview
+            .clone()
+            .unwrap_or_default();
+        assert!(!preview.contains("LegacySecretValue"));
+    }
+
+    #[test]
+    fn refresh_ai_metadata_uses_the_current_payload_hash_in_one_transaction() {
+        let mut conn = open_unified_db();
+        let detail = create_entry(
+            &mut conn,
+            &VaultEntryInput {
+                kind: EntryKind::Note,
+                title: "Current".into(),
+                fields: Vec::new(),
+                notes: Some("current body".into()),
+                manual_tags: Vec::new(),
+            },
+        )
+        .unwrap();
+        let id = detail.entry.id;
+        conn.execute(
+            "UPDATE vault_ai_metadata SET content_hash='stale-hash', status='ready'
+             WHERE entry_id=?1",
+            params![id],
+        )
+        .unwrap();
+
+        let mutation = refresh_ai_metadata_with_revision(&mut conn, &id).unwrap();
+
+        let current_detail = get_entry_detail(&conn, &id).unwrap();
+        let expected_hash =
+            compute_entry_content_hash(&current_detail.entry, &current_detail.fields);
+        let metadata = current_detail.ai_metadata.unwrap();
+        assert_eq!(metadata.status, AiMetadataStatus::Pending);
+        assert_eq!(metadata.content_hash, expected_hash);
+        assert_eq!(mutation.revision, 2);
+        assert_eq!(mutation.changes[0].operation, ContentOperation::Updated);
     }
 
     #[test]

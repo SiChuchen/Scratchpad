@@ -17,7 +17,7 @@
 // 在 `vault_capture_requests` 表里只会写入一次，重复提交直接返回首次保存的
 // entry（无需用户感知）。
 
-use tauri::State;
+use tauri::{AppHandle, State};
 
 use crate::vault::ai::{build_request_audit, parse_capture_response};
 use crate::vault::capture as vcapture;
@@ -82,6 +82,7 @@ pub async fn ipc_vault_enrich_capture(
 #[tauri::command]
 pub async fn ipc_vault_create_from_capture(
     state: State<'_, crate::AppState>,
+    app: AppHandle,
     final_draft: CaptureDraft,
     request_id: String,
 ) -> Result<VaultEntryDetail, String> {
@@ -92,8 +93,13 @@ pub async fn ipc_vault_create_from_capture(
     reject_sensitive_metadata_leak(&final_draft).map_err(|e| e.to_string())?;
 
     // 3) 落库
-    let mut conn = state.db.lock().map_err(|e| e.to_string())?;
-    vstore::create_from_capture(&mut conn, &final_draft, &request_id).map_err(|e| e.to_string())
+    let mutation = {
+        let mut conn = state.db.lock().map_err(|e| e.to_string())?;
+        vstore::create_from_capture_with_revision(&mut conn, &final_draft, &request_id)
+            .map_err(|e| e.to_string())?
+    };
+    crate::emit_content_changed(&app, &mutation);
+    Ok(mutation.value)
 }
 
 // ---- 可测试 helper ---------------------------------------------------------
@@ -282,6 +288,7 @@ mod tests {
         let mut conn = Connection::open_in_memory().unwrap();
         ensure_dock_schema(&mut conn).unwrap();
         vstore::ensure_vault_schema(&mut conn).unwrap();
+        crate::content::migrations::ensure_content_schema(&mut conn, 7).unwrap();
         conn
     }
 
@@ -637,5 +644,35 @@ mod tests {
             reject_sensitive_metadata_leak(&d).is_err(),
             "exact word match inside a multi-word tag MUST trigger leak"
         );
+    }
+
+    #[test]
+    fn capture_retry_returns_current_revision_and_empty_changes_for_event_suppression() {
+        let mut conn = open_db();
+        let draft = sample_draft();
+
+        let created =
+            vstore::create_from_capture_with_revision(&mut conn, &draft, "capture-event-once")
+                .unwrap();
+        assert_eq!(created.changes.len(), 1);
+        assert_eq!(
+            created.changes[0].operation,
+            crate::content::models::ContentOperation::Created
+        );
+        assert!(created.changes[0].id.starts_with("vault:"));
+
+        let retry =
+            vstore::create_from_capture_with_revision(&mut conn, &draft, "capture-event-once")
+                .unwrap();
+        assert_eq!(retry.value.entry.id, created.value.entry.id);
+        assert_eq!(retry.revision, created.revision);
+        assert!(retry.changes.is_empty());
+
+        let mut emitted = false;
+        crate::dispatch_content_changed(&retry, |_event_name, _payload| {
+            emitted = true;
+            Ok::<(), &'static str>(())
+        });
+        assert!(!emitted);
     }
 }

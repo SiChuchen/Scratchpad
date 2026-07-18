@@ -256,7 +256,7 @@ fn parse_key_code(s: &str) -> Option<Code> {
 
 // --- Dock entry IPC commands ---
 
-fn content_changed_event<T>(
+pub(crate) fn content_changed_event<T>(
     mutation: &content::models::ContentMutation<T>,
 ) -> content::models::ContentChangedEvent {
     content::models::ContentChangedEvent {
@@ -265,21 +265,22 @@ fn content_changed_event<T>(
     }
 }
 
-fn dispatch_content_changed<T, E>(
+pub(crate) fn dispatch_content_changed<T, E>(
     mutation: &content::models::ContentMutation<T>,
     emit: impl FnOnce(&str, content::models::ContentChangedEvent) -> Result<(), E>,
-) where
-    E: std::fmt::Display,
-{
+) {
     if mutation.changes.is_empty() {
         return;
     }
-    if let Err(error) = emit("content-changed", content_changed_event(mutation)) {
-        eprintln!("failed to emit content-changed after committed Dock mutation: {error}");
+    if emit("content-changed", content_changed_event(mutation)).is_err() {
+        eprintln!("failed to emit content-changed after committed content mutation");
     }
 }
 
-fn emit_content_changed<T>(app: &tauri::AppHandle, mutation: &content::models::ContentMutation<T>) {
+pub(crate) fn emit_content_changed<T>(
+    app: &tauri::AppHandle,
+    mutation: &content::models::ContentMutation<T>,
+) {
     dispatch_content_changed(mutation, |event_name, payload| {
         app.emit(event_name, payload)
     });

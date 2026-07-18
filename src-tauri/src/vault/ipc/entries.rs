@@ -28,13 +28,14 @@ pub async fn ipc_vault_create_entry(
     app: AppHandle,
     input: VaultEntryInput,
 ) -> Result<VaultEntryDetail, String> {
-    let detail = {
+    let mutation = {
         let mut conn = state.db.lock().map_err(|e| e.to_string())?;
-        vstore::create_entry(&mut conn, &input).map_err(|e| e.to_string())?
+        vstore::create_entry_with_revision(&mut conn, &input).map_err(|e| e.to_string())?
     };
+    crate::emit_content_changed(&app, &mutation);
     // 触发后台 backfill（auto_enrich 关闭或无 config → 内部 no-op）
     crate::vault::jobs::try_start_backfill(&app);
-    Ok(detail)
+    Ok(mutation.value)
 }
 
 /// 更新条目。若内容 hash 变化，metadata 自动重置为 pending。
@@ -45,23 +46,28 @@ pub async fn ipc_vault_update_entry(
     id: String,
     input: VaultEntryInput,
 ) -> Result<VaultEntryDetail, String> {
-    let detail = {
+    let mutation = {
         let mut conn = state.db.lock().map_err(|e| e.to_string())?;
-        vstore::update_entry(&mut conn, &id, &input).map_err(|e| e.to_string())?
+        vstore::update_entry_with_revision(&mut conn, &id, &input).map_err(|e| e.to_string())?
     };
+    crate::emit_content_changed(&app, &mutation);
     // 内容可能变了 → 触发 backfill
     crate::vault::jobs::try_start_backfill(&app);
-    Ok(detail)
+    Ok(mutation.value)
 }
 
 /// 删除条目（含 fields / tags / metadata / FTS，由 FK + 显式 SQL 处理）。
 #[tauri::command]
 pub async fn ipc_vault_delete_entry(
     state: State<'_, crate::AppState>,
+    app: AppHandle,
     id: String,
 ) -> Result<(), String> {
-    let mut conn = state.db.lock().map_err(|e| e.to_string())?;
-    vstore::delete_entry(&mut conn, &id).map_err(|e| e.to_string())?;
+    let mutation = {
+        let mut conn = state.db.lock().map_err(|e| e.to_string())?;
+        vstore::delete_entry_with_revision(&mut conn, &id).map_err(|e| e.to_string())?
+    };
+    crate::emit_content_changed(&app, &mutation);
     Ok(())
 }
 
@@ -89,30 +95,33 @@ pub async fn ipc_vault_get_entry(
 #[tauri::command]
 pub async fn ipc_vault_update_manual_tags(
     state: State<'_, crate::AppState>,
+    app: AppHandle,
     id: String,
     tags: Vec<String>,
 ) -> Result<VaultEntryDetail, String> {
-    {
+    let mutation = {
         let mut conn = state.db.lock().map_err(|e| e.to_string())?;
-        vstore::set_manual_tags(&mut conn, &id, &tags).map_err(|e| e.to_string())?;
-    }
-    let conn = state.db.lock().map_err(|e| e.to_string())?;
-    vstore::get_entry_detail(&conn, &id).map_err(|e| e.to_string())
+        vstore::set_manual_tags_with_revision(&mut conn, &id, &tags).map_err(|e| e.to_string())?
+    };
+    crate::emit_content_changed(&app, &mutation);
+    Ok(mutation.value)
 }
 
 /// 删除指定的 AI tag（normalized_tag 匹配；manual 行不动）。
 #[tauri::command]
 pub async fn ipc_vault_remove_ai_tag(
     state: State<'_, crate::AppState>,
+    app: AppHandle,
     id: String,
     normalized_tag: String,
 ) -> Result<VaultEntryDetail, String> {
-    {
+    let mutation = {
         let mut conn = state.db.lock().map_err(|e| e.to_string())?;
-        vstore::remove_ai_tag(&mut conn, &id, &normalized_tag).map_err(|e| e.to_string())?;
-    }
-    let conn = state.db.lock().map_err(|e| e.to_string())?;
-    vstore::get_entry_detail(&conn, &id).map_err(|e| e.to_string())
+        vstore::remove_ai_tag_with_revision(&mut conn, &id, &normalized_tag)
+            .map_err(|e| e.to_string())?
+    };
+    crate::emit_content_changed(&app, &mutation);
+    Ok(mutation.value)
 }
 
 /// 重新触发某条目的 AI metadata 增强。
@@ -129,16 +138,11 @@ pub async fn ipc_vault_refresh_ai_metadata(
 ) -> Result<(), String> {
     // 若无 config 或 auto_enrich 关闭，refresh 仍然重置 pending（让用户看到
     // 状态变化），但 backfill 不会真的跑。
-    let content_hash = {
-        let conn = state.db.lock().map_err(|e| e.to_string())?;
-        vstore::ai_content_hash_for_entry(&conn, &id).map_err(|e| e.to_string())?
-    };
-    // 即便 hash 为空（entry 没记录）也允许继续；mark_pending 会创建一条新行。
-    {
+    let mutation = {
         let mut conn = state.db.lock().map_err(|e| e.to_string())?;
-        vstore::mark_ai_metadata_pending(&mut conn, &id, &content_hash)
-            .map_err(|e| e.to_string())?;
-    }
+        vstore::refresh_ai_metadata_with_revision(&mut conn, &id).map_err(|e| e.to_string())?
+    };
+    crate::emit_content_changed(&app, &mutation);
     // 让 worker 跳过门控检查（用户主动 refresh）—— 通过短暂清除 cooldown
     // 不是我们这里要做的事；worker 内部会自行检查 should_skip_automatic_call。
     // 这里只触发 backfill。
@@ -169,6 +173,7 @@ mod tests {
         let mut conn = Connection::open_in_memory().unwrap();
         ensure_dock_schema(&mut conn).unwrap();
         vstore::ensure_vault_schema(&mut conn).unwrap();
+        crate::content::migrations::ensure_content_schema(&mut conn, 7).unwrap();
         conn
     }
 
@@ -246,5 +251,53 @@ mod tests {
         assert_eq!(s.ready, 0);
         assert_eq!(s.pending, 0);
         assert_eq!(s.error, 0);
+    }
+
+    #[test]
+    fn vault_ipc_dispatches_exact_namespaced_content_payload_without_sensitive_values() {
+        let mut conn = open_db();
+        let mut input = sample_input();
+        input.fields.push(FieldInput {
+            key: "password".into(),
+            value: "NeverEmitMe".into(),
+            is_sensitive: true,
+        });
+        let mutation = vstore::create_entry_with_revision(&mut conn, &input).unwrap();
+        let expected_id = format!("vault:{}", mutation.value.entry.id);
+        let mut captured = None;
+
+        crate::dispatch_content_changed(&mutation, |event_name, payload| {
+            captured = Some((event_name.to_string(), payload));
+            Ok::<(), &'static str>(())
+        });
+
+        let (event_name, payload) = captured.expect("committed mutation must dispatch");
+        assert_eq!(event_name, "content-changed");
+        let json = serde_json::to_value(payload).unwrap();
+        assert_eq!(
+            json,
+            serde_json::json!({
+                "revision": mutation.revision,
+                "changes": [{"id": expected_id, "operation": "created"}]
+            })
+        );
+        assert!(!json.to_string().contains("NeverEmitMe"));
+    }
+
+    #[test]
+    fn vault_ipc_emit_failure_is_non_fatal_after_commit() {
+        let mut conn = open_db();
+        let mutation = vstore::create_entry_with_revision(&mut conn, &sample_input()).unwrap();
+        let id = mutation.value.entry.id.clone();
+
+        crate::dispatch_content_changed(&mutation, |_event_name, _payload| {
+            Err::<(), &'static str>("forced emit failure")
+        });
+
+        assert!(vstore::get_entry_by_id(&conn, &id).unwrap().is_some());
+        assert_eq!(
+            crate::content::catalog::current_revision(&conn).unwrap(),
+            mutation.revision
+        );
     }
 }

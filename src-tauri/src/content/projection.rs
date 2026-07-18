@@ -4,6 +4,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::content::models::{ContentKind, ContentSource, UnifiedContentId};
 use crate::storage::error::{StorageError, StorageResult};
+use crate::vault::models::is_default_sensitive_key;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SearchDocument {
@@ -234,20 +235,33 @@ fn build_vault_document(
         return Err(source_kind_mismatch(unified_id));
     }
 
-    let fields = {
+    let stored_fields = {
         let mut stmt = conn.prepare(
-            "SELECT key, value
+            "SELECT key, value, is_sensitive
              FROM vault_fields
-             WHERE entry_id = ?1 AND is_sensitive = 0
-             ORDER BY sort_order ASC, key ASC, id ASC",
+             WHERE entry_id = ?1
+             ORDER BY sort_order ASC, id ASC",
         )?;
-        let rows = stmt
+        let values = stmt
             .query_map(params![source_id], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)? != 0,
+                ))
             })?
             .collect::<Result<Vec<_>, _>>()?;
-        rows
+        values
     };
+    let mut fields = Vec::new();
+    let mut sensitive_values = Vec::new();
+    for (key, value, sensitive) in stored_fields {
+        if sensitive || is_default_sensitive_key(&key) {
+            sensitive_values.push(value);
+        } else {
+            fields.push((key, value));
+        }
+    }
     let tags = {
         let mut stmt = conn.prepare(
             "SELECT tag
@@ -277,18 +291,25 @@ fn build_vault_document(
 
     let mut body_parts = Vec::with_capacity(fields.len() + 2);
     if let Some(notes) = notes {
-        body_parts.push(normalize_text(&notes));
+        body_parts.push(redact_sensitive_values(&notes, &sensitive_values));
     }
     for (key, value) in fields {
-        body_parts.push(join_unique([normalize_text(&key), normalize_text(&value)]));
+        body_parts.push(join_unique([
+            redact_sensitive_values(&key, &sensitive_values),
+            redact_sensitive_values(&value, &sensitive_values),
+        ]));
     }
     let aliases = if let Some((summary, aliases_json, status)) = ai_metadata {
         if status == "ready" {
             if let Some(summary) = summary {
-                body_parts.push(normalize_text(&summary));
+                body_parts.push(redact_sensitive_values(&summary, &sensitive_values));
             }
             let parsed: Vec<String> = serde_json::from_str(&aliases_json)?;
-            join_unique(parsed.into_iter().map(|alias| normalize_text(&alias)))
+            join_unique(
+                parsed
+                    .into_iter()
+                    .map(|alias| redact_sensitive_values(&alias, &sensitive_values)),
+            )
         } else {
             String::new()
         }
@@ -298,11 +319,25 @@ fn build_vault_document(
 
     Ok(SearchDocument {
         unified_id: unified_id.to_string(),
-        title: normalize_text(&title),
+        title: redact_sensitive_values(&title, &sensitive_values),
         body: join_unique(body_parts),
-        tags: join_unique(tags.into_iter().map(|tag| normalize_text(&tag))),
+        tags: join_unique(
+            tags.into_iter()
+                .map(|tag| redact_sensitive_values(&tag, &sensitive_values)),
+        ),
         aliases,
     })
+}
+
+pub(crate) fn redact_sensitive_values(value: &str, sensitive_values: &[String]) -> String {
+    let mut safe = normalize_text(value);
+    for sensitive in sensitive_values {
+        let sensitive = normalize_text(sensitive);
+        if !sensitive.is_empty() {
+            safe = safe.replace(&sensitive, " ");
+        }
+    }
+    normalize_text(&safe)
 }
 
 fn source_kind_mismatch(unified_id: &str) -> StorageError {
