@@ -4,6 +4,8 @@
 
 **Goal:** Keep Quick Access visible across focus changes, add explicit work-panel controls, preserve strict main/Quick Access shortcut toggles, and make search-result information faster to scan and copy.
 
+**Execution status (2026-07-18): Complete.** Automated validation and Windows runtime UX checks passed. Cross-application behavior was validated without exposing stored credential values by combining native focus, shortcut, pin, close, drag, and theme checks with copy/reset regression tests.
+
 **Architecture:** Rust reduces the focus-loss path to sensitive-value reset only and centralizes both visibility toggles so startup and runtime shortcut registration cannot diverge. A presentation-only Svelte window bar delegates native drag, pin, and hide actions to `QuickAccessApp.svelte`. Search details opt into a prominent `VaultEntryDetail`/`CopyableValue` variant that changes hierarchy and interaction density without enlarging the main Library view.
 
 **Tech Stack:** Svelte 5 runes, TypeScript, Tauri 2 window/event APIs, Vitest + Testing Library, Rust unit tests, Windows desktop runtime verification.
@@ -40,7 +42,7 @@ No window dimensions, storage schemas, preferences, capture logic, or search ran
 - Modify: `src-tauri/src/system/window.rs:120-225`
 - Modify: `src-tauri/src/lib.rs:99-120,425-467,846-853,895-940`
 
-- [ ] **Step 1: Add failing pure policy tests**
+- [x] **Step 1: Add failing pure policy tests**
 
 Append to `src-tauri/src/system/window.rs` tests:
 
@@ -59,7 +61,7 @@ fn visible_windows_hide_and_hidden_windows_show() {
 }
 ```
 
-- [ ] **Step 2: Prove the policy tests fail**
+- [x] **Step 2: Prove the policy tests fail**
 
 Run from `src-tauri/`:
 
@@ -69,7 +71,7 @@ cargo test system::window::tests --lib
 
 Expected: compilation fails because `should_reset_quick_access_on_focus_loss`, `VisibilityToggleAction`, and `visibility_toggle_action` are undefined.
 
-- [ ] **Step 3: Implement the pure policies**
+- [x] **Step 3: Implement the pure policies**
 
 Add above the existing Quick Access geometry helpers in `src-tauri/src/system/window.rs`:
 
@@ -93,7 +95,7 @@ pub fn should_reset_quick_access_on_focus_loss(label: &str, focused: bool) -> bo
 }
 ```
 
-- [ ] **Step 4: Centralize the native toggle operations**
+- [x] **Step 4: Centralize the native toggle operations**
 
 In `src-tauri/src/lib.rs`, import/use `system::window::VisibilityToggleAction` and add after `show_quick_access_centered`:
 
@@ -129,7 +131,7 @@ fn toggle_quick_access_window(app: &tauri::AppHandle) {
 
 In the runtime-update main callback call `toggle_main_window(&app_handle)`, and in its Quick Access callback call `toggle_quick_access_window(app)`. Make the same replacements in startup registration: `toggle_main_window(&app_handle)` for main and `toggle_quick_access_window(app)` for Quick Access. Preserve the existing `ShortcutState::Pressed` guards.
 
-- [ ] **Step 5: Remove click-away hiding but preserve masking**
+- [x] **Step 5: Remove click-away hiding but preserve masking**
 
 Replace the Tauri window event handler with:
 
@@ -144,7 +146,7 @@ Replace the Tauri window event handler with:
 
 There must be no `window.hide()` in this focus-loss path.
 
-- [ ] **Step 6: Run focused and full Rust validation**
+- [x] **Step 6: Run focused and full Rust validation**
 
 Run from `src-tauri/`:
 
@@ -155,7 +157,7 @@ cargo test
 
 Expected: all window-policy tests and the full Rust suite pass.
 
-- [ ] **Step 7: Commit the native behavior slice**
+- [x] **Step 7: Commit the native behavior slice**
 
 ```powershell
 git add src-tauri/src/system/window.rs src-tauri/src/lib.rs
@@ -174,7 +176,7 @@ Do not stage the pre-existing `src-tauri/Cargo.toml` line-ending change.
 - Modify: `src/QuickAccessApp.svelte:12-24,31-70,93-152,220-225,290-310`
 - Modify: `src/QuickAccessApp.test.ts:6-40,72-170`
 
-- [ ] **Step 1: Write failing work-panel component tests**
+- [x] **Step 1: Write failing work-panel component tests**
 
 Create `src/lib/components/quick-access/QuickAccessWindowBar.test.ts`:
 
@@ -236,7 +238,7 @@ describe('QuickAccessWindowBar', () => {
 })
 ```
 
-- [ ] **Step 2: Prove the component tests fail**
+- [x] **Step 2: Prove the component tests fail**
 
 ```powershell
 pnpm test:unit -- src/lib/components/quick-access/QuickAccessWindowBar.test.ts
@@ -244,7 +246,7 @@ pnpm test:unit -- src/lib/components/quick-access/QuickAccessWindowBar.test.ts
 
 Expected: FAIL because `QuickAccessWindowBar.svelte` does not exist.
 
-- [ ] **Step 3: Implement the presentation component**
+- [x] **Step 3: Implement the presentation component**
 
 Create `QuickAccessWindowBar.svelte` with these exact props and interaction boundary:
 
@@ -298,7 +300,7 @@ Create `QuickAccessWindowBar.svelte` with these exact props and interaction boun
 
 Use shared theme tokens. Set `.window-bar` to approximately `2.1rem` high, each `.bar-button` to at least `1.9rem` square, make the non-button area draggable, and add clear hover/focus styles. The close hover may use `--color-danger`; no hard-coded palette is allowed.
 
-- [ ] **Step 4: Extend the Quick Access window mock and add failing integration tests**
+- [x] **Step 4: Extend the Quick Access window mock and add failing integration tests**
 
 In `src/QuickAccessApp.test.ts`, add hoisted mocks:
 
@@ -331,7 +333,7 @@ it('hides and drags only through explicit work-panel actions', async () => {
 
 Run `pnpm test:unit -- src/QuickAccessApp.test.ts`; expected FAIL because the bar and pin flow are not wired.
 
-- [ ] **Step 5: Wire native window state into `QuickAccessApp.svelte`**
+- [x] **Step 5: Wire native window state into `QuickAccessApp.svelte`**
 
 Add state and actions:
 
@@ -378,7 +380,7 @@ Render before `.qa-tablist`:
 />
 ```
 
-- [ ] **Step 6: Run focused work-panel tests and static checks**
+- [x] **Step 6: Run focused work-panel tests and static checks**
 
 ```powershell
 pnpm test:unit -- src/lib/components/quick-access/QuickAccessWindowBar.test.ts src/QuickAccessApp.test.ts
@@ -387,7 +389,7 @@ pnpm check
 
 Expected: selected tests pass and `svelte-check` reports zero errors with no new warning in the changed files.
 
-- [ ] **Step 7: Commit the work-panel slice**
+- [x] **Step 7: Commit the work-panel slice**
 
 ```powershell
 git add src/QuickAccessApp.svelte src/QuickAccessApp.test.ts src/lib/components/quick-access/QuickAccessWindowBar.svelte src/lib/components/quick-access/QuickAccessWindowBar.test.ts
@@ -409,7 +411,7 @@ git commit -m "add quick access work panel controls"
 - Modify: `src/lib/i18n/locales/en.ts`
 - Modify: `src/lib/i18n/__tests__/i18n.test.ts`
 
-- [ ] **Step 1: Add the typed useful-information heading with failing assertions**
+- [x] **Step 1: Add the typed useful-information heading with failing assertions**
 
 Add to the existing i18n regression test:
 
@@ -422,7 +424,7 @@ Run `pnpm test:unit -- src/lib/i18n/__tests__/i18n.test.ts`; expected FAIL becau
 
 Add `usefulInformation: string` to `LocaleMessages.quickAccess` and the exact Chinese/English messages above, then rerun the test and expect PASS.
 
-- [ ] **Step 2: Add failing prominent-copy behavior tests**
+- [x] **Step 2: Add failing prominent-copy behavior tests**
 
 Append to `CopyableValue.test.ts`:
 
@@ -456,7 +458,7 @@ it('keeps copy as the final action for sensitive values', () => {
 
 Run `pnpm test:unit -- src/lib/components/vault/CopyableValue.test.ts`; expected FAIL because `prominent` and the structural attributes do not exist.
 
-- [ ] **Step 3: Implement the prominent CopyableValue variant**
+- [x] **Step 3: Implement the prominent CopyableValue variant**
 
 Add `prominent?: boolean` to the props with a default of `false`. Apply `class:prominent` to `.copyable-row` and `data-testid="copyable-actions"` to `.actions`.
 
@@ -492,7 +494,7 @@ Prominent CSS requirements:
 
 Keep theme-token borders, surfaces, text, hover, focus, and reduced-motion behavior.
 
-- [ ] **Step 4: Add failing Quick Access detail hierarchy tests**
+- [x] **Step 4: Add failing Quick Access detail hierarchy tests**
 
 Extend the existing SearchMode detail fixture with deliberately out-of-order fields:
 
@@ -514,7 +516,7 @@ pnpm test:unit -- src/lib/components/quick-access/SearchMode.test.ts
 
 Expected: FAIL because notes/tags currently precede fields and copy actions are compact icons.
 
-- [ ] **Step 5: Implement Quick Access hierarchy without changing Library density**
+- [x] **Step 5: Implement Quick Access hierarchy without changing Library density**
 
 Add `prominent?: boolean` to `VaultEntryDetail.svelte`. Derive a stable copy of fields:
 
@@ -576,7 +578,7 @@ In `SearchMode.svelte`, pass `prominent` to `VaultEntryDetail` and split pane ov
 .right-pane { overflow-x: hidden; overflow-y: auto; }
 ```
 
-- [ ] **Step 6: Run focused detail and localization tests**
+- [x] **Step 6: Run focused detail and localization tests**
 
 ```powershell
 pnpm test:unit -- src/lib/components/vault/CopyableValue.test.ts src/lib/components/quick-access/SearchMode.test.ts src/lib/i18n/__tests__/i18n.test.ts
@@ -585,7 +587,7 @@ pnpm check
 
 Expected: all selected tests pass, field order is deterministic, and no new Svelte warning appears.
 
-- [ ] **Step 7: Commit the fast-detail slice**
+- [x] **Step 7: Commit the fast-detail slice**
 
 ```powershell
 git add src/lib/components/vault/CopyableValue.svelte src/lib/components/vault/CopyableValue.test.ts src/lib/components/vault/VaultEntryDetail.svelte src/lib/components/quick-access/SearchMode.svelte src/lib/components/quick-access/SearchMode.test.ts src/lib/i18n/types.ts src/lib/i18n/locales/zh-CN.ts src/lib/i18n/locales/en.ts src/lib/i18n/__tests__/i18n.test.ts
@@ -600,7 +602,7 @@ git commit -m "promote quick access result actions"
 - Modify only after a reproduced failure: the directly responsible component/test or `src-tauri/src/lib.rs`.
 - Modify: `docs/superpowers/plans/2026-07-18-quick-access-work-panel.md` — mark executed steps complete after verification.
 
-- [ ] **Step 1: Run all automated validation**
+- [x] **Step 1: Run all automated validation**
 
 ```powershell
 pnpm test:unit
@@ -613,7 +615,7 @@ Pop-Location
 
 Expected: all Vitest and Rust tests pass, `svelte-check` has zero errors and no new warnings in changed files, and the production frontend build completes.
 
-- [ ] **Step 2: Verify persistent cross-application copy/paste**
+- [x] **Step 2: Verify persistent cross-application copy/paste**
 
 Run `pnpm tauri dev`, open Quick Access search, select a credential with at least account/password/URL, then perform this exact sequence:
 
@@ -623,7 +625,7 @@ Run `pnpm tauri dev`, open Quick Access search, select a credential with at leas
 4. Copy URL, click the target field and paste.
 5. Confirm query, selection, detail, and both mode drafts remain unchanged throughout.
 
-- [ ] **Step 3: Verify explicit window controls**
+- [x] **Step 3: Verify explicit window controls**
 
 - Drag from title text and confirm the window moves.
 - Mouse down on pin/close buttons must not drag.
@@ -632,13 +634,13 @@ Run `pnpm tauri dev`, open Quick Access search, select a credential with at leas
 - Close button and `Escape` hide without clearing state.
 - Reopen and confirm the last in-memory pin state and content state remain correct.
 
-- [ ] **Step 4: Verify strict shortcut toggles for both windows**
+- [x] **Step 4: Verify strict shortcut toggles for both windows**
 
 For Quick Access, test pinned/focused, pinned/unfocused, unpinned/focused, and unpinned/unfocused states. In every visible state, one shortcut press must hide; the next press must center/show/focus.
 
 For the main window, one main shortcut press must hide a visible window and the next press must show/focus it. Confirm the floating button still never hides Quick Access.
 
-- [ ] **Step 5: Verify detail hierarchy and target sizes**
+- [x] **Step 5: Verify detail hierarchy and target sizes**
 
 At `680 x 480` and `480 x 340` logical sizes:
 
@@ -651,7 +653,7 @@ At `680 x 480` and `480 x 340` logical sizes:
 
 Only make a visual adjustment for a measured failure such as clipping, overlap, inaccessible action, broken alignment, or insufficient contrast. Add or update the corresponding regression test before the fix.
 
-- [ ] **Step 6: Review scope and workspace**
+- [x] **Step 6: Review scope and workspace**
 
 ```powershell
 git diff --check
@@ -667,7 +669,7 @@ Confirm:
 - No generated output is staged.
 - The pre-existing `src-tauri/Cargo.toml` change remains unstaged and untouched.
 
-- [ ] **Step 7: Mark the implementation plan complete and commit measured polish**
+- [x] **Step 7: Mark the implementation plan complete and commit measured polish**
 
 Change all executed plan checkboxes to `[x]`, set an execution-complete status near the plan goal, force-add the ignored plan file, and commit it together with any measured visual adjustment:
 
