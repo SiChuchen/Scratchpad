@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use rusqlite::{params, Connection, OptionalExtension};
 
@@ -35,6 +35,24 @@ struct CandidateDocument {
     aliases: String,
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+struct FtsFieldMask(u8);
+
+impl FtsFieldMask {
+    const TITLE: u8 = 1 << 0;
+    const BODY: u8 = 1 << 1;
+    const TAGS: u8 = 1 << 2;
+    const ALIASES: u8 = 1 << 3;
+
+    fn insert(&mut self, field: u8) {
+        self.0 |= field;
+    }
+
+    fn contains(self, field: u8) -> bool {
+        self.0 & field != 0
+    }
+}
+
 pub fn search_local(
     conn: &Connection,
     query: &str,
@@ -60,21 +78,26 @@ pub fn search_local(
             .collect();
     }
 
-    let mut candidate_ids = BTreeSet::new();
-    for term in &terms {
-        candidate_ids.extend(matching_ids(conn, &term.text, &term.tokens)?);
+    let mut candidates: BTreeMap<String, Vec<FtsFieldMask>> = BTreeMap::new();
+    for (term_index, term) in terms.iter().enumerate() {
+        for (unified_id, fields) in matching_fields(conn, &term.text, &term.tokens)? {
+            let term_fields = candidates
+                .entry(unified_id)
+                .or_insert_with(|| vec![FtsFieldMask::default(); terms.len()]);
+            term_fields[term_index].0 |= fields.0;
+        }
     }
 
     let mut hits = Vec::new();
-    for unified_id in candidate_ids {
+    for (unified_id, term_fields) in candidates {
         let document = candidate_document(conn, &unified_id)?;
         if !passes_filters(document.kind, &document.created_at, plan) {
             continue;
         }
         let mut score = 0.0;
         let mut ai_contributed = false;
-        for term in &terms {
-            let term_score = score_term(&document, &term.comparison_key, &term.tokens);
+        for (term, fields) in terms.iter().zip(term_fields) {
+            let term_score = score_term(&document, &term.comparison_key, &term.tokens, fields);
             if term_score > 0.0 {
                 score += term_score;
                 ai_contributed |= term.ai_expanded;
@@ -198,23 +221,56 @@ fn ensure_complete_projections(conn: &Connection) -> StorageResult<()> {
     Ok(())
 }
 
-fn matching_ids(
+fn matching_fields(
     conn: &Connection,
     term: &str,
     tokens: &[String],
-) -> StorageResult<BTreeSet<String>> {
-    let mut ids = BTreeSet::new();
+) -> StorageResult<BTreeMap<String, FtsFieldMask>> {
+    let mut matches = BTreeMap::new();
     let expression = fts_expression(tokens);
     {
         let mut stmt = conn.prepare(
-            "SELECT unified_id FROM content_fts
+            "SELECT unified_id, 1 AS field FROM content_fts
              WHERE content_fts MATCH ?1
-             ORDER BY unified_id ASC",
+             UNION ALL
+             SELECT unified_id, 2 AS field FROM content_fts
+             WHERE content_fts MATCH ?2
+             UNION ALL
+             SELECT unified_id, 3 AS field FROM content_fts
+             WHERE content_fts MATCH ?3
+             UNION ALL
+             SELECT unified_id, 4 AS field FROM content_fts
+             WHERE content_fts MATCH ?4
+             ORDER BY unified_id ASC, field ASC",
         )?;
         let matched = stmt
-            .query_map(params![expression], |row| row.get::<_, String>(0))?
+            .query_map(
+                params![
+                    fts_field_expression("title", &expression),
+                    fts_field_expression("body", &expression),
+                    fts_field_expression("tags", &expression),
+                    fts_field_expression("aliases", &expression),
+                ],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
+            )?
             .collect::<Result<Vec<_>, _>>()?;
-        ids.extend(matched);
+        for (unified_id, field) in matched {
+            let field = match field {
+                1 => FtsFieldMask::TITLE,
+                2 => FtsFieldMask::BODY,
+                3 => FtsFieldMask::TAGS,
+                4 => FtsFieldMask::ALIASES,
+                _ => {
+                    return Err(StorageError::Validation(
+                        "unknown FTS search field".to_string(),
+                    ))
+                }
+            };
+            matches
+                .entry(unified_id)
+                .or_insert_with(FtsFieldMask::default)
+                .insert(field);
+        }
     }
     {
         let mut stmt = conn.prepare(
@@ -228,9 +284,11 @@ fn matching_ids(
         let matched = stmt
             .query_map(params![term], |row| row.get::<_, String>(0))?
             .collect::<Result<Vec<_>, _>>()?;
-        ids.extend(matched);
+        for unified_id in matched {
+            matches.entry(unified_id).or_default();
+        }
     }
-    Ok(ids)
+    Ok(matches)
 }
 
 fn unicode_tokens(term: &str) -> Vec<String> {
@@ -250,6 +308,10 @@ fn fts_expression(tokens: &[String]) -> String {
             .collect::<Vec<_>>()
             .join(" ")
     }
+}
+
+fn fts_field_expression(field: &str, expression: &str) -> String {
+    format!("{field} : ({expression})")
 }
 
 fn candidate_document(conn: &Connection, unified_id: &str) -> StorageResult<CandidateDocument> {
@@ -306,7 +368,12 @@ fn passes_filters(kind: ContentKind, created_at: &str, plan: Option<&UnifiedQuer
     true
 }
 
-fn score_term(document: &CandidateDocument, term: &str, tokens: &[String]) -> f64 {
+fn score_term(
+    document: &CandidateDocument,
+    term: &str,
+    tokens: &[String],
+    fts_fields: FtsFieldMask,
+) -> f64 {
     let title = comparison_key(&document.title);
     let body = comparison_key(&document.body);
     let tags = comparison_key(&document.tags);
@@ -343,6 +410,18 @@ fn score_term(document: &CandidateDocument, term: &str, tokens: &[String]) -> f6
         if tokens.iter().all(|token| aliases.contains(token)) {
             score = score.max(ALIAS_WEIGHT);
         }
+    }
+    if fts_fields.contains(FtsFieldMask::TITLE) {
+        score = score.max(TITLE_PREFIX_WEIGHT);
+    }
+    if fts_fields.contains(FtsFieldMask::TAGS) {
+        score = score.max(TAG_WEIGHT);
+    }
+    if fts_fields.contains(FtsFieldMask::BODY) {
+        score = score.max(BODY_WEIGHT);
+    }
+    if fts_fields.contains(FtsFieldMask::ALIASES) {
+        score = score.max(ALIAS_WEIGHT);
     }
     score
 }
@@ -423,6 +502,18 @@ mod tests {
                 "database scheduled window",
             ),
             ("rank-percent", "Budget 100% ready", "Percent body"),
+            (
+                "rank-accented-title",
+                "irrelevant accented title",
+                "Café handbook",
+            ),
+            (
+                "rank-plain-title",
+                "irrelevant plain title",
+                "Cafe handbook",
+            ),
+            ("rank-accented-body", "visit café tonight", "Accented body"),
+            ("rank-plain-body", "visit cafe tonight", "Plain body"),
         ];
         for (id, content, title) in dock_rows {
             conn.execute(
@@ -587,6 +678,26 @@ mod tests {
 
         assert_eq!(ids(&hits), ["dock:rank-percent"]);
         assert_eq!(hits[0].score, 30.0);
+    }
+
+    #[test]
+    fn unicode61_diacritic_matching_keeps_title_and_body_field_weights_in_both_directions() {
+        let conn = fixture_with_ranked_rows();
+        let expected = [
+            ("dock:rank-accented-title", 80.0),
+            ("dock:rank-plain-title", 80.0),
+            ("dock:rank-accented-body", 30.0),
+            ("dock:rank-plain-body", 30.0),
+        ];
+
+        for query in ["cafe", "café"] {
+            let hits = search_local(&conn, query, None, 20).unwrap();
+            let actual: Vec<(&str, f64)> = hits
+                .iter()
+                .map(|hit| (hit.summary.id.as_str(), hit.score))
+                .collect();
+            assert_eq!(actual, expected, "query {query:?}");
+        }
     }
 
     #[test]
