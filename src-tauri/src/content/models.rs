@@ -125,22 +125,29 @@ pub struct ContentCapabilities {
 
 impl ContentCapabilities {
     pub fn for_item(kind: ContentKind, retention: RetentionState, reorderable: bool) -> Self {
+        let (copy_text, copy_image, copy_file, copy_path, open_url, reveal_sensitive) = match kind {
+            ContentKind::Text => (true, false, false, false, false, false),
+            ContentKind::Image => (false, true, false, true, false, false),
+            ContentKind::File => (false, false, true, true, false, false),
+            ContentKind::Credential => (true, false, false, false, false, true),
+            ContentKind::Bookmark => (true, false, false, false, true, false),
+            ContentKind::Note => (true, false, false, false, false, false),
+        };
+        let (save, unsave) = match retention {
+            RetentionState::Temporary => (true, false),
+            RetentionState::Saved => (false, true),
+        };
+
         Self {
-            copy_text: matches!(
-                kind,
-                ContentKind::Text
-                    | ContentKind::Credential
-                    | ContentKind::Bookmark
-                    | ContentKind::Note
-            ),
-            copy_image: kind == ContentKind::Image,
-            copy_file: kind == ContentKind::File,
-            copy_path: matches!(kind, ContentKind::Image | ContentKind::File),
-            open_url: kind == ContentKind::Bookmark,
-            reveal_sensitive: kind == ContentKind::Credential,
+            copy_text,
+            copy_image,
+            copy_file,
+            copy_path,
+            open_url,
+            reveal_sensitive,
             edit: true,
-            save: retention == RetentionState::Temporary,
-            unsave: retention == RetentionState::Saved,
+            save,
+            unsave,
             delete: true,
             reorder: reorderable,
         }
@@ -307,6 +314,26 @@ pub struct ContentRevision {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    fn test_summary(kind: ContentKind, id: &str) -> ContentSummary {
+        let retention = match kind {
+            ContentKind::Text | ContentKind::Image | ContentKind::File => RetentionState::Temporary,
+            ContentKind::Credential | ContentKind::Bookmark | ContentKind::Note => {
+                RetentionState::Saved
+            }
+        };
+        ContentSummary {
+            id: id.to_string(),
+            kind,
+            retention,
+            title: format!("{kind:?}"),
+            preview: None,
+            created_at: "2026-07-18T08:00:00Z".to_string(),
+            updated_at: "2026-07-18T08:01:00Z".to_string(),
+            cleanup_at: None,
+            capabilities: ContentCapabilities::for_item(kind, retention, false),
+        }
+    }
 
     #[test]
     fn content_source_round_trips_and_rejects_unknown_values() {
@@ -485,5 +512,206 @@ mod tests {
         assert!(value.get("source").is_none());
         assert!(value.get("sourceId").is_none());
         assert!(value.get("table").is_none());
+    }
+
+    #[test]
+    fn all_content_detail_variants_round_trip_with_kind_tags_and_camel_case_assets() {
+        let field = UnifiedField {
+            key: "username".to_string(),
+            value: "operator".to_string(),
+            is_sensitive: false,
+            sort_order: 0,
+        };
+        let tag = UnifiedTag {
+            tag: "Work".to_string(),
+            normalized_tag: "work".to_string(),
+            source: ContentTagSource::Manual,
+        };
+        let cases = [
+            (
+                "text",
+                ContentDetail::Text {
+                    summary: test_summary(ContentKind::Text, "dock:de-text"),
+                    title: "Text".to_string(),
+                    body: "hello".to_string(),
+                },
+            ),
+            (
+                "image",
+                ContentDetail::Image {
+                    summary: test_summary(ContentKind::Image, "dock:de-image"),
+                    file_name: "photo.png".to_string(),
+                    asset_path: "assets/photo.png".to_string(),
+                    mime_type: Some("image/png".to_string()),
+                    width: Some(640),
+                    height: Some(480),
+                    available: true,
+                },
+            ),
+            (
+                "file",
+                ContentDetail::File {
+                    summary: test_summary(ContentKind::File, "dock:de-file"),
+                    file_name: "report.pdf".to_string(),
+                    asset_path: "assets/report.pdf".to_string(),
+                    mime_type: Some("application/pdf".to_string()),
+                    size_bytes: Some(4096),
+                    available: true,
+                },
+            ),
+            (
+                "credential",
+                ContentDetail::Credential {
+                    summary: test_summary(ContentKind::Credential, "vault:ve-credential"),
+                    fields: vec![field.clone()],
+                    notes: Some("Rotate monthly".to_string()),
+                    tags: vec![tag.clone()],
+                },
+            ),
+            (
+                "bookmark",
+                ContentDetail::Bookmark {
+                    summary: test_summary(ContentKind::Bookmark, "vault:ve-bookmark"),
+                    url: "https://example.test".to_string(),
+                    fields: vec![field.clone()],
+                    notes: None,
+                    tags: vec![tag.clone()],
+                },
+            ),
+            (
+                "note",
+                ContentDetail::Note {
+                    summary: test_summary(ContentKind::Note, "vault:ve-note"),
+                    body: "Remember this".to_string(),
+                    fields: vec![field],
+                    tags: vec![tag],
+                },
+            ),
+        ];
+
+        for (expected_kind, detail) in cases {
+            let value = serde_json::to_value(&detail).unwrap();
+            assert_eq!(value["kind"], json!(expected_kind));
+            assert_eq!(value["summary"]["kind"], json!(expected_kind));
+
+            if expected_kind == "image" {
+                assert_eq!(value["fileName"], json!("photo.png"));
+                assert_eq!(value["assetPath"], json!("assets/photo.png"));
+                assert_eq!(value["mimeType"], json!("image/png"));
+                assert!(value.get("file_name").is_none());
+                assert!(value.get("asset_path").is_none());
+                assert!(value.get("mime_type").is_none());
+            }
+            if expected_kind == "file" {
+                assert_eq!(value["sizeBytes"], json!(4096));
+                assert!(value.get("size_bytes").is_none());
+            }
+
+            let decoded: ContentDetail = serde_json::from_value(value).unwrap();
+            assert_eq!(decoded, detail);
+        }
+    }
+
+    #[test]
+    fn browse_scope_and_content_operation_use_stable_wire_values() {
+        for (scope, wire) in [
+            (BrowseScope::Temporary, "temporary"),
+            (BrowseScope::All, "all"),
+            (BrowseScope::Saved, "saved"),
+        ] {
+            assert_eq!(serde_json::to_value(scope).unwrap(), json!(wire));
+            assert_eq!(
+                serde_json::from_value::<BrowseScope>(json!(wire)).unwrap(),
+                scope
+            );
+        }
+
+        for (operation, wire) in [
+            (ContentOperation::Created, "created"),
+            (ContentOperation::Updated, "updated"),
+            (ContentOperation::Retention, "retention"),
+            (ContentOperation::Reordered, "reordered"),
+            (ContentOperation::Deleted, "deleted"),
+            (ContentOperation::Restored, "restored"),
+        ] {
+            assert_eq!(serde_json::to_value(operation).unwrap(), json!(wire));
+            assert_eq!(
+                serde_json::from_value::<ContentOperation>(json!(wire)).unwrap(),
+                operation
+            );
+        }
+    }
+
+    #[test]
+    fn mutations_and_events_use_stable_camel_case_json_shapes() {
+        let change = ContentChange {
+            id: "dock:de-17".to_string(),
+            operation: ContentOperation::Retention,
+        };
+        let mutation = ContentMutation {
+            value: DeleteUndoToken {
+                token: "undo-1".to_string(),
+                expires_at: "2026-07-18T08:05:00Z".to_string(),
+            },
+            revision: 12,
+            changes: vec![change.clone()],
+        };
+        let mutation_json = json!({
+            "value": {
+                "token": "undo-1",
+                "expiresAt": "2026-07-18T08:05:00Z"
+            },
+            "revision": 12,
+            "changes": [{
+                "id": "dock:de-17",
+                "operation": "retention"
+            }]
+        });
+        assert_eq!(serde_json::to_value(&mutation).unwrap(), mutation_json);
+        assert_eq!(
+            serde_json::from_value::<ContentMutation<DeleteUndoToken>>(mutation_json).unwrap(),
+            mutation
+        );
+
+        let changed = ContentChangedEvent {
+            revision: 12,
+            changes: vec![change],
+        };
+        assert_eq!(
+            serde_json::to_value(changed).unwrap(),
+            json!({
+                "revision": 12,
+                "changes": [{
+                    "id": "dock:de-17",
+                    "operation": "retention"
+                }]
+            })
+        );
+
+        let failed = ContentDeleteFailedEvent {
+            token: "undo-1".to_string(),
+            id: "vault:ve-9".to_string(),
+            code: "conflict".to_string(),
+        };
+        assert_eq!(
+            serde_json::to_value(failed).unwrap(),
+            json!({
+                "token": "undo-1",
+                "id": "vault:ve-9",
+                "code": "conflict"
+            })
+        );
+    }
+
+    #[test]
+    fn unified_content_id_deserialization_rejects_invalid_wire_values() {
+        for value in [
+            json!("de-17"),
+            json!("archive:de-17"),
+            json!("dock:"),
+            json!(null),
+        ] {
+            assert!(serde_json::from_value::<UnifiedContentId>(value).is_err());
+        }
     }
 }
