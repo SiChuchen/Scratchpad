@@ -1,6 +1,6 @@
 # Unified Content Lifecycle and Search Design
 
-**Status:** Design approved; pending written-spec review
+**Status:** Approved for implementation planning
 
 **Date:** 2026-07-18
 
