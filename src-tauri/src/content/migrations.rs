@@ -92,6 +92,7 @@ pub fn ensure_content_schema(conn: &mut Connection, cleanup_days: i64) -> Storag
     let tx = conn.transaction()?;
     backfill_dock_catalog(&tx, cleanup_delta)?;
     backfill_vault_catalog(&tx)?;
+    crate::content::projection::backfill_missing_projections(&tx)?;
     tx.commit()?;
     Ok(())
 }
@@ -416,6 +417,25 @@ mod tests {
             )
             .unwrap();
         }
+        conn.execute(
+            "INSERT INTO vault_fields(
+                id, entry_id, key, value, is_sensitive, sort_order
+             ) VALUES
+             ('fixture-user', 'credential-new', 'username', 'alice', 0, 0),
+             ('fixture-password', 'credential-new', 'password', 'NeverIndexMe', 1, 1)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO vault_ai_metadata(
+                entry_id, summary, search_aliases_json, content_hash, status
+             ) VALUES (
+                'credential-new', 'approved migration summary',
+                '[\"migration alias\"]', 'fixture-hash', 'ready'
+             )",
+            [],
+        )
+        .unwrap();
 
         conn
     }
@@ -587,8 +607,23 @@ mod tests {
                 row.get::<_, i64>(0)
             })
             .unwrap(),
-            0
+            5
         );
+        let projected_text: String = conn
+            .prepare(
+                "SELECT title || ' ' || body || ' ' || tags || ' ' || aliases
+                 FROM content_fts ORDER BY unified_id",
+            )
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap()
+            .join(" ");
+        assert!(projected_text.contains("alice"));
+        assert!(projected_text.contains("migration alias"));
+        assert!(!projected_text.contains("NeverIndexMe"));
+        assert!(!projected_text.contains("C:/fixtures"));
         conn.execute(
             "INSERT INTO content_fts(unified_id, title, body, tags, aliases)
              VALUES ('probe', 'hello', '', '', '')",
@@ -709,6 +744,12 @@ mod tests {
         let mut conn = fixture_with_legacy_rows();
         ensure_content_schema(&mut conn, 7).unwrap();
         let first_rows = catalog_rows(&conn);
+        conn.execute(
+            "UPDATE content_fts SET title = 'preserved projection'
+             WHERE unified_id = 'dock:home-only'",
+            [],
+        )
+        .unwrap();
 
         conn.execute(
             "UPDATE home_entries SET sort_order = 99.0 WHERE entry_id = 'home-only'",
@@ -725,6 +766,15 @@ mod tests {
         ensure_content_schema(&mut conn, 30).unwrap();
 
         assert_eq!(catalog_rows(&conn), first_rows);
+        assert_eq!(
+            conn.query_row(
+                "SELECT title FROM content_fts WHERE unified_id = 'dock:home-only'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .unwrap(),
+            "preserved projection"
+        );
         assert_eq!(
             conn.query_row("SELECT COUNT(*) FROM content_catalog", [], |row| {
                 row.get::<_, i64>(0)
@@ -858,6 +908,52 @@ mod tests {
 
         assert_eq!(get_schema_version(&conn).unwrap(), 3);
         assert!(object_exists(&conn, "table", "content_catalog"));
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM content_catalog", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap(),
+            0
+        );
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM content_fts", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap(),
+            0
+        );
+    }
+
+    #[test]
+    fn failed_projection_backfill_rolls_back_catalog_and_all_new_projection_rows() {
+        let mut conn = fixture_with_legacy_rows();
+        ensure_schema(
+            &mut conn,
+            &[Migration::new(
+                3,
+                "unified content catalog",
+                CONTENT_SCHEMA_SQL,
+            )],
+        )
+        .unwrap();
+        conn.execute_batch(
+            r#"
+            DROP TABLE content_fts;
+            CREATE TABLE content_fts (
+                unified_id TEXT NOT NULL
+                    CHECK (unified_id != 'dock:note-file'),
+                title TEXT NOT NULL,
+                body TEXT NOT NULL,
+                tags TEXT NOT NULL,
+                aliases TEXT NOT NULL
+            );
+            "#,
+        )
+        .unwrap();
+
+        assert!(ensure_content_schema(&mut conn, 7).is_err());
+
+        assert_eq!(get_schema_version(&conn).unwrap(), 3);
         assert_eq!(
             conn.query_row("SELECT COUNT(*) FROM content_catalog", [], |row| {
                 row.get::<_, i64>(0)
