@@ -79,6 +79,7 @@ struct VaultCatalogRow {
 }
 
 pub fn ensure_content_schema(conn: &mut Connection, cleanup_days: i64) -> StorageResult<()> {
+    let cleanup_delta = validate_cleanup_days(cleanup_days)?;
     ensure_schema(
         conn,
         &[Migration::new(
@@ -88,14 +89,23 @@ pub fn ensure_content_schema(conn: &mut Connection, cleanup_days: i64) -> Storag
         )],
     )?;
 
-    let cleanup_delta = Duration::try_days(cleanup_days.max(0)).ok_or_else(|| {
-        StorageError::Validation(format!("cleanup days are out of range: {cleanup_days}"))
-    })?;
     let tx = conn.transaction()?;
     backfill_dock_catalog(&tx, cleanup_delta)?;
     backfill_vault_catalog(&tx)?;
     tx.commit()?;
     Ok(())
+}
+
+fn validate_cleanup_days(cleanup_days: i64) -> StorageResult<Duration> {
+    if cleanup_days < 0 {
+        return Err(StorageError::Validation(format!(
+            "cleanup days cannot be negative: {cleanup_days}"
+        )));
+    }
+
+    Duration::try_days(cleanup_days).ok_or_else(|| {
+        StorageError::Validation(format!("cleanup days are out of range: {cleanup_days}"))
+    })
 }
 
 fn backfill_dock_catalog(tx: &Transaction<'_>, cleanup_delta: Duration) -> StorageResult<()> {
@@ -171,10 +181,6 @@ fn backfill_dock_catalog(tx: &Transaction<'_>, cleanup_delta: Duration) -> Stora
 }
 
 fn cleanup_at(retention_changed_at: &str, cleanup_delta: Duration) -> StorageResult<String> {
-    if cleanup_delta.is_zero() {
-        return Ok(retention_changed_at.to_string());
-    }
-
     let parsed = DateTime::parse_from_rfc3339(retention_changed_at).map_err(|error| {
         StorageError::Validation(format!(
             "invalid retention_changed_at {retention_changed_at:?}: {error}"
@@ -185,19 +191,13 @@ fn cleanup_at(retention_changed_at: &str, cleanup_delta: Duration) -> StorageRes
             "cleanup timestamp is out of range for {retention_changed_at:?}"
         ))
     })?;
+    if cleanup_delta.is_zero() {
+        return Ok(retention_changed_at.to_string());
+    }
     Ok(cleanup_at.with_timezone(&Utc).to_rfc3339())
 }
 
 fn backfill_vault_catalog(tx: &Transaction<'_>) -> StorageResult<()> {
-    let mut saved_position = tx
-        .query_row(
-            "SELECT MAX(saved_position)
-             FROM content_catalog
-             WHERE retention_state = 'saved'",
-            [],
-            |row| row.get::<_, Option<f64>>(0),
-        )?
-        .unwrap_or(-1.0);
     let rows = {
         let mut stmt = tx.prepare(
             r#"
@@ -219,9 +219,45 @@ fn backfill_vault_catalog(tx: &Transaction<'_>) -> StorageResult<()> {
         })?;
         rows.collect::<Result<Vec<_>, _>>()?
     };
+    if rows.is_empty() {
+        return Ok(());
+    }
+
+    let null_positions = tx.query_row(
+        "SELECT COUNT(*)
+         FROM content_catalog
+         WHERE retention_state = 'saved' AND saved_position IS NULL",
+        [],
+        |row| row.get::<_, i64>(0),
+    )?;
+    if null_positions != 0 {
+        return Err(StorageError::Validation(
+            "cannot append Vault content after saved rows without positions".to_string(),
+        ));
+    }
+    let mut saved_position = tx
+        .query_row(
+            "SELECT MAX(saved_position)
+             FROM content_catalog
+             WHERE retention_state = 'saved'",
+            [],
+            |row| row.get::<_, Option<f64>>(0),
+        )?
+        .unwrap_or(-1.0);
+    if !saved_position.is_finite() {
+        return Err(StorageError::Validation(
+            "cannot append Vault content after a non-finite saved position".to_string(),
+        ));
+    }
 
     for row in rows {
-        saved_position += 1.0;
+        let next_position = saved_position + 1.0;
+        if !next_position.is_finite() || next_position <= saved_position {
+            return Err(StorageError::Validation(format!(
+                "cannot represent a saved position after {saved_position}"
+            )));
+        }
+        saved_position = next_position;
         tx.execute(
             r#"
             INSERT INTO content_catalog(
@@ -254,6 +290,7 @@ mod tests {
     use crate::content::catalog::catalog_ids_for_scope;
     use crate::content::models::BrowseScope;
     use crate::scratchpad::storage::ensure_dock_schema;
+    use crate::storage::error::StorageError;
     use crate::storage::migration::{ensure_schema, get_schema_version, Migration};
     use crate::vault::storage::ensure_vault_schema;
 
@@ -480,6 +517,46 @@ mod tests {
             != 0
     }
 
+    fn insert_vault_fixture(conn: &Connection, id: &str, updated_at: &str) {
+        conn.execute(
+            "INSERT INTO vault_entries(id, kind, title, notes, created_at, updated_at)
+             VALUES (?1, 'credential', ?1, NULL, '2026-07-11T08:00:00+00:00', ?2)",
+            params![id, updated_at],
+        )
+        .unwrap();
+    }
+
+    fn assert_saved_position_blocks_vault_append(position: Option<f64>) {
+        let mut conn = fixture_with_legacy_rows();
+        ensure_content_schema(&mut conn, 7).unwrap();
+        conn.execute(
+            "UPDATE content_catalog SET saved_position = ?1
+             WHERE unified_id = 'dock:note-file'",
+            params![position],
+        )
+        .unwrap();
+        let before = catalog_rows(&conn);
+
+        ensure_content_schema(&mut conn, 7).unwrap();
+        assert_eq!(catalog_rows(&conn), before);
+
+        insert_vault_fixture(&conn, "append-blocked", "2026-07-12T08:00:00+00:00");
+        let error = ensure_content_schema(&mut conn, 7).unwrap_err();
+
+        assert!(matches!(error, StorageError::Validation(_)));
+        assert_eq!(catalog_rows(&conn), before);
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM content_catalog
+                 WHERE unified_id = 'vault:append-blocked'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+            0
+        );
+    }
+
     #[test]
     fn schema_and_backfill_map_legacy_rows_without_mutating_payloads() {
         let mut conn = fixture_with_legacy_rows();
@@ -658,6 +735,45 @@ mod tests {
     }
 
     #[test]
+    fn later_vault_rows_append_after_existing_saved_order_in_stable_source_order() {
+        let mut conn = fixture_with_legacy_rows();
+        ensure_content_schema(&mut conn, 7).unwrap();
+        let old_ids = catalog_ids_for_scope(&conn, BrowseScope::Saved).unwrap();
+
+        insert_vault_fixture(&conn, "credential-later-b", "2026-07-11T09:00:00+00:00");
+        insert_vault_fixture(&conn, "credential-latest", "2026-07-12T09:00:00+00:00");
+        insert_vault_fixture(&conn, "credential-later-a", "2026-07-11T09:00:00+00:00");
+
+        ensure_content_schema(&mut conn, 7).unwrap();
+
+        let new_ids = catalog_ids_for_scope(&conn, BrowseScope::Saved).unwrap();
+        assert!(new_ids.starts_with(&old_ids));
+        assert_eq!(
+            &new_ids[old_ids.len()..],
+            &[
+                "vault:credential-latest",
+                "vault:credential-later-a",
+                "vault:credential-later-b",
+            ]
+        );
+    }
+
+    #[test]
+    fn null_saved_position_blocks_vault_append_without_reordering_existing_rows() {
+        assert_saved_position_blocks_vault_append(None);
+    }
+
+    #[test]
+    fn infinite_saved_position_blocks_vault_append_without_partial_rows() {
+        assert_saved_position_blocks_vault_append(Some(f64::INFINITY));
+    }
+
+    #[test]
+    fn imprecise_saved_position_successor_blocks_vault_append_without_partial_rows() {
+        assert_saved_position_blocks_vault_append(Some(9_007_199_254_740_992.0));
+    }
+
+    #[test]
     fn zero_cleanup_days_makes_temporary_rows_due_at_retention_change() {
         let mut conn = fixture_with_legacy_rows();
 
@@ -672,6 +788,46 @@ mod tests {
             )
             .unwrap();
         assert_eq!(cleanup_at.as_deref(), Some(retention_changed_at.as_str()));
+    }
+
+    #[test]
+    fn invalid_cleanup_days_are_rejected_before_schema_migration() {
+        for cleanup_days in [-1, i64::MAX] {
+            let mut conn = fixture_with_legacy_rows();
+            let before = legacy_snapshot(&conn);
+
+            let error = ensure_content_schema(&mut conn, cleanup_days).unwrap_err();
+
+            assert!(matches!(error, StorageError::Validation(_)));
+            assert_eq!(get_schema_version(&conn).unwrap(), 2);
+            assert!(!object_exists(&conn, "table", "content_catalog"));
+            assert_eq!(legacy_snapshot(&conn), before);
+        }
+    }
+
+    #[test]
+    fn zero_cleanup_days_reject_invalid_timestamp_without_partial_backfill() {
+        let mut conn = fixture_with_legacy_rows();
+        conn.execute(
+            "UPDATE home_entries SET created_at = 'not-rfc3339'
+             WHERE entry_id = 'home-only'",
+            [],
+        )
+        .unwrap();
+        let before = legacy_snapshot(&conn);
+
+        let error = ensure_content_schema(&mut conn, 0).unwrap_err();
+
+        assert!(matches!(error, StorageError::Validation(_)));
+        assert_eq!(get_schema_version(&conn).unwrap(), 3);
+        assert_eq!(legacy_snapshot(&conn), before);
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM content_catalog", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap(),
+            0
+        );
     }
 
     #[test]
