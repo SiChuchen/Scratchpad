@@ -1090,6 +1090,30 @@ mod tests {
     #[test]
     fn pending_delete_rows_and_events_contain_only_safe_metadata() {
         let mut conn = fixture_with_all_kinds();
+        conn.execute(
+            "UPDATE vault_fields
+             SET key=' PaSsWoRd ', value='NeverIndexMePassword', is_sensitive=1
+             WHERE id='field-password'",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO vault_fields(id, entry_id, key, value, is_sensitive, sort_order)
+             VALUES ('field-token-exact', 'credential-1', ' ToKeN ',
+                     'NeverIndexMeToken', 1, 2)",
+            [],
+        )
+        .unwrap();
+        crate::content::projection::tests::refresh_all_projections(&conn);
+        conn.execute("DELETE FROM vault_fts WHERE entry_id='credential-1'", [])
+            .unwrap();
+        conn.execute(
+            "INSERT INTO vault_fts(entry_id, title, notes, searchable)
+             VALUES ('credential-1', 'Production login', 'Rotate monthly',
+                     'username alice Access')",
+            [],
+        )
+        .unwrap();
         let prepared = prepare_delete(
             &mut conn,
             "vault:credential-1",
@@ -1103,6 +1127,72 @@ mod tests {
         let serialized = serde_json::to_string(&row).unwrap();
         for forbidden in ["password", "body", "file_path", "fields", "secret-value"] {
             assert!(!serialized.contains(forbidden));
+        }
+        for secret in ["NeverIndexMePassword", "NeverIndexMeToken"] {
+            assert_eq!(
+                conn.query_row(
+                    "SELECT
+                        (SELECT COUNT(*) FROM vault_fts
+                         WHERE title LIKE ?1 OR notes LIKE ?1 OR searchable LIKE ?1) +
+                        (SELECT COUNT(*) FROM content_fts
+                         WHERE title LIKE ?1 OR body LIKE ?1 OR tags LIKE ?1 OR aliases LIKE ?1)",
+                    params![format!("%{secret}%")],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+                0,
+                "{secret} reached a search projection"
+            );
+        }
+
+        let changed_json = serde_json::to_value(content_changed_event(&ContentMutation {
+            value: (),
+            revision: 12,
+            changes: vec![ContentChange {
+                id: "vault:credential-1".into(),
+                operation: ContentOperation::Retention,
+            }],
+        }))
+        .unwrap();
+        let undo_json = serde_json::to_value(&prepared).unwrap();
+        let failure_log_json = serde_json::to_value(ContentDeleteFailedEvent {
+            token: prepared.token.clone(),
+            id: "vault:credential-1".into(),
+            code: "content_delete_commit_failed".into(),
+        })
+        .unwrap();
+        assert_eq!(
+            changed_json.as_object().unwrap().keys().collect::<Vec<_>>(),
+            vec!["changes", "revision"]
+        );
+        assert_eq!(
+            changed_json["changes"][0]
+                .as_object()
+                .unwrap()
+                .keys()
+                .collect::<Vec<_>>(),
+            vec!["id", "operation"]
+        );
+        assert_eq!(
+            undo_json.as_object().unwrap().keys().collect::<Vec<_>>(),
+            vec!["expiresAt", "token"]
+        );
+        assert_eq!(
+            failure_log_json
+                .as_object()
+                .unwrap()
+                .keys()
+                .collect::<Vec<_>>(),
+            vec!["code", "id", "token"]
+        );
+        let boundary_json = format!("{changed_json}{undo_json}{failure_log_json}");
+        for forbidden in [
+            "NeverIndexMePassword",
+            "NeverIndexMeToken",
+            " PaSsWoRd ",
+            " ToKeN ",
+        ] {
+            assert!(!boundary_json.contains(forbidden));
         }
         assert!(prepared.token.len() >= 32);
         assert_eq!(StdDuration::from_secs(10).as_secs(), 10);

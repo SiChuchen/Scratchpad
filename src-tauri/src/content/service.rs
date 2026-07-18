@@ -751,6 +751,7 @@ mod tests {
     use crate::content::projection::tests::{
         fixture_with_all_kinds, refresh_all_projections, FILE_PATH_LITERAL,
     };
+    use crate::models::entry::EntryView;
     use crate::storage::error::StorageError;
 
     fn revision(conn: &Connection) -> i64 {
@@ -764,6 +765,62 @@ mod tests {
 
     fn scalar_i64(conn: &Connection, sql: &str) -> i64 {
         conn.query_row(sql, [], |row| row.get(0)).unwrap()
+    }
+
+    #[test]
+    fn failed_projection_write_rolls_back_payload_and_revision() {
+        let mut conn = fixture_with_all_kinds();
+        let start_revision = revision(&conn);
+        let before = [
+            scalar_i64(&conn, "SELECT COUNT(*) FROM entries"),
+            scalar_i64(&conn, "SELECT COUNT(*) FROM home_entries"),
+            scalar_i64(&conn, "SELECT COUNT(*) FROM note_entries"),
+            scalar_i64(&conn, "SELECT COUNT(*) FROM content_catalog"),
+            scalar_i64(&conn, "SELECT COUNT(*) FROM content_fts"),
+            scalar_i64(&conn, "SELECT COUNT(*) FROM vault_fts"),
+        ];
+        conn.execute_batch(
+            "CREATE TEMP TABLE content_fts_original AS SELECT * FROM content_fts;
+             DROP TABLE content_fts;
+             CREATE TABLE content_fts(
+                 unified_id TEXT NOT NULL,
+                 title TEXT NOT NULL,
+                 body TEXT NOT NULL CHECK(body != 'must roll back'),
+                 tags TEXT NOT NULL,
+                 aliases TEXT NOT NULL
+             );
+             INSERT INTO content_fts SELECT * FROM content_fts_original;",
+        )
+        .unwrap();
+
+        let error = crate::scratchpad::storage::create_text_entry_with_revision(
+            &mut conn,
+            EntryView::Home,
+            "must roll back",
+            "validation",
+        )
+        .unwrap_err();
+
+        assert!(matches!(error, StorageError::Sqlite(_)));
+        assert_eq!(revision(&conn), start_revision);
+        assert_eq!(
+            [
+                scalar_i64(&conn, "SELECT COUNT(*) FROM entries"),
+                scalar_i64(&conn, "SELECT COUNT(*) FROM home_entries"),
+                scalar_i64(&conn, "SELECT COUNT(*) FROM note_entries"),
+                scalar_i64(&conn, "SELECT COUNT(*) FROM content_catalog"),
+                scalar_i64(&conn, "SELECT COUNT(*) FROM content_fts"),
+                scalar_i64(&conn, "SELECT COUNT(*) FROM vault_fts"),
+            ],
+            before
+        );
+        assert_eq!(
+            scalar_i64(
+                &conn,
+                "SELECT COUNT(*) FROM entries WHERE content='must roll back'",
+            ),
+            0
+        );
     }
 
     #[test]

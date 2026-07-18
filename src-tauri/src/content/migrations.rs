@@ -292,6 +292,7 @@ fn backfill_vault_catalog(tx: &Transaction<'_>) -> StorageResult<()> {
 
 #[cfg(test)]
 mod tests {
+    use rusqlite::types::Value;
     use rusqlite::{params, Connection};
 
     use super::{ensure_content_schema, CONTENT_SCHEMA_SQL};
@@ -504,6 +505,20 @@ mod tests {
             note: memberships("note_entries"),
             vault,
         }
+    }
+
+    fn rows_snapshot(conn: &Connection, sql: &str) -> Vec<Vec<Value>> {
+        let mut statement = conn.prepare(sql).unwrap();
+        let column_count = statement.column_count();
+        statement
+            .query_map([], |row| {
+                (0..column_count)
+                    .map(|column| row.get(column))
+                    .collect::<rusqlite::Result<Vec<Value>>>()
+            })
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap()
     }
 
     fn catalog_rows(conn: &Connection) -> Vec<CatalogRow> {
@@ -745,6 +760,169 @@ mod tests {
                 "dock:note-file",
                 "dock:dual-member",
             ]
+        );
+    }
+
+    #[test]
+    fn upgrade_preserves_all_legacy_payload_counts_and_membership() {
+        let mut conn = fixture_with_legacy_rows();
+        conn.execute_batch(
+            r#"
+            INSERT INTO vault_entries(id, kind, title, notes, created_at, updated_at) VALUES
+                ('bookmark-legacy', 'bookmark', 'Legacy bookmark', 'bookmark notes',
+                 '2026-07-03T10:00:00+00:00', '2026-07-08T10:00:00+00:00'),
+                ('note-legacy', 'note', 'Legacy note', 'note body',
+                 '2026-07-04T10:00:00+00:00', '2026-07-07T10:00:00+00:00');
+            INSERT INTO vault_fields(id, entry_id, key, value, is_sensitive, sort_order) VALUES
+                ('bookmark-url', 'bookmark-legacy', 'url', 'https://fixture.invalid', 0, 0),
+                ('credential-token', 'credential-old', ' token ', 'NeverIndexMeToken', 1, 0);
+            INSERT INTO vault_tags(entry_id, tag, normalized_tag, source) VALUES
+                ('credential-new', 'Manual Tag', 'manual tag', 'manual'),
+                ('bookmark-legacy', 'AI Tag', 'ai tag', 'ai');
+            INSERT INTO vault_ai_metadata(
+                entry_id, summary, search_aliases_json, content_hash, status
+            ) VALUES
+                ('bookmark-legacy', 'safe approved summary', '["legacy portal"]',
+                 'bookmark-hash', 'ready'),
+                ('note-legacy', 'pending summary', '["pending alias"]',
+                 'note-hash', 'pending');
+            INSERT INTO vault_fts(entry_id, title, notes, searchable) VALUES
+                ('credential-new', 'New credential', 'fixture notes', 'alice Manual Tag'),
+                ('credential-old', 'Old credential', 'fixture notes', ''),
+                ('bookmark-legacy', 'Legacy bookmark', 'bookmark notes',
+                 'https://fixture.invalid AI Tag'),
+                ('note-legacy', 'Legacy note', 'note body', '');
+            "#,
+        )
+        .unwrap();
+
+        let payload_tables = [
+            ("entries", "SELECT * FROM entries ORDER BY id"),
+            (
+                "home_entries",
+                "SELECT * FROM home_entries ORDER BY entry_id",
+            ),
+            (
+                "note_entries",
+                "SELECT * FROM note_entries ORDER BY entry_id",
+            ),
+            ("vault_entries", "SELECT * FROM vault_entries ORDER BY id"),
+            (
+                "vault_fields",
+                "SELECT * FROM vault_fields ORDER BY entry_id, sort_order, id",
+            ),
+            (
+                "vault_tags",
+                "SELECT * FROM vault_tags ORDER BY entry_id, normalized_tag, source",
+            ),
+            (
+                "vault_ai_metadata",
+                "SELECT * FROM vault_ai_metadata ORDER BY entry_id",
+            ),
+        ];
+        let before = payload_tables
+            .iter()
+            .map(|(table, sql)| (*table, rows_snapshot(&conn, sql)))
+            .collect::<Vec<_>>();
+
+        ensure_content_schema(&mut conn, 30).unwrap();
+
+        for ((table, sql), (_, expected)) in payload_tables.iter().zip(&before) {
+            assert_eq!(
+                &rows_snapshot(&conn, sql),
+                expected,
+                "changed table: {table}"
+            );
+        }
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM content_catalog", [], |row| row
+                .get::<_, i64>(0))
+                .unwrap(),
+            7
+        );
+        assert_eq!(
+            rows_snapshot(
+                &conn,
+                "SELECT unified_id, retention_state, inbox_position, saved_position
+                 FROM content_catalog ORDER BY unified_id",
+            ),
+            vec![
+                vec![
+                    Value::Text("dock:dual-member".into()),
+                    Value::Text("saved".into()),
+                    1.5.into(),
+                    2.5.into()
+                ],
+                vec![
+                    Value::Text("dock:home-only".into()),
+                    Value::Text("temporary".into()),
+                    3.0.into(),
+                    Value::Null
+                ],
+                vec![
+                    Value::Text("dock:note-file".into()),
+                    Value::Text("saved".into()),
+                    Value::Null,
+                    0.5.into()
+                ],
+                vec![
+                    Value::Text("vault:bookmark-legacy".into()),
+                    Value::Text("saved".into()),
+                    Value::Null,
+                    5.5.into()
+                ],
+                vec![
+                    Value::Text("vault:credential-new".into()),
+                    Value::Text("saved".into()),
+                    Value::Null,
+                    3.5.into()
+                ],
+                vec![
+                    Value::Text("vault:credential-old".into()),
+                    Value::Text("saved".into()),
+                    Value::Null,
+                    4.5.into()
+                ],
+                vec![
+                    Value::Text("vault:note-legacy".into()),
+                    Value::Text("saved".into()),
+                    Value::Null,
+                    6.5.into()
+                ],
+            ]
+        );
+        assert_eq!(
+            rows_snapshot(
+                &conn,
+                "SELECT unified_id, COUNT(*) FROM content_fts
+                 GROUP BY unified_id ORDER BY unified_id",
+            ),
+            rows_snapshot(
+                &conn,
+                "SELECT unified_id, 1 FROM content_catalog ORDER BY unified_id",
+            )
+        );
+        assert_eq!(
+            rows_snapshot(
+                &conn,
+                "SELECT entry_id, COUNT(*) FROM vault_fts
+                 GROUP BY entry_id ORDER BY entry_id",
+            ),
+            rows_snapshot(&conn, "SELECT id, 1 FROM vault_entries ORDER BY id",)
+        );
+
+        let catalog_before_second_ensure =
+            rows_snapshot(&conn, "SELECT * FROM content_catalog ORDER BY unified_id");
+        let content_fts_before_second_ensure =
+            rows_snapshot(&conn, "SELECT * FROM content_fts ORDER BY unified_id");
+        ensure_content_schema(&mut conn, 30).unwrap();
+        assert_eq!(
+            rows_snapshot(&conn, "SELECT * FROM content_catalog ORDER BY unified_id"),
+            catalog_before_second_ensure
+        );
+        assert_eq!(
+            rows_snapshot(&conn, "SELECT * FROM content_fts ORDER BY unified_id"),
+            content_fts_before_second_ensure
         );
     }
 
