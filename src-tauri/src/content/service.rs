@@ -90,6 +90,7 @@ pub fn reorder(
     }
 
     let tx = conn.transaction()?;
+    ensure_not_pending(&tx, ordered_ids)?;
     let current_ids = crate::content::catalog::catalog_ids_for_scope(&tx, scope)?;
     let current = current_ids.iter().collect::<BTreeSet<_>>();
     if supplied != current {
@@ -173,6 +174,7 @@ pub fn delete(conn: &mut Connection, id: &str) -> StorageResult<ContentMutation<
 
 pub fn delete_temporary(conn: &mut Connection, id: &str) -> StorageResult<ContentMutation<()>> {
     let tx = conn.transaction()?;
+    ensure_not_pending(&tx, &[id.to_string()])?;
     let identity = catalog_entry_by_id(&tx, id)?;
     if identity.retention != crate::content::models::RetentionState::Temporary {
         return Err(StorageError::Validation(format!(
@@ -274,7 +276,7 @@ pub fn cleanup_expired(
     })
 }
 
-fn delete_in_transaction(conn: &Connection, id: &str) -> StorageResult<Option<String>> {
+pub(crate) fn delete_in_transaction(conn: &Connection, id: &str) -> StorageResult<Option<String>> {
     let identity = catalog_entry_by_id(conn, id)?;
     ensure_payload_identity(conn, id, &identity)?;
     let attachment = if identity.source == ContentSource::Dock
@@ -358,7 +360,7 @@ fn delete_in_transaction(conn: &Connection, id: &str) -> StorageResult<Option<St
     Ok(attachment)
 }
 
-fn remove_attachment(id: &str, attachment: Option<String>) {
+pub(crate) fn remove_attachment(id: &str, attachment: Option<String>) {
     if let Some(attachment) = attachment {
         if let Err(error) = std::fs::remove_file(attachment) {
             eprintln!("failed to remove attachment for {id}: {error}");
@@ -372,6 +374,7 @@ fn save_at(
     now: DateTime<Utc>,
 ) -> StorageResult<ContentMutation<crate::content::models::ContentSummary>> {
     let tx = conn.transaction()?;
+    ensure_not_pending(&tx, &[id.to_string()])?;
     let identity = catalog_entry_by_id(&tx, id)?;
     if identity.retention != crate::content::models::RetentionState::Temporary {
         return Err(StorageError::Validation(format!(
@@ -427,6 +430,7 @@ fn unsave_at(
             .to_rfc3339()
     };
     let tx = conn.transaction()?;
+    ensure_not_pending(&tx, &[id.to_string()])?;
     let identity = catalog_entry_by_id(&tx, id)?;
     if identity.retention != crate::content::models::RetentionState::Saved {
         return Err(StorageError::Validation(format!(
@@ -479,6 +483,21 @@ fn retention_mutation(
             operation: ContentOperation::Retention,
         }],
     }
+}
+
+fn ensure_not_pending(conn: &Connection, ids: &[String]) -> StorageResult<()> {
+    for id in ids {
+        if conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM content_pending_deletes WHERE unified_id=?1)",
+            params![id],
+            |row| row.get::<_, bool>(0),
+        )? {
+            return Err(StorageError::Validation(format!(
+                "content has a pending delete: {id}"
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn ensure_payload_identity(

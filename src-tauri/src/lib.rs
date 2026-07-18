@@ -256,34 +256,26 @@ fn parse_key_code(s: &str) -> Option<Code> {
 
 // --- Dock entry IPC commands ---
 
+#[cfg(test)]
 pub(crate) fn content_changed_event<T>(
     mutation: &content::models::ContentMutation<T>,
 ) -> content::models::ContentChangedEvent {
-    content::models::ContentChangedEvent {
-        revision: mutation.revision,
-        changes: mutation.changes.clone(),
-    }
+    content::ipc::content_changed_event(mutation)
 }
 
+#[allow(dead_code)]
 pub(crate) fn dispatch_content_changed<T, E>(
     mutation: &content::models::ContentMutation<T>,
     emit: impl FnOnce(&str, content::models::ContentChangedEvent) -> Result<(), E>,
 ) {
-    if mutation.changes.is_empty() {
-        return;
-    }
-    if emit("content-changed", content_changed_event(mutation)).is_err() {
-        eprintln!("failed to emit content-changed after committed content mutation");
-    }
+    content::ipc::dispatch_content_changed(mutation, emit);
 }
 
 pub(crate) fn emit_content_changed<T>(
     app: &tauri::AppHandle,
     mutation: &content::models::ContentMutation<T>,
 ) {
-    dispatch_content_changed(mutation, |event_name, payload| {
-        app.emit(event_name, payload)
-    });
+    content::ipc::emit_content_changed(app, mutation);
 }
 
 #[cfg(test)]
@@ -1150,6 +1142,15 @@ pub fn run() {
             ipc_open_quick_access,
             ipc_open_main_settings,
             ipc_toggle_always_on_top,
+            content::ipc::ipc_content_revision,
+            content::ipc::ipc_content_list,
+            content::ipc::ipc_content_detail,
+            content::ipc::ipc_content_search_local,
+            content::ipc::ipc_content_save,
+            content::ipc::ipc_content_unsave,
+            content::ipc::ipc_content_reorder,
+            content::ipc::ipc_content_delete,
+            content::ipc::ipc_content_restore,
             ipc_window_apply_circle_region,
             ipc_window_clear_region,
             ipc_dock_restore_from_tab,
@@ -1185,6 +1186,7 @@ pub fn run() {
             }
         })
         .setup(|app| {
+            content::ipc::resume_pending_deletes(app.handle());
             // System tray menu
             let show_item =
                 tauri::menu::MenuItem::with_id(app, "show", "显示主窗口", true, None::<&str>)?;
