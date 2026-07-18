@@ -2,7 +2,7 @@ use chrono::{DateTime, Duration, Utc};
 use rusqlite::{params, Connection, Transaction};
 
 use crate::storage::error::{StorageError, StorageResult};
-use crate::storage::migration::{ensure_schema, Migration};
+use crate::storage::migration::{ensure_schema, get_schema_version, set_schema_version, Migration};
 
 const CONTENT_SCHEMA_SQL: &str = r#"
 CREATE TABLE IF NOT EXISTS content_catalog (
@@ -94,6 +94,13 @@ pub fn ensure_content_schema(conn: &mut Connection, cleanup_days: i64) -> Storag
     backfill_vault_catalog(&tx)?;
     crate::content::projection::backfill_missing_projections(&tx)?;
     tx.commit()?;
+
+    if get_schema_version(conn)? < 4 {
+        let tx = conn.transaction()?;
+        crate::content::projection::rebuild_vault_projections(&tx)?;
+        set_schema_version(&tx, 4)?;
+        tx.commit()?;
+    }
     Ok(())
 }
 
@@ -292,7 +299,9 @@ mod tests {
     use crate::content::models::BrowseScope;
     use crate::scratchpad::storage::ensure_dock_schema;
     use crate::storage::error::StorageError;
-    use crate::storage::migration::{ensure_schema, get_schema_version, Migration};
+    use crate::storage::migration::{
+        ensure_schema, get_schema_version, set_schema_version, Migration,
+    };
     use crate::vault::storage::ensure_vault_schema;
 
     type DockPayloadRow = (
@@ -585,7 +594,7 @@ mod tests {
         ensure_content_schema(&mut conn, 7).unwrap();
 
         assert_eq!(legacy_snapshot(&conn), before);
-        assert_eq!(get_schema_version(&conn).unwrap(), 3);
+        assert_eq!(get_schema_version(&conn).unwrap(), 4);
         assert_eq!(
             conn.query_row(
                 "SELECT revision FROM content_state WHERE singleton = 1",
@@ -736,6 +745,225 @@ mod tests {
                 "dock:note-file",
                 "dock:dual-member",
             ]
+        );
+    }
+
+    #[test]
+    fn full_startup_repairs_v3_vault_flags_and_both_existing_fts_rows_once() {
+        const SECRET: &str = "NeverIndexMe";
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", "ON").unwrap();
+        ensure_dock_schema(&mut conn).unwrap();
+        ensure_vault_schema(&mut conn).unwrap();
+        ensure_content_schema(&mut conn, 7).unwrap();
+        conn.execute(
+            "UPDATE vault_schema_version SET version=3 WHERE singleton=1",
+            [],
+        )
+        .unwrap();
+        set_schema_version(&conn, 3).unwrap();
+        conn.execute_batch(
+            r#"
+            INSERT INTO vault_entries(
+                id, kind, title, notes, created_at, updated_at
+            ) VALUES (
+                'legacy-v3', 'credential', 'NEVERINDEXME console',
+                'notes neverindexme',
+                '2026-07-01T00:00:00Z', '2026-07-01T00:00:00Z'
+            );
+            INSERT INTO vault_fields(
+                id, entry_id, key, value, is_sensitive, sort_order
+            ) VALUES
+                ('legacy-password', 'legacy-v3', 'password', 'NeverIndexMe', 0, 0),
+                ('legacy-user', 'legacy-v3', 'username', 'alice', 0, 1);
+            INSERT INTO vault_tags(entry_id, tag, normalized_tag, source) VALUES
+                ('legacy-v3', 'NeVeRiNdExMe-tag', 'neverindexme-tag', 'manual'),
+                ('legacy-v3', 'production', 'production', 'manual');
+            INSERT INTO vault_ai_metadata(
+                entry_id, summary, search_aliases_json, content_hash, status
+            ) VALUES ('legacy-v3', 'pending neverindexme', '["NEVERINDEXME"]',
+                      'legacy-hash', 'pending');
+            INSERT INTO content_catalog(
+                unified_id, source, source_id, kind, retention_state,
+                retention_changed_at, cleanup_at, inbox_position, saved_position,
+                created_at, updated_at
+            ) VALUES (
+                'vault:legacy-v3', 'vault', 'legacy-v3', 'credential', 'saved',
+                '2026-07-01T00:00:00Z', NULL, NULL, 0.0,
+                '2026-07-01T00:00:00Z', '2026-07-01T00:00:00Z'
+            );
+            INSERT INTO vault_fts(entry_id, title, notes, searchable) VALUES
+                ('legacy-v3', 'NEVERINDEXME console', 'notes neverindexme',
+                 'alice NeverIndexMe production');
+            INSERT INTO content_fts(unified_id, title, body, tags, aliases) VALUES
+                ('vault:legacy-v3', 'NEVERINDEXME console',
+                 'notes neverindexme username alice',
+                 'NeVeRiNdExMe-tag production', 'NEVERINDEXME');
+            "#,
+        )
+        .unwrap();
+
+        ensure_dock_schema(&mut conn).unwrap();
+        ensure_vault_schema(&mut conn).unwrap();
+        ensure_content_schema(&mut conn, 7).unwrap();
+
+        let detail = crate::vault::storage::get_entry_detail(&conn, "legacy-v3").unwrap();
+        assert!(
+            detail
+                .fields
+                .iter()
+                .find(|field| field.key == "password")
+                .unwrap()
+                .is_sensitive
+        );
+        assert_eq!(
+            detail.ai_metadata.unwrap().status,
+            crate::vault::models::AiMetadataStatus::Pending
+        );
+        let vault_text: String = conn
+            .query_row(
+                "SELECT title || ' ' || notes || ' ' || searchable
+                 FROM vault_fts WHERE entry_id='legacy-v3'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let content_text: String = conn
+            .query_row(
+                "SELECT title || ' ' || body || ' ' || tags || ' ' || aliases
+                 FROM content_fts WHERE unified_id='vault:legacy-v3'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        for text in [&vault_text, &content_text] {
+            assert!(!text.to_lowercase().contains(&SECRET.to_lowercase()));
+            assert!(text.contains("alice"));
+            assert!(text.contains("production"));
+        }
+        for table in ["vault_fts", "content_fts"] {
+            let matches: i64 = conn
+                .query_row(
+                    &format!("SELECT COUNT(*) FROM {table} WHERE {table} MATCH 'neverindexme'"),
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(matches, 0);
+        }
+        let before_revision: i64 = conn
+            .query_row(
+                "SELECT revision FROM content_state WHERE singleton=1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+
+        ensure_dock_schema(&mut conn).unwrap();
+        ensure_vault_schema(&mut conn).unwrap();
+        ensure_content_schema(&mut conn, 7).unwrap();
+
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM vault_fts WHERE entry_id='legacy-v3'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+            1
+        );
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM content_fts WHERE unified_id='vault:legacy-v3'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+            1
+        );
+        assert_eq!(
+            conn.query_row(
+                "SELECT revision FROM content_state WHERE singleton=1",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+            before_revision
+        );
+    }
+
+    #[test]
+    fn content_v4_projection_failure_keeps_v3_marker_and_retries() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", "ON").unwrap();
+        ensure_dock_schema(&mut conn).unwrap();
+        ensure_vault_schema(&mut conn).unwrap();
+        ensure_content_schema(&mut conn, 7).unwrap();
+        set_schema_version(&conn, 3).unwrap();
+        insert_vault_fixture(&conn, "projection-retry", "2026-07-18T00:00:00Z");
+        conn.execute(
+            "INSERT INTO content_catalog(
+                 unified_id, source, source_id, kind, retention_state,
+                 retention_changed_at, cleanup_at, inbox_position, saved_position,
+                 created_at, updated_at
+             ) VALUES (
+                 'vault:projection-retry', 'vault', 'projection-retry', 'credential',
+                 'saved', '2026-07-11T08:00:00+00:00', NULL, NULL, 0.0,
+                 '2026-07-11T08:00:00+00:00', '2026-07-18T00:00:00Z'
+             )",
+            [],
+        )
+        .unwrap();
+        conn.execute_batch(
+            r#"
+            DROP TABLE content_fts;
+            CREATE TABLE content_fts (
+                unified_id TEXT NOT NULL,
+                title TEXT NOT NULL CHECK (title = 'unsafe'),
+                body TEXT NOT NULL,
+                tags TEXT NOT NULL,
+                aliases TEXT NOT NULL
+            );
+            INSERT INTO content_fts(unified_id, title, body, tags, aliases)
+            VALUES ('vault:projection-retry', 'unsafe', '', '', '');
+            "#,
+        )
+        .unwrap();
+
+        assert!(ensure_content_schema(&mut conn, 7).is_err());
+        assert_eq!(get_schema_version(&conn).unwrap(), 3);
+        assert_eq!(
+            conn.query_row(
+                "SELECT title FROM content_fts WHERE unified_id='vault:projection-retry'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .unwrap(),
+            "unsafe"
+        );
+        conn.execute_batch(
+            r#"
+            DROP TABLE content_fts;
+            CREATE VIRTUAL TABLE content_fts USING fts5(
+                unified_id UNINDEXED, title, body, tags, aliases, tokenize = 'unicode61'
+            );
+            INSERT INTO content_fts(unified_id, title, body, tags, aliases)
+            VALUES ('vault:projection-retry', 'unsafe', '', '', '');
+            "#,
+        )
+        .unwrap();
+
+        ensure_content_schema(&mut conn, 7).unwrap();
+
+        assert_eq!(get_schema_version(&conn).unwrap(), 4);
+        assert_eq!(
+            conn.query_row(
+                "SELECT title FROM content_fts WHERE unified_id='vault:projection-retry'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .unwrap(),
+            "projection-retry"
         );
     }
 

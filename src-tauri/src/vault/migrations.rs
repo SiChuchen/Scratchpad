@@ -59,7 +59,7 @@ fn write_vault_version(conn: &Connection, version: u32) -> StorageResult<()> {
     Ok(())
 }
 
-/// 入口：将 vault schema 从当前版本升级到最新（v3）。
+/// 入口：将 vault schema 从当前版本升级到最新（v4）。
 /// 调用方必须已确保 v1 表存在（即 storage::ensure_vault_schema 的 v1 建表 SQL 已执行）。
 pub fn migrate_vault_schema(conn: &mut Connection) -> StorageResult<()> {
     // 全新数据库 / 旧版无版本表：先创建版本表并写入 version=1 作为基线
@@ -79,6 +79,9 @@ pub fn migrate_vault_schema(conn: &mut Connection) -> StorageResult<()> {
     }
     if read_vault_version(conn)? < 3 {
         migrate_v2_to_v3(conn)?;
+    }
+    if read_vault_version(conn)? < 4 {
+        migrate_v3_to_v4(conn)?;
     }
     Ok(())
 }
@@ -168,6 +171,31 @@ fn migrate_v2_to_v3(conn: &mut Connection) -> StorageResult<()> {
         .map_err(|e| StorageError::Migration(format!("rebuild safe vault FTS: {e}")))?;
     write_vault_version(&tx, 3)
         .map_err(|e| StorageError::Migration(format!("write version 3: {e}")))?;
+    tx.commit()?;
+    Ok(())
+}
+
+fn migrate_v3_to_v4(conn: &mut Connection) -> StorageResult<()> {
+    let tx = conn.transaction()?;
+    let fields = {
+        let mut stmt = tx.prepare("SELECT id, key FROM vault_fields ORDER BY id")?;
+        let rows = stmt.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+        rows.collect::<Result<Vec<_>, _>>()?
+    };
+    for (field_id, key) in fields {
+        if crate::vault::models::is_default_sensitive_key(&key) {
+            tx.execute(
+                "UPDATE vault_fields SET is_sensitive=1 WHERE id=?1",
+                params![field_id],
+            )?;
+        }
+    }
+    crate::vault::storage::rebuild_vault_fts(&tx)
+        .map_err(|error| StorageError::Migration(format!("rebuild v4 vault FTS: {error}")))?;
+    write_vault_version(&tx, 4)
+        .map_err(|error| StorageError::Migration(format!("write version 4: {error}")))?;
     tx.commit()?;
     Ok(())
 }
@@ -367,7 +395,87 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(version, 3);
+        assert_eq!(version, 4);
+    }
+
+    #[test]
+    fn v4_failure_rolls_back_sensitive_flags_and_retries() {
+        const SECRET: &str = "NeverIndexMe";
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", "ON").unwrap();
+        ensure_vault_schema(&mut conn).unwrap();
+        conn.execute(
+            "UPDATE vault_schema_version SET version=3 WHERE singleton=1",
+            [],
+        )
+        .unwrap();
+        insert_legacy_entry(&mut conn, "retry-v4", "NeverIndexMe console");
+        insert_legacy_field(&conn, "retry-password", "retry-v4", "password", SECRET);
+        conn.execute_batch(
+            r#"
+            DROP TABLE vault_fts;
+            CREATE TABLE vault_fts (
+                entry_id TEXT NOT NULL,
+                title TEXT NOT NULL CHECK (title = 'unsafe'),
+                notes TEXT NOT NULL,
+                searchable TEXT NOT NULL
+            );
+            INSERT INTO vault_fts(entry_id, title, notes, searchable)
+            VALUES ('retry-v4', 'unsafe', '', 'NeverIndexMe');
+            "#,
+        )
+        .unwrap();
+
+        assert!(ensure_vault_schema(&mut conn).is_err());
+        assert_eq!(
+            conn.query_row(
+                "SELECT version FROM vault_schema_version WHERE singleton=1",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+            3
+        );
+        assert_eq!(
+            conn.query_row(
+                "SELECT is_sensitive FROM vault_fields WHERE id='retry-password'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+            0
+        );
+        conn.execute_batch(
+            r#"
+            DROP TABLE vault_fts;
+            CREATE VIRTUAL TABLE vault_fts USING fts5(
+                entry_id UNINDEXED, title, notes, searchable, tokenize = 'unicode61'
+            );
+            INSERT INTO vault_fts(entry_id, title, notes, searchable)
+            VALUES ('retry-v4', 'NeverIndexMe console', '', 'NeverIndexMe');
+            "#,
+        )
+        .unwrap();
+
+        ensure_vault_schema(&mut conn).unwrap();
+
+        assert_eq!(
+            conn.query_row(
+                "SELECT is_sensitive FROM vault_fields WHERE id='retry-password'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+            1
+        );
+        let indexed: String = conn
+            .query_row(
+                "SELECT title || ' ' || searchable FROM vault_fts WHERE entry_id='retry-v4'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(!indexed.to_lowercase().contains("neverindexme"));
     }
 
     #[test]
@@ -415,7 +523,7 @@ mod tests {
         .unwrap();
 
         ensure_vault_schema(&mut conn).unwrap();
-        // 再跑一次：ensure_vault_schema 应该幂等（版本已=3，跳过）
+        // 再跑一次：ensure_vault_schema 应该幂等（版本已=4，跳过）
         ensure_vault_schema(&mut conn).unwrap();
 
         let v: i64 = conn
@@ -425,7 +533,7 @@ mod tests {
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(v, 3);
+        assert_eq!(v, 4);
 
         let count: i64 = conn
             .query_row(

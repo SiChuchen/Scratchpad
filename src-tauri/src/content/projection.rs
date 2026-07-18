@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 
+use regex::RegexBuilder;
 use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::content::models::{ContentKind, ContentSource, UnifiedContentId};
@@ -117,6 +118,29 @@ pub(crate) fn backfill_missing_projections(conn: &Connection) -> StorageResult<(
     };
     for id in ids {
         let document = build_search_document(conn, &id)?;
+        replace_projection(conn, &document)?;
+    }
+    Ok(())
+}
+
+pub(crate) fn rebuild_vault_projections(conn: &Connection) -> StorageResult<()> {
+    let unified_ids = {
+        let mut stmt = conn.prepare(
+            "SELECT unified_id FROM content_catalog
+             WHERE source='vault' ORDER BY unified_id",
+        )?;
+        let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+        rows.collect::<Result<Vec<_>, _>>()?
+    };
+    conn.execute(
+        "DELETE FROM content_fts
+         WHERE unified_id IN (
+             SELECT unified_id FROM content_catalog WHERE source='vault'
+         )",
+        [],
+    )?;
+    for unified_id in unified_ids {
+        let document = build_search_document(conn, &unified_id)?;
         replace_projection(conn, &document)?;
     }
     Ok(())
@@ -330,14 +354,72 @@ fn build_vault_document(
 }
 
 pub(crate) fn redact_sensitive_values(value: &str, sensitive_values: &[String]) -> String {
-    let mut safe = normalize_text(value);
+    let normalized = normalize_text(value);
+    let sensitive_values = sensitive_values
+        .iter()
+        .map(|sensitive| normalize_text(sensitive))
+        .collect::<Vec<_>>();
+    normalize_text(&replace_sensitive_matches(
+        &normalized,
+        &sensitive_values,
+        |_| " ".to_string(),
+    ))
+}
+
+pub(crate) fn replace_sensitive_matches(
+    value: &str,
+    sensitive_values: &[String],
+    mut replacement: impl FnMut(&str) -> String,
+) -> String {
+    let mut sensitive_values = sensitive_values
+        .iter()
+        .filter(|sensitive| !sensitive.trim().is_empty())
+        .collect::<Vec<_>>();
+    sensitive_values.sort_by_key(|sensitive| std::cmp::Reverse(sensitive.chars().count()));
+
+    let mut selected: Vec<(usize, usize, &str)> = Vec::new();
     for sensitive in sensitive_values {
-        let sensitive = normalize_text(sensitive);
-        if !sensitive.is_empty() {
-            safe = safe.replace(&sensitive, " ");
+        let pattern = RegexBuilder::new(&regex::escape(sensitive))
+            .case_insensitive(true)
+            .unicode(true)
+            .build()
+            .expect("escaped sensitive value must compile");
+        let short_value = sensitive.chars().count() < 6;
+        for matched in pattern.find_iter(value) {
+            if short_value && !has_unicode_token_boundaries(value, matched.start(), matched.end()) {
+                continue;
+            }
+            if selected
+                .iter()
+                .any(|(start, end, _)| matched.start() < *end && *start < matched.end())
+            {
+                continue;
+            }
+            selected.push((matched.start(), matched.end(), sensitive));
         }
     }
-    normalize_text(&safe)
+    selected.sort_by_key(|(start, _, _)| *start);
+
+    let mut safe = String::with_capacity(value.len());
+    let mut cursor = 0;
+    for (start, end, sensitive) in selected {
+        safe.push_str(&value[cursor..start]);
+        safe.push_str(&replacement(sensitive));
+        cursor = end;
+    }
+    safe.push_str(&value[cursor..]);
+    safe
+}
+
+fn has_unicode_token_boundaries(value: &str, start: usize, end: usize) -> bool {
+    let before = value[..start].chars().next_back();
+    let after = value[end..].chars().next();
+    !before.is_some_and(is_unicode_token_character)
+        && !after.is_some_and(is_unicode_token_character)
+}
+
+fn is_unicode_token_character(character: char) -> bool {
+    character.is_alphanumeric() || character == '_'
 }
 
 fn source_kind_mismatch(unified_id: &str) -> StorageError {
@@ -387,7 +469,9 @@ fn join_unique(parts: impl IntoIterator<Item = String>) -> String {
 pub(crate) mod tests {
     use rusqlite::{params, Connection};
 
-    use super::{build_search_document, delete_projection, replace_projection};
+    use super::{
+        build_search_document, delete_projection, redact_sensitive_values, replace_projection,
+    };
     use crate::content::catalog::catalog_ids_for_scope;
     use crate::content::migrations::ensure_content_schema;
     use crate::content::models::BrowseScope;
@@ -397,6 +481,22 @@ pub(crate) mod tests {
 
     pub(crate) const SENSITIVE_LITERAL: &str = "NeverIndexMe";
     pub(crate) const FILE_PATH_LITERAL: &str = "PrivateAssetPath";
+
+    #[test]
+    fn sensitive_redaction_is_unicode_case_insensitive_longest_first_and_token_aware() {
+        let redacted = redact_sensitive_values(
+            "alice a ALICE A prefix-NEVERINDEXME-suffix neverindex ΣΊΣΥΦΟΣ",
+            &[
+                "NeverIndex".into(),
+                "NeverIndexMe".into(),
+                "a".into(),
+                "Σίσυφος".into(),
+            ],
+        );
+
+        assert_eq!(redacted, "alice ALICE prefix- -suffix");
+        assert!(!redacted.contains("Me"));
+    }
 
     pub(crate) fn fixture_with_all_kinds() -> Connection {
         let mut conn = Connection::open_in_memory().unwrap();

@@ -5,8 +5,9 @@ use std::sync::OnceLock;
 use rand::Rng;
 use regex::Regex;
 
+use crate::content::projection::replace_sensitive_matches;
 use crate::storage::error::StorageError;
-use crate::vault::models::{EntryKind, VaultEntry, VaultField};
+use crate::vault::models::{is_default_sensitive_key, EntryKind, VaultEntry, VaultField};
 
 /// 请求级 token 映射：value <-> placeholder。
 ///
@@ -373,20 +374,9 @@ pub fn desensitize_raw_text(
     manual_sensitive_values: &[String],
     map: &mut TokenMap,
 ) -> String {
-    // 1. 手动标记的敏感值：去空、按长度降序、整体替换
-    let mut manual: Vec<&String> = manual_sensitive_values
-        .iter()
-        .filter(|s| !s.is_empty())
-        .collect();
-    manual.sort_by_key(|a| std::cmp::Reverse(a.len()));
-
-    let mut current = text.to_string();
-    for value in manual {
-        if current.contains(value.as_str()) {
-            let token = map.tokenize(value);
-            current = current.replace(value.as_str(), &token);
-        }
-    }
+    let current = replace_sensitive_matches(text, manual_sensitive_values, |sensitive| {
+        map.tokenize(sensitive)
+    });
 
     // 2. 正则脱敏
     apply_regex_mask(&current, map)
@@ -459,34 +449,45 @@ pub fn desensitize_entry(
     tags: &[String],
     map: &mut TokenMap,
 ) -> DesensitizedEntry {
+    let sensitive_values = fields
+        .iter()
+        .filter(|field| field.is_sensitive || is_default_sensitive_key(&field.key))
+        .map(|field| field.value.clone())
+        .collect::<Vec<_>>();
     let d_fields = fields
         .iter()
         .map(|f| {
-            if f.is_sensitive {
+            let key = desensitize_raw_text(&f.key, &sensitive_values, map);
+            if f.is_sensitive || is_default_sensitive_key(&f.key) {
                 DesensitizedField {
-                    key: f.key.clone(),
+                    key,
                     value: map.tokenize(&f.value),
                     was_sensitive: true,
                 }
             } else {
                 DesensitizedField {
-                    key: f.key.clone(),
-                    value: apply_regex_mask(&f.value, map),
+                    key,
+                    value: desensitize_raw_text(&f.value, &sensitive_values, map),
                     was_sensitive: false,
                 }
             }
         })
         .collect();
 
-    let notes = apply_regex_mask(entry.notes.as_deref().unwrap_or(""), map);
+    let title = desensitize_raw_text(&entry.title, &sensitive_values, map);
+    let notes = desensitize_raw_text(entry.notes.as_deref().unwrap_or(""), &sensitive_values, map);
+    let tags = tags
+        .iter()
+        .map(|tag| desensitize_raw_text(tag, &sensitive_values, map))
+        .collect();
 
     DesensitizedEntry {
         id: entry.id.clone(),
         kind: entry.kind,
-        title: entry.title.clone(),
+        title,
         notes,
         fields: d_fields,
-        tags: tags.to_vec(),
+        tags,
     }
 }
 
@@ -538,6 +539,59 @@ mod regex_tests {
         }];
         let d = desensitize_entry(&e, &fields, &[], &mut m);
         assert_eq!(d.fields[0].value, "admin");
+    }
+
+    #[test]
+    fn default_sensitive_false_masks_case_variants_across_the_entire_entry() {
+        let mut map = TokenMap::new();
+        let mut entry = mk_entry();
+        entry.title = "NEVERINDEXME console".into();
+        entry.notes = Some("notes neverindexme".into());
+        let fields = vec![
+            VaultField {
+                id: "password".into(),
+                entry_id: entry.id.clone(),
+                key: "password".into(),
+                value: "NeverIndexMe".into(),
+                is_sensitive: false,
+                sort_order: 0,
+            },
+            VaultField {
+                id: "username".into(),
+                entry_id: entry.id.clone(),
+                key: "username".into(),
+                value: "alice".into(),
+                is_sensitive: false,
+                sort_order: 1,
+            },
+            VaultField {
+                id: "description".into(),
+                entry_id: entry.id.clone(),
+                key: "description".into(),
+                value: "reuse NeVeRiNdExMe here".into(),
+                is_sensitive: false,
+                sort_order: 2,
+            },
+        ];
+
+        let masked = desensitize_entry(&entry, &fields, &["tag-NEVERINDEXME".into()], &mut map);
+        let serialized = format!(
+            "{} {} {} {}",
+            masked.title,
+            masked.notes,
+            masked
+                .fields
+                .iter()
+                .map(|field| format!("{}={}", field.key, field.value))
+                .collect::<Vec<_>>()
+                .join(" "),
+            masked.tags.join(" ")
+        );
+
+        assert!(!serialized.to_lowercase().contains("neverindexme"));
+        assert!(serialized.contains("[SECRET:"));
+        assert!(serialized.contains("alice"));
+        assert!(masked.fields[0].was_sensitive);
     }
 
     #[test]

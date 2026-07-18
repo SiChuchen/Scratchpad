@@ -20,6 +20,8 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::Semaphore;
 
+use crate::content::models::ContentMutation;
+use crate::storage::error::StorageResult;
 use crate::vault::ai::parse_capture_response;
 use crate::vault::desensitize::{desensitize_entry, TokenMap};
 use crate::vault::ipc::VaultRuntimeState;
@@ -37,6 +39,50 @@ const BACKFILL_BATCH_LIMIT: usize = 50;
 /// 单例 worker 信号量。容量 1；permit 在 worker 任务结束时自动 Drop
 /// （即使 worker panic 也会释放，避免 `WORKER_RUNNING=true` 永久卡死）。
 static WORKER_PERMIT: Semaphore = Semaphore::const_new(1);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProcessOutcome {
+    Continue,
+    Skip,
+    Stop,
+}
+
+struct PersistenceDecision {
+    outcome: ProcessOutcome,
+    mutation: Option<ContentMutation<()>>,
+}
+
+fn storage_failure_log(entry_id: &str, operation: &str) -> String {
+    format!("vault worker storage failure: {operation} vault:{entry_id}")
+}
+
+fn classify_persistence_result(
+    entry_id: &str,
+    operation: &str,
+    result: StorageResult<Option<ContentMutation<()>>>,
+) -> PersistenceDecision {
+    match result {
+        Ok(Some(mutation)) => PersistenceDecision {
+            outcome: ProcessOutcome::Continue,
+            mutation: Some(mutation),
+        },
+        Ok(None) => PersistenceDecision {
+            outcome: ProcessOutcome::Skip,
+            mutation: None,
+        },
+        Err(_) => {
+            eprintln!("{}", storage_failure_log(entry_id, operation));
+            PersistenceDecision {
+                outcome: ProcessOutcome::Stop,
+                mutation: None,
+            }
+        }
+    }
+}
+
+fn progress_event_payload(result: StorageResult<BackfillStatus>) -> Option<BackfillStatus> {
+    result.ok()
+}
 
 /// 在 worker 内向外发送的 metadata 更新事件 payload。
 #[derive(Debug, Clone, Serialize)]
@@ -126,7 +172,9 @@ async fn run_backfill_loop(app: AppHandle) {
                 continue;
             }
 
-            process_one_entry(&app, &entry_id).await;
+            if process_one_entry(&app, &entry_id).await == ProcessOutcome::Stop {
+                return;
+            }
 
             // 节流：每条结束后 750ms
             tokio::time::sleep(Duration::from_millis(BACKFILL_THROTTLE_MS)).await;
@@ -135,17 +183,22 @@ async fn run_backfill_loop(app: AppHandle) {
 }
 
 /// 处理单条 entry：脱敏 → 调 LLM → 解析 → 写回 metadata + emit events。
-async fn process_one_entry(app: &AppHandle, entry_id: &str) {
+async fn process_one_entry(app: &AppHandle, entry_id: &str) -> ProcessOutcome {
     // 1) 取 entry 详情（lock db → 取 → drop guard）
     let detail: Option<VaultEntryDetail> = {
         let app_state = app.state::<crate::AppState>();
         let conn = match app_state.db.lock() {
             Ok(c) => c,
-            Err(_) => return,
+            Err(_) => return ProcessOutcome::Stop,
         };
-        vstore::get_entry_detail(&conn, entry_id).ok()
+        match vstore::get_entry_detail(&conn, entry_id) {
+            Ok(detail) => Some(detail),
+            Err(_) => return ProcessOutcome::Stop,
+        }
     };
-    let Some(detail) = detail else { return };
+    let Some(detail) = detail else {
+        return ProcessOutcome::Skip;
+    };
     let snapshot_hash = vstore::compute_entry_content_hash(&detail.entry, &detail.fields);
 
     // 2) 取 config + adapter
@@ -154,16 +207,86 @@ async fn process_one_entry(app: &AppHandle, entry_id: &str) {
         let guard = vault.config.lock().unwrap();
         guard.clone()
     };
-    let Some(config) = config else { return };
+    let Some(config) = config else {
+        return ProcessOutcome::Stop;
+    };
 
     let adapter =
         match OpenAiCompatAdapter::new(config.base_url, config.api_key, config.model.clone()) {
             Ok(a) => a,
-            Err(_) => return,
+            Err(_) => return ProcessOutcome::Stop,
         };
 
-    // 3) 脱敏（请求局部 TokenMap）
-    let tag_strings: Vec<String> = detail.tags.iter().map(|t| t.tag.clone()).collect();
+    // 3) 脱敏并组装请求（请求局部 TokenMap）
+    let (req, token_map) = build_enrichment_request(&detail);
+
+    // 4) 调 LLM
+    let resp = match adapter.complete(req).await {
+        Ok(r) => {
+            vault.record_success();
+            r
+        }
+        Err(e) => {
+            vault.record_failure(&e);
+            return write_error_status_and_emit(app, entry_id, &snapshot_hash).await;
+        }
+    };
+
+    // 5) 解析响应
+    let suggestion = match parse_capture_response(&resp.content, &token_map) {
+        Ok(s) => s,
+        Err(e) => {
+            vault.record_failure(&e);
+            return write_error_status_and_emit(app, entry_id, &snapshot_hash).await;
+        }
+    };
+
+    // 6) 在一个事务中重新检查 snapshot 并原子写入 ready metadata + AI tags。
+    let metadata = VaultAiMetadata {
+        entry_id: entry_id.to_string(),
+        summary: suggestion.ai_summary.clone(),
+        search_aliases: suggestion.search_aliases.clone(),
+        content_hash: snapshot_hash.clone(),
+        provider_id: Some(config.provider_id.clone()),
+        model: Some(config.model.clone()),
+        generated_at: Some(chrono::Utc::now().to_rfc3339()),
+        status: AiMetadataStatus::Ready,
+    };
+    let decision = {
+        let app_state = app.state::<crate::AppState>();
+        let Ok(mut conn) = app_state.db.lock() else {
+            return ProcessOutcome::Stop;
+        };
+        classify_persistence_result(
+            entry_id,
+            "ready",
+            vstore::apply_ai_enrichment_if_pending(
+                &mut conn,
+                entry_id,
+                &snapshot_hash,
+                &suggestion.ai_tags,
+                &metadata,
+            ),
+        )
+    };
+    let Some(mutation) = decision.mutation else {
+        return decision.outcome;
+    };
+
+    crate::emit_content_changed(app, &mutation);
+    emit_status_events(
+        app,
+        entry_id,
+        AiMetadataStatus::Ready,
+        suggestion.ai_tags,
+        Some(metadata),
+    )
+    .await;
+    ProcessOutcome::Continue
+}
+
+fn build_enrichment_request(detail: &VaultEntryDetail) -> (LlmRequest, TokenMap) {
+    let tag_strings: Vec<String> = detail.tags.iter().map(|tag| tag.tag.clone()).collect();
     let mut token_map = TokenMap::new();
     let d_entry = desensitize_entry(&detail.entry, &detail.fields, &tag_strings, &mut token_map);
     let mut masked_text = String::new();
@@ -181,89 +304,40 @@ async fn process_one_entry(app: &AppHandle, entry_id: &str) {
     if !d_entry.tags.is_empty() {
         masked_text.push_str(&format!("tags: {}\n", d_entry.tags.join(", ")));
     }
-
-    // 4) 组装 prompt + 调 LLM
     let messages = capture_enrichment_prompt(&masked_text);
-    let req = LlmRequest {
-        messages,
-        json_mode: true,
-        temperature: 0.3,
-        max_tokens: Some(512),
-    };
-    let resp = match adapter.complete(req).await {
-        Ok(r) => {
-            vault.record_success();
-            r
-        }
-        Err(e) => {
-            vault.record_failure(&e);
-            write_error_status_and_emit(app, entry_id, &snapshot_hash).await;
-            return;
-        }
-    };
-
-    // 5) 解析响应
-    let suggestion = match parse_capture_response(&resp.content, &token_map) {
-        Ok(s) => s,
-        Err(e) => {
-            vault.record_failure(&e);
-            write_error_status_and_emit(app, entry_id, &snapshot_hash).await;
-            return;
-        }
-    };
-
-    // 6) 在一个事务中重新检查 snapshot 并原子写入 ready metadata + AI tags。
-    let metadata = VaultAiMetadata {
-        entry_id: entry_id.to_string(),
-        summary: suggestion.ai_summary.clone(),
-        search_aliases: suggestion.search_aliases.clone(),
-        content_hash: snapshot_hash.clone(),
-        provider_id: Some(config.provider_id.clone()),
-        model: Some(config.model.clone()),
-        generated_at: Some(chrono::Utc::now().to_rfc3339()),
-        status: AiMetadataStatus::Ready,
-    };
-    let mutation = {
-        let app_state = app.state::<crate::AppState>();
-        let Ok(mut conn) = app_state.db.lock() else {
-            return;
-        };
-        match vstore::apply_ai_enrichment_if_pending(
-            &mut conn,
-            entry_id,
-            &snapshot_hash,
-            &suggestion.ai_tags,
-            &metadata,
-        ) {
-            Ok(Some(mutation)) => mutation,
-            Ok(None) | Err(_) => return,
-        }
-    };
-
-    crate::emit_content_changed(app, &mutation);
-    emit_status_events(
-        app,
-        entry_id,
-        AiMetadataStatus::Ready,
-        suggestion.ai_tags,
-        Some(metadata),
+    (
+        LlmRequest {
+            messages,
+            json_mode: true,
+            temperature: 0.3,
+            max_tokens: Some(512),
+        },
+        token_map,
     )
-    .await;
 }
 
-async fn write_error_status_and_emit(app: &AppHandle, entry_id: &str, expected_hash: &str) {
-    let mutation = {
+async fn write_error_status_and_emit(
+    app: &AppHandle,
+    entry_id: &str,
+    expected_hash: &str,
+) -> ProcessOutcome {
+    let decision = {
         let app_state = app.state::<crate::AppState>();
         let Ok(mut conn) = app_state.db.lock() else {
-            return;
+            return ProcessOutcome::Stop;
         };
-        match vstore::mark_ai_metadata_error_if_pending(&mut conn, entry_id, expected_hash) {
-            Ok(Some(mutation)) => mutation,
-            Ok(None) | Err(_) => return,
-        }
+        classify_persistence_result(
+            entry_id,
+            "error",
+            vstore::mark_ai_metadata_error_if_pending(&mut conn, entry_id, expected_hash),
+        )
+    };
+    let Some(mutation) = decision.mutation else {
+        return decision.outcome;
     };
     crate::emit_content_changed(app, &mutation);
     emit_status_events(app, entry_id, AiMetadataStatus::Error, Vec::new(), None).await;
+    ProcessOutcome::Continue
 }
 
 /// 发出旧 Vault 专用事件。调用前相应数据库事务必须已经成功提交。
@@ -284,15 +358,17 @@ async fn emit_status_events(
     let _ = app.emit("vault-ai-metadata-updated", payload);
 
     // emit progress
-    let progress: BackfillStatus = {
+    let progress = {
         let app_state = app.state::<crate::AppState>();
         let conn_guard = app_state.db.lock();
         match conn_guard {
-            Ok(c) => vstore::backfill_status(&c).unwrap_or_default(),
-            Err(_) => BackfillStatus::default(),
+            Ok(c) => progress_event_payload(vstore::backfill_status(&c)),
+            Err(_) => None,
         }
     };
-    let _ = app.emit("vault-ai-backfill-progress", progress);
+    if let Some(progress) = progress {
+        let _ = app.emit("vault-ai-backfill-progress", progress);
+    }
 }
 
 // ---- Tests -----------------------------------------------------------------
@@ -302,7 +378,7 @@ mod tests {
     use super::*;
     use crate::scratchpad::storage::ensure_dock_schema;
     use crate::vault::config::{save_ai_settings, save_stored_config, VaultAiSettings};
-    use rusqlite::Connection;
+    use rusqlite::{params, Connection};
 
     fn open_db() -> Connection {
         let mut conn = Connection::open_in_memory().unwrap();
@@ -439,6 +515,137 @@ mod tests {
         assert_eq!(s.ready, 1);
         assert_eq!(s.pending, 1);
         assert_eq!(s.error, 1);
+    }
+
+    #[test]
+    fn worker_request_masks_default_sensitive_false_values_everywhere() {
+        use crate::vault::models::{FieldInput, VaultEntryInput};
+
+        let mut conn = open_db();
+        let detail = vstore::create_entry(
+            &mut conn,
+            &VaultEntryInput {
+                kind: crate::vault::models::EntryKind::Credential,
+                title: "NEVERINDEXME console".into(),
+                fields: vec![
+                    FieldInput {
+                        key: "password".into(),
+                        value: "NeverIndexMe".into(),
+                        is_sensitive: false,
+                    },
+                    FieldInput {
+                        key: "username".into(),
+                        value: "alice".into(),
+                        is_sensitive: false,
+                    },
+                    FieldInput {
+                        key: "description".into(),
+                        value: "reuse neverindexme here".into(),
+                        is_sensitive: false,
+                    },
+                ],
+                notes: Some("notes NeVeRiNdExMe".into()),
+                manual_tags: vec!["tag-NEVERINDEXME".into()],
+            },
+        )
+        .unwrap();
+        conn.execute(
+            "UPDATE vault_fields SET is_sensitive=0
+             WHERE entry_id=?1 AND key='password'",
+            params![detail.entry.id],
+        )
+        .unwrap();
+        let detail = vstore::get_entry_detail(&conn, &detail.entry.id).unwrap();
+
+        let (request, _) = build_enrichment_request(&detail);
+        let prompt = request
+            .messages
+            .iter()
+            .map(|message| message.content.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(!prompt.to_lowercase().contains("neverindexme"));
+        assert!(prompt.contains("[SECRET:"));
+        assert!(prompt.contains("alice"));
+    }
+
+    #[test]
+    fn storage_failure_stops_worker_without_a_success_mutation() {
+        use crate::vault::models::{
+            AiMetadataStatus, FieldInput, VaultAiMetadata, VaultEntryInput,
+        };
+
+        let mut conn = open_db();
+        let detail = vstore::create_entry(
+            &mut conn,
+            &VaultEntryInput {
+                kind: crate::vault::models::EntryKind::Note,
+                title: "worker failure".into(),
+                fields: Vec::<FieldInput>::new(),
+                notes: None,
+                manual_tags: Vec::new(),
+            },
+        )
+        .unwrap();
+        let hash = vstore::ai_content_hash_for_entry(&conn, &detail.entry.id).unwrap();
+        let metadata = VaultAiMetadata {
+            entry_id: detail.entry.id.clone(),
+            summary: Some("safe summary".into()),
+            search_aliases: Vec::new(),
+            content_hash: hash.clone(),
+            provider_id: None,
+            model: None,
+            generated_at: None,
+            status: AiMetadataStatus::Ready,
+        };
+        conn.execute_batch(
+            "CREATE TRIGGER fail_worker_ready_persistence
+             BEFORE UPDATE ON content_catalog
+             BEGIN SELECT RAISE(FAIL, 'NeverIndexMe provider-key response-body'); END;",
+        )
+        .unwrap();
+        let failure = vstore::apply_ai_enrichment_if_pending(
+            &mut conn,
+            &detail.entry.id,
+            &hash,
+            &[],
+            &metadata,
+        );
+        assert!(failure.is_err());
+
+        let decision = classify_persistence_result(&detail.entry.id, "ready", failure);
+
+        assert_eq!(decision.outcome, ProcessOutcome::Stop);
+        assert!(decision.mutation.is_none());
+        assert_eq!(
+            vstore::get_ai_metadata(&conn, &detail.entry.id)
+                .unwrap()
+                .unwrap()
+                .status,
+            AiMetadataStatus::Pending
+        );
+        let safe_log = storage_failure_log(&detail.entry.id, "ready");
+        assert!(safe_log.contains(&format!("vault:{}", detail.entry.id)));
+        assert!(!safe_log.contains("NeverIndexMe"));
+        assert!(!safe_log.contains("provider-key"));
+    }
+
+    #[test]
+    fn stale_persistence_skips_without_becoming_a_worker_error() {
+        let decision = classify_persistence_result("entry-1", "ready", Ok(None));
+
+        assert_eq!(decision.outcome, ProcessOutcome::Skip);
+        assert!(decision.mutation.is_none());
+    }
+
+    #[test]
+    fn progress_query_failure_has_no_event_payload() {
+        let result = Err(crate::storage::error::StorageError::Other(
+            "NeverIndexMe database detail".into(),
+        ));
+
+        assert!(progress_event_payload(result).is_none());
     }
 
     #[test]
