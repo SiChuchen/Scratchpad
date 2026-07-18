@@ -1,6 +1,7 @@
 use super::error::{StorageError, StorageResult};
 use rusqlite::Connection;
 use std::path::PathBuf;
+use std::time::Duration;
 use std::{fs, io};
 
 /// Returns the directory for non-data config files (override, etc).
@@ -109,7 +110,28 @@ pub fn open_db() -> StorageResult<Connection> {
         fs::create_dir_all(parent)?;
     }
     let conn = Connection::open(&path)?;
+    configure_connection(&conn)?;
+    Ok(conn)
+}
+
+pub(crate) fn configure_connection(conn: &Connection) -> StorageResult<()> {
+    conn.busy_timeout(Duration::from_secs(5))?;
     conn.pragma_update(None, "foreign_keys", "ON")?;
     conn.pragma_update(None, "journal_mode", "WAL")?;
-    Ok(conn)
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use rusqlite::Connection;
+
+    #[test]
+    fn configured_connections_wait_for_short_write_contention() {
+        let conn = Connection::open_in_memory().unwrap();
+        super::configure_connection(&conn).unwrap();
+        let timeout: i64 = conn
+            .query_row("PRAGMA busy_timeout", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(timeout, 5_000);
+    }
 }

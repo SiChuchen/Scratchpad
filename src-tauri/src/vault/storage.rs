@@ -577,11 +577,8 @@ pub fn delete_entry_with_revision(
     require_unified_schema(conn)?;
     let tx = conn.transaction()?;
     let unified_id = vault_unified_id(id)?;
+    crate::content::service::ensure_no_pending_delete(&tx, &unified_id)?;
     fts5_delete(&tx, id)?;
-    tx.execute(
-        "DELETE FROM content_pending_deletes WHERE unified_id=?1",
-        params![unified_id],
-    )?;
     tx.execute(
         "DELETE FROM content_fts WHERE unified_id=?1",
         params![unified_id],

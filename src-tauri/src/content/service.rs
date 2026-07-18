@@ -157,6 +157,7 @@ pub fn reorder(
 
 pub fn delete(conn: &mut Connection, id: &str) -> StorageResult<ContentMutation<()>> {
     let tx = conn.transaction()?;
+    ensure_no_pending_delete(&tx, id)?;
     let attachment = delete_in_transaction(&tx, id)?;
     let revision = bump_revision(&tx)?;
     tx.commit()?;
@@ -487,15 +488,20 @@ fn retention_mutation(
 
 fn ensure_not_pending(conn: &Connection, ids: &[String]) -> StorageResult<()> {
     for id in ids {
-        if conn.query_row(
-            "SELECT EXISTS(SELECT 1 FROM content_pending_deletes WHERE unified_id=?1)",
-            params![id],
-            |row| row.get::<_, bool>(0),
-        )? {
-            return Err(StorageError::Validation(format!(
-                "content has a pending delete: {id}"
-            )));
-        }
+        ensure_no_pending_delete(conn, id)?;
+    }
+    Ok(())
+}
+
+pub(crate) fn ensure_no_pending_delete(conn: &Connection, id: &str) -> StorageResult<()> {
+    if conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM content_pending_deletes WHERE unified_id=?1)",
+        params![id],
+        |row| row.get::<_, bool>(0),
+    )? {
+        return Err(StorageError::Validation(format!(
+            "content has a pending delete: {id}"
+        )));
     }
     Ok(())
 }
@@ -1397,21 +1403,13 @@ mod tests {
     }
 
     #[test]
-    fn delete_removes_dock_attachment_database_rows_projection_pending_and_catalog() {
+    fn delete_removes_dock_attachment_database_rows_projection_and_catalog() {
         let mut conn = fixture_with_all_kinds();
         let path = temp_asset("dock-delete");
         std::fs::write(&path, b"asset").unwrap();
         conn.execute(
             "UPDATE entries SET file_path=?1 WHERE id='image-1'",
             params![path.to_string_lossy()],
-        )
-        .unwrap();
-        conn.execute(
-            "INSERT INTO content_pending_deletes(
-                 token, unified_id, created_at, expires_at, status
-             ) VALUES ('pending-image', 'dock:image-1', '2026-07-18T07:00:00Z',
-                       '2026-07-18T08:00:00Z', 'pending')",
-            [],
         )
         .unwrap();
         let start = revision(&conn);
@@ -1429,7 +1427,6 @@ mod tests {
             "SELECT COUNT(*) FROM home_entries WHERE entry_id='image-1'",
             "SELECT COUNT(*) FROM note_entries WHERE entry_id='image-1'",
             "SELECT COUNT(*) FROM content_fts WHERE unified_id='dock:image-1'",
-            "SELECT COUNT(*) FROM content_pending_deletes WHERE unified_id='dock:image-1'",
             "SELECT COUNT(*) FROM content_catalog WHERE unified_id='dock:image-1'",
         ] {
             assert_eq!(scalar_i64(&conn, sql), 0, "{sql}");
