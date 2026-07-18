@@ -1115,6 +1115,7 @@ pub fn run() {
             main_geometry: Mutex::new(None),
             shortcuts: Mutex::new(RegisteredShortcuts::default()),
         })
+        .manage(content::ipc::DeleteSchedulerState::default())
         .manage(vault_runtime)
         .invoke_handler(tauri::generate_handler![
             ipc_entries_create_text,

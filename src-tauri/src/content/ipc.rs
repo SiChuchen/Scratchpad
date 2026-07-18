@@ -1,7 +1,10 @@
 use chrono::{DateTime, Duration, Utc};
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, MutexGuard};
 use std::time::Duration as StdDuration;
+use std::time::Instant;
 use tauri::{Emitter, Manager};
 
 use crate::content::catalog::{bump_revision, current_revision, summary_by_id};
@@ -52,7 +55,10 @@ pub(crate) fn dispatch_content_changed<T, E>(
     }
 }
 
-pub(crate) fn emit_content_changed<T>(app: &tauri::AppHandle, mutation: &ContentMutation<T>) {
+pub(crate) fn emit_content_changed<T, R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    mutation: &ContentMutation<T>,
+) {
     dispatch_content_changed(mutation, |name, payload| app.emit(name, payload));
 }
 
@@ -305,17 +311,34 @@ impl DeleteWorkerGate {
     }
 }
 
-static DELETE_WORKER_GATE: DeleteWorkerGate = DeleteWorkerGate::new();
-static DELETE_WORKER_NOTIFY: tokio::sync::Notify = tokio::sync::Notify::const_new();
+struct DeleteSchedulerInner {
+    gate: DeleteWorkerGate,
+    notify: tokio::sync::Notify,
+}
+
+impl Default for DeleteSchedulerInner {
+    fn default() -> Self {
+        Self {
+            gate: DeleteWorkerGate::new(),
+            notify: tokio::sync::Notify::new(),
+        }
+    }
+}
+
+#[derive(Clone, Default)]
+pub struct DeleteSchedulerState {
+    inner: Arc<DeleteSchedulerInner>,
+}
 
 struct DeleteWorkerLease {
+    scheduler: Arc<DeleteSchedulerInner>,
     armed: bool,
 }
 
 impl Drop for DeleteWorkerLease {
     fn drop(&mut self) {
         if self.armed {
-            DELETE_WORKER_GATE.running.store(false, Ordering::Release);
+            self.scheduler.gate.running.store(false, Ordering::Release);
         }
     }
 }
@@ -396,12 +419,21 @@ fn worker_delay(expires_at: DateTime<Utc>, now: DateTime<Utc>) -> StdDuration {
     }
 }
 
-async fn retry_mark_failed(app: &tauri::AppHandle, pending: &PendingDelete) {
+enum MarkFailedOutcome {
+    Marked,
+    Gone,
+    Deferred,
+}
+
+async fn retry_mark_failed<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    pending: &PendingDelete,
+) -> MarkFailedOutcome {
     let mut backoff = StdDuration::from_millis(25);
-    loop {
+    for attempt in 0..3 {
         let result = {
             let state = app.state::<AppState>();
-            let mut conn = state.db.lock().unwrap();
+            let mut conn = lock_app_db(&state);
             mark_delete_failed(&mut conn, &pending.token)
         };
         match result {
@@ -414,10 +446,13 @@ async fn retry_mark_failed(app: &tauri::AppHandle, pending: &PendingDelete) {
                 if app.emit("content-delete-failed", payload).is_err() {
                     eprintln!("failed to emit content-delete-failed");
                 }
-                return;
+                return MarkFailedOutcome::Marked;
             }
-            Ok(false) => return,
+            Ok(false) => return MarkFailedOutcome::Gone,
             Err(error) if is_retryable_busy(&error) => {
+                if attempt == 2 {
+                    return MarkFailedOutcome::Deferred;
+                }
                 tokio::time::sleep(backoff).await;
                 backoff = (backoff * 2).min(StdDuration::from_secs(1));
             }
@@ -426,34 +461,43 @@ async fn retry_mark_failed(app: &tauri::AppHandle, pending: &PendingDelete) {
                     "failed to mark content delete token {} failed: {error}",
                     pending.token
                 );
-                tokio::time::sleep(StdDuration::from_secs(1)).await;
+                return MarkFailedOutcome::Deferred;
             }
         }
     }
+    MarkFailedOutcome::Deferred
 }
 
-async fn run_delete_worker(app: tauri::AppHandle) {
+fn lock_app_db(state: &AppState) -> MutexGuard<'_, Connection> {
+    state.db.lock().unwrap_or_else(|error| error.into_inner())
+}
+
+async fn run_delete_worker<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    scheduler: Arc<DeleteSchedulerInner>,
+) {
     let mut busy_backoff = StdDuration::from_millis(25);
+    let mut token_backoff = HashMap::<String, (Instant, u32)>::new();
     loop {
-        let next = {
+        let records = {
             let state = app.state::<AppState>();
-            let conn = state.db.lock().unwrap();
-            next_pending_delete(&conn)
+            let conn = lock_app_db(&state);
+            list_pending_deletes(&conn)
         };
-        let pending = match next {
-            Ok(Some(pending)) => pending,
-            Ok(None) => {
-                DELETE_WORKER_GATE.running.store(false, Ordering::Release);
+        let records = match records {
+            Ok(records) if records.is_empty() => {
+                scheduler.gate.running.store(false, Ordering::Release);
                 let has_work = {
                     let state = app.state::<AppState>();
-                    let conn = state.db.lock().unwrap();
+                    let conn = lock_app_db(&state);
                     next_pending_delete(&conn).ok().flatten().is_some()
                 };
-                if has_work && DELETE_WORKER_GATE.claim() {
+                if has_work && scheduler.gate.claim() {
                     continue;
                 }
                 return;
             }
+            Ok(records) => records,
             Err(error) if is_retryable_busy(&error) => {
                 tokio::time::sleep(busy_backoff).await;
                 busy_backoff = (busy_backoff * 2).min(StdDuration::from_secs(1));
@@ -465,21 +509,37 @@ async fn run_delete_worker(app: tauri::AppHandle) {
                 continue;
             }
         };
+        token_backoff.retain(|token, _| records.iter().any(|record| &record.token == token));
+        let instant_now = Instant::now();
+        let pending = select_eligible_pending(&records, &token_backoff, instant_now);
+        let Some(pending) = pending else {
+            let delay = token_backoff
+                .values()
+                .map(|(until, _)| until.saturating_duration_since(instant_now))
+                .min()
+                .unwrap_or(StdDuration::from_secs(1));
+            tokio::select! {
+                () = tokio::time::sleep(delay) => {}
+                () = scheduler.notify.notified() => {}
+            }
+            continue;
+        };
         let delay = worker_delay(pending.expires_at, Utc::now());
         if !delay.is_zero() {
             tokio::select! {
                 () = tokio::time::sleep(delay) => {}
-                () = DELETE_WORKER_NOTIFY.notified() => {}
+                () = scheduler.notify.notified() => {}
             }
             continue;
         }
         let step = {
             let state = app.state::<AppState>();
-            let mut conn = state.db.lock().unwrap();
+            let mut conn = lock_app_db(&state);
             pending_worker_step(&mut conn, &pending.token, Utc::now())
         };
         match step {
             Ok(PendingWorkerStep::Gone) => {
+                token_backoff.remove(&pending.token);
                 busy_backoff = StdDuration::from_millis(25);
             }
             Ok(PendingWorkerStep::NotDue(expires_at)) => {
@@ -487,6 +547,7 @@ async fn run_delete_worker(app: tauri::AppHandle) {
                 busy_backoff = StdDuration::from_millis(25);
             }
             Ok(PendingWorkerStep::Deleted(committed)) => {
+                token_backoff.remove(&pending.token);
                 busy_backoff = StdDuration::from_millis(25);
                 let _committed_token = committed.token.as_str();
                 crate::content::service::remove_attachment(&committed.id, committed.attachment);
@@ -511,29 +572,151 @@ async fn run_delete_worker(app: tauri::AppHandle) {
                     "content delete commit failed for token {}: {error}",
                     pending.token
                 );
-                retry_mark_failed(&app, &pending).await;
+                match retry_mark_failed(&app, &pending).await {
+                    MarkFailedOutcome::Marked | MarkFailedOutcome::Gone => {
+                        token_backoff.remove(&pending.token);
+                    }
+                    MarkFailedOutcome::Deferred => {
+                        let failures = token_backoff
+                            .get(&pending.token)
+                            .map_or(1, |(_, failures)| failures.saturating_add(1));
+                        let exponent = failures.saturating_sub(1).min(7);
+                        let delay = StdDuration::from_millis(250 * (1_u64 << exponent));
+                        token_backoff.insert(
+                            pending.token.clone(),
+                            (
+                                Instant::now() + delay.min(StdDuration::from_secs(30)),
+                                failures,
+                            ),
+                        );
+                    }
+                }
             }
         }
     }
 }
 
-fn ensure_delete_worker_running(app: &tauri::AppHandle) {
-    DELETE_WORKER_NOTIFY.notify_one();
-    if !DELETE_WORKER_GATE.claim() {
+fn select_eligible_pending(
+    records: &[PendingDelete],
+    token_backoff: &HashMap<String, (Instant, u32)>,
+    instant_now: Instant,
+) -> Option<PendingDelete> {
+    records
+        .iter()
+        .find(|record| {
+            token_backoff
+                .get(&record.token)
+                .is_none_or(|(until, _)| *until <= instant_now)
+        })
+        .cloned()
+}
+
+fn list_pending_deletes(conn: &Connection) -> StorageResult<Vec<PendingDelete>> {
+    let tokens = {
+        let mut statement = conn.prepare(
+            "SELECT token FROM content_pending_deletes WHERE status='pending' ORDER BY expires_at, token",
+        )?;
+        let tokens = statement
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        tokens
+    };
+    tokens
+        .into_iter()
+        .filter_map(|token| pending_by_token(conn, &token).transpose())
+        .collect()
+}
+
+#[derive(Default)]
+struct PanicRetryPolicy {
+    consecutive: u32,
+}
+
+impl PanicRetryPolicy {
+    fn record_panic(&mut self) -> Option<StdDuration> {
+        if self.consecutive >= 3 {
+            return None;
+        }
+        let delay = StdDuration::from_millis(25 * (1_u64 << self.consecutive));
+        self.consecutive += 1;
+        Some(delay)
+    }
+}
+
+#[cfg(test)]
+async fn run_injected_monitor<F, Fut>(mut worker: F) -> usize
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = ()> + Send + 'static,
+{
+    let mut policy = PanicRetryPolicy::default();
+    let mut starts = 0;
+    loop {
+        starts += 1;
+        match tauri::async_runtime::spawn(worker()).await {
+            Ok(()) => return starts,
+            Err(tauri::Error::JoinError(error)) if error.is_panic() => {
+                let Some(delay) = policy.record_panic() else {
+                    return starts;
+                };
+                tokio::time::sleep(delay).await;
+            }
+            Err(_) => return starts,
+        }
+    }
+}
+
+fn ensure_delete_worker_running<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    let scheduler = app.state::<DeleteSchedulerState>().inner.clone();
+    scheduler.notify.notify_one();
+    if !scheduler.gate.claim() {
         return;
     }
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
-        let mut lease = DeleteWorkerLease { armed: true };
-        run_delete_worker(app).await;
-        lease.armed = false;
+        let mut panic_policy = PanicRetryPolicy::default();
+        loop {
+            let worker_app = app.clone();
+            let worker_scheduler = scheduler.clone();
+            let lease_scheduler = scheduler.clone();
+            let handle = tauri::async_runtime::spawn(async move {
+                let mut lease = DeleteWorkerLease {
+                    scheduler: lease_scheduler,
+                    armed: true,
+                };
+                run_delete_worker(worker_app, worker_scheduler).await;
+                lease.armed = false;
+            });
+            match handle.await {
+                Ok(()) => return,
+                Err(tauri::Error::JoinError(error)) if error.is_panic() => {
+                    let Some(delay) = panic_policy.record_panic() else {
+                        eprintln!("content delete worker stopped after repeated panic: {error}");
+                        return;
+                    };
+                    tokio::time::sleep(delay).await;
+                    let has_work = {
+                        let state = app.state::<AppState>();
+                        let conn = lock_app_db(&state);
+                        next_pending_delete(&conn).ok().flatten().is_some()
+                    };
+                    if !has_work || !scheduler.gate.claim() {
+                        return;
+                    }
+                }
+                Err(error) => {
+                    eprintln!("content delete worker stopped after repeated panic: {error}");
+                    return;
+                }
+            }
+        }
     });
 }
 
-pub(crate) fn resume_pending_deletes(app: &tauri::AppHandle) {
+pub(crate) fn resume_pending_deletes<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     let has_pending = {
         let state = app.state::<AppState>();
-        let mut conn = state.db.lock().unwrap();
+        let mut conn = lock_app_db(&state);
         match recover_pending_deletes(&mut conn, Utc::now()) {
             Ok(pending) => !pending.is_empty(),
             Err(error) => {
@@ -596,9 +779,9 @@ pub(crate) fn ipc_content_search_local(
 }
 
 #[tauri::command]
-pub(crate) fn ipc_content_save(
+pub(crate) fn ipc_content_save<R: tauri::Runtime>(
     state: tauri::State<AppState>,
-    app: tauri::AppHandle,
+    app: tauri::AppHandle<R>,
     id: String,
 ) -> Result<ContentSummary, String> {
     let mutation = {
@@ -610,9 +793,9 @@ pub(crate) fn ipc_content_save(
 }
 
 #[tauri::command]
-pub(crate) fn ipc_content_unsave(
+pub(crate) fn ipc_content_unsave<R: tauri::Runtime>(
     state: tauri::State<AppState>,
-    app: tauri::AppHandle,
+    app: tauri::AppHandle<R>,
     id: String,
 ) -> Result<ContentSummary, String> {
     let mutation = {
@@ -627,9 +810,9 @@ pub(crate) fn ipc_content_unsave(
 }
 
 #[tauri::command]
-pub(crate) fn ipc_content_reorder(
+pub(crate) fn ipc_content_reorder<R: tauri::Runtime>(
     state: tauri::State<AppState>,
-    app: tauri::AppHandle,
+    app: tauri::AppHandle<R>,
     scope: BrowseScope,
     ordered_ids: Vec<String>,
 ) -> Result<(), String> {
@@ -642,9 +825,9 @@ pub(crate) fn ipc_content_reorder(
 }
 
 #[tauri::command]
-pub(crate) fn ipc_content_delete(
+pub(crate) fn ipc_content_delete<R: tauri::Runtime>(
     state: tauri::State<AppState>,
-    app: tauri::AppHandle,
+    app: tauri::AppHandle<R>,
     id: String,
 ) -> Result<DeleteUndoToken, String> {
     let prepared = {
@@ -656,13 +839,17 @@ pub(crate) fn ipc_content_delete(
 }
 
 #[tauri::command]
-pub(crate) fn ipc_content_restore(
+pub(crate) fn ipc_content_restore<R: tauri::Runtime>(
     state: tauri::State<AppState>,
-    _app: tauri::AppHandle,
+    app: tauri::AppHandle<R>,
     token: String,
 ) -> Result<ContentSummary, String> {
-    let mut conn = state.db.lock().unwrap();
-    cancel_pending_delete(&mut conn, &token, Utc::now()).map_err(ipc_error)
+    let restored = {
+        let mut conn = state.db.lock().unwrap();
+        cancel_pending_delete(&mut conn, &token, Utc::now()).map_err(ipc_error)?
+    };
+    ensure_delete_worker_running(&app);
+    Ok(restored)
 }
 
 #[cfg(test)]
@@ -672,6 +859,7 @@ mod tests {
 
     use chrono::{Duration, TimeZone, Utc};
     use rusqlite::{params, Connection};
+    use tauri::Listener;
 
     use super::*;
     use crate::content::catalog::current_revision;
@@ -1279,5 +1467,261 @@ mod tests {
         );
         drop(contender);
         std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn monitor_restarts_once_after_injected_panic_and_caps_repeated_panics() {
+        let mut conn = fixture_with_all_kinds();
+        let prepared = prepare_delete(&mut conn, "dock:text-1", now(), Duration::zero()).unwrap();
+        let db = Arc::new(std::sync::Mutex::new(conn));
+        let attempts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let worker_db = db.clone();
+        let worker_attempts = attempts.clone();
+        let token = prepared.token.clone();
+        let starts = tauri::async_runtime::block_on(run_injected_monitor(move || {
+            let db = worker_db.clone();
+            let token = token.clone();
+            let attempt = worker_attempts.fetch_add(1, Ordering::SeqCst);
+            async move {
+                if attempt == 0 {
+                    panic!("injected worker panic");
+                }
+                let mut conn = db.lock().unwrap();
+                assert!(matches!(
+                    pending_worker_step(&mut conn, &token, now()).unwrap(),
+                    PendingWorkerStep::Deleted(_)
+                ));
+            }
+        }));
+        assert_eq!(starts, 2);
+        assert_eq!(attempts.load(Ordering::SeqCst), 2);
+        let conn = db.lock().unwrap();
+        assert_eq!(current_revision(&conn).unwrap(), 1);
+        assert!(pending_by_token(&conn, &prepared.token).unwrap().is_none());
+        drop(conn);
+
+        let attempts = std::sync::atomic::AtomicUsize::new(0);
+        let starts = tauri::async_runtime::block_on(run_injected_monitor(|| {
+            attempts.fetch_add(1, Ordering::SeqCst);
+            async { panic!("injected repeated worker panic") }
+        }));
+        assert_eq!(starts, 4);
+        assert_eq!(attempts.load(Ordering::SeqCst), 4);
+    }
+
+    #[test]
+    fn token_backoff_skips_failed_token_and_processes_other_due_delete() {
+        let mut conn = fixture_with_all_kinds();
+        let failed = prepare_delete(&mut conn, "dock:text-1", now(), Duration::zero()).unwrap();
+        let healthy = prepare_delete(&mut conn, "dock:image-1", now(), Duration::zero()).unwrap();
+        conn.execute_batch(
+            "CREATE TRIGGER fail_token_delete BEFORE DELETE ON entries
+             WHEN OLD.id='text-1' BEGIN SELECT RAISE(ABORT, 'fail-token-delete'); END;
+             CREATE TRIGGER fail_token_mark BEFORE UPDATE OF status ON content_pending_deletes
+             WHEN OLD.unified_id='dock:text-1'
+             BEGIN SELECT RAISE(ABORT, 'fail-token-mark'); END;",
+        )
+        .unwrap();
+
+        assert!(pending_worker_step(&mut conn, &failed.token, now()).is_err());
+        assert!(mark_delete_failed(&mut conn, &failed.token).is_err());
+        let selection_time = Instant::now();
+        let mut backoff = HashMap::new();
+        backoff.insert(
+            failed.token.clone(),
+            (selection_time + StdDuration::from_secs(1), 1),
+        );
+        let records = list_pending_deletes(&conn).unwrap();
+        let selected = select_eligible_pending(&records, &backoff, selection_time).unwrap();
+        assert_eq!(selected.token, healthy.token);
+        assert!(matches!(
+            pending_worker_step(&mut conn, &selected.token, now()).unwrap(),
+            PendingWorkerStep::Deleted(_)
+        ));
+        assert_eq!(current_revision(&conn).unwrap(), 1);
+
+        let records = list_pending_deletes(&conn).unwrap();
+        for _ in 0..1_000 {
+            assert!(select_eligible_pending(&records, &backoff, selection_time).is_none());
+        }
+        conn.execute_batch("DROP TRIGGER fail_token_delete; DROP TRIGGER fail_token_mark;")
+            .unwrap();
+        let selected = select_eligible_pending(
+            &records,
+            &backoff,
+            selection_time + StdDuration::from_secs(2),
+        )
+        .unwrap();
+        assert_eq!(selected.token, failed.token);
+        assert!(matches!(
+            pending_worker_step(&mut conn, &selected.token, now()).unwrap(),
+            PendingWorkerStep::Deleted(_)
+        ));
+        assert_eq!(current_revision(&conn).unwrap(), 2);
+    }
+
+    #[test]
+    fn scheduler_state_is_independent_per_app_instance() {
+        let first = DeleteSchedulerState::default();
+        let second = DeleteSchedulerState::default();
+        assert!(first.inner.gate.claim());
+        assert!(!first.inner.gate.claim());
+        assert!(second.inner.gate.claim());
+        assert!(!second.inner.gate.claim());
+    }
+
+    fn invoke_mock(
+        webview: &tauri::WebviewWindow<tauri::test::MockRuntime>,
+        cmd: &str,
+        body: serde_json::Value,
+    ) -> Result<serde_json::Value, serde_json::Value> {
+        tauri::test::get_ipc_response(
+            webview,
+            tauri::webview::InvokeRequest {
+                cmd: cmd.into(),
+                callback: tauri::ipc::CallbackFn(0),
+                error: tauri::ipc::CallbackFn(1),
+                url: "http://tauri.localhost".parse().unwrap(),
+                body: tauri::ipc::InvokeBody::Json(body),
+                headers: Default::default(),
+                invoke_key: tauri::test::INVOKE_KEY.to_string(),
+            },
+        )
+        .map(|body| body.deserialize().unwrap())
+    }
+
+    #[test]
+    fn mock_tauri_dispatches_unified_commands_shapes_errors_state_and_events() {
+        let path = std::env::temp_dir().join(format!(
+            "scratchpad-tauri-ipc-{}.sqlite",
+            rand::random::<u64>()
+        ));
+        let fixture = fixture_with_all_kinds();
+        fixture
+            .execute("VACUUM INTO ?1", params![path.to_string_lossy().as_ref()])
+            .unwrap();
+        drop(fixture);
+        let conn = Connection::open(&path).unwrap();
+        crate::storage::connection::configure_connection(&conn).unwrap();
+        let app = tauri::test::mock_builder()
+            .manage(crate::AppState {
+                db: std::sync::Mutex::new(conn),
+                main_geometry: std::sync::Mutex::new(None),
+                shortcuts: std::sync::Mutex::new(crate::RegisteredShortcuts::default()),
+            })
+            .manage(DeleteSchedulerState::default())
+            .invoke_handler(tauri::generate_handler![
+                ipc_content_revision,
+                ipc_content_list,
+                ipc_content_detail,
+                ipc_content_search_local,
+                ipc_content_save,
+                ipc_content_unsave,
+                ipc_content_reorder,
+                ipc_content_delete,
+                ipc_content_restore,
+            ])
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .unwrap();
+        let webview = tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
+            .build()
+            .unwrap();
+
+        let list = invoke_mock(
+            &webview,
+            "ipc_content_list",
+            serde_json::json!({"scope":"all", "kind":null}),
+        )
+        .unwrap();
+        assert_eq!(list.as_array().unwrap().len(), 6);
+        assert_eq!(list[0]["id"], serde_json::json!("dock:text-1"));
+        let search = invoke_mock(&webview, "ipc_content_search_local", serde_json::json!({
+            "query":"数据库", "plan":{"kinds":["text"], "keywords":[], "aliases":[], "dateFrom":null, "dateTo":null}, "limit":10
+        })).unwrap();
+        assert_eq!(search[0]["summary"]["id"], serde_json::json!("dock:text-1"));
+        let invalid_scope = invoke_mock(
+            &webview,
+            "ipc_content_list",
+            serde_json::json!({"scope":"invalid", "kind":null}),
+        )
+        .unwrap_err();
+        let invalid_kind = invoke_mock(
+            &webview,
+            "ipc_content_list",
+            serde_json::json!({"scope":"all", "kind":"invalid"}),
+        )
+        .unwrap_err();
+        let invalid_id = invoke_mock(
+            &webview,
+            "ipc_content_detail",
+            serde_json::json!({"id":"invalid"}),
+        )
+        .unwrap_err();
+        let missing_arguments =
+            invoke_mock(&webview, "ipc_content_list", serde_json::json!({})).unwrap_err();
+        for error in [invalid_scope, invalid_kind, invalid_id, missing_arguments] {
+            assert!(
+                error.is_string(),
+                "IPC errors must use the string JSON shape"
+            );
+        }
+
+        let events = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let captured = events.clone();
+        app.listen("content-changed", move |event| {
+            captured.lock().unwrap().push(event.payload().to_string())
+        });
+        let saved = invoke_mock(
+            &webview,
+            "ipc_content_save",
+            serde_json::json!({"id":"dock:text-1"}),
+        )
+        .unwrap();
+        assert_eq!(saved["retention"], serde_json::json!("saved"));
+        assert!(events.lock().unwrap()[0].contains("dock:text-1"));
+
+        let deleted = invoke_mock(
+            &webview,
+            "ipc_content_delete",
+            serde_json::json!({"id":"dock:image-1"}),
+        )
+        .unwrap();
+        assert!(deleted["token"].as_str().unwrap().len() >= 32);
+        assert!(deleted.get("expiresAt").is_some());
+        assert_eq!(
+            invoke_mock(&webview, "ipc_content_revision", serde_json::json!({})).unwrap(),
+            serde_json::json!({"revision":1})
+        );
+        let restored = invoke_mock(
+            &webview,
+            "ipc_content_restore",
+            serde_json::json!({"token":deleted["token"]}),
+        )
+        .unwrap();
+        assert_eq!(restored["id"], serde_json::json!("dock:image-1"));
+        assert_eq!(
+            invoke_mock(&webview, "ipc_content_revision", serde_json::json!({})).unwrap(),
+            serde_json::json!({"revision":1})
+        );
+        let idle_deadline = Instant::now() + StdDuration::from_secs(2);
+        while app
+            .state::<DeleteSchedulerState>()
+            .inner
+            .gate
+            .running
+            .load(Ordering::Acquire)
+            && Instant::now() < idle_deadline
+        {
+            std::thread::sleep(StdDuration::from_millis(10));
+        }
+        assert!(!app
+            .state::<DeleteSchedulerState>()
+            .inner
+            .gate
+            .running
+            .load(Ordering::Acquire));
+        drop(webview);
+        drop(app);
+        let _ = std::fs::remove_file(path);
     }
 }
