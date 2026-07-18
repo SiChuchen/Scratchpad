@@ -1,24 +1,24 @@
-export type ContentSource = 'dock' | 'vault';
+export type ContentSource = "dock" | "vault";
 
 export type ContentKind =
-  | 'text'
-  | 'image'
-  | 'file'
-  | 'credential'
-  | 'bookmark'
-  | 'note';
+  | "text"
+  | "image"
+  | "file"
+  | "credential"
+  | "bookmark"
+  | "note";
 
-export type RetentionState = 'temporary' | 'saved';
+export type RetentionState = "temporary" | "saved";
 
-export type BrowseScope = 'temporary' | 'all' | 'saved';
+export type BrowseScope = "temporary" | "all" | "saved";
 
 export type ContentOperation =
-  | 'created'
-  | 'updated'
-  | 'retention'
-  | 'reordered'
-  | 'deleted'
-  | 'restored';
+  | "created"
+  | "updated"
+  | "retention"
+  | "reordered"
+  | "deleted"
+  | "restored";
 
 export interface ContentCapabilities {
   copyText: boolean;
@@ -34,9 +34,9 @@ export interface ContentCapabilities {
   reorder: boolean;
 }
 
-export interface ContentSummary {
+export interface ContentSummary<K extends ContentKind = ContentKind> {
   id: string;
-  kind: ContentKind;
+  kind: K;
   retention: RetentionState;
   title: string;
   preview: string | null;
@@ -53,7 +53,7 @@ export interface UnifiedField {
   sortOrder: number;
 }
 
-export type ContentTagSource = 'manual' | 'ai';
+export type ContentTagSource = "manual" | "ai";
 
 export interface UnifiedTag {
   tag: string;
@@ -63,14 +63,14 @@ export interface UnifiedTag {
 
 export type ContentDetail =
   | {
-      kind: 'text';
-      summary: ContentSummary;
+      kind: "text";
+      summary: ContentSummary<"text">;
       title: string;
       body: string;
     }
   | {
-      kind: 'image';
-      summary: ContentSummary;
+      kind: "image";
+      summary: ContentSummary<"image">;
       fileName: string;
       assetPath: string;
       mimeType: string | null;
@@ -79,8 +79,8 @@ export type ContentDetail =
       available: boolean;
     }
   | {
-      kind: 'file';
-      summary: ContentSummary;
+      kind: "file";
+      summary: ContentSummary<"file">;
       fileName: string;
       assetPath: string;
       mimeType: string | null;
@@ -88,29 +88,29 @@ export type ContentDetail =
       available: boolean;
     }
   | {
-      kind: 'credential';
-      summary: ContentSummary;
+      kind: "credential";
+      summary: ContentSummary<"credential">;
       fields: UnifiedField[];
       notes: string | null;
       tags: UnifiedTag[];
     }
   | {
-      kind: 'bookmark';
-      summary: ContentSummary;
+      kind: "bookmark";
+      summary: ContentSummary<"bookmark">;
       url: string;
       fields: UnifiedField[];
       notes: string | null;
       tags: UnifiedTag[];
     }
   | {
-      kind: 'note';
-      summary: ContentSummary;
+      kind: "note";
+      summary: ContentSummary<"note">;
       body: string;
       fields: UnifiedField[];
       tags: UnifiedTag[];
     };
 
-export type SearchSource = 'local' | 'aiExpanded';
+export type SearchSource = "local" | "aiExpanded";
 
 export interface ContentSearchHit {
   summary: ContentSummary;
