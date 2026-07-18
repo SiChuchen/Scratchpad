@@ -55,6 +55,8 @@ describe('i18n dictionaries', () => {
     expect(en.quickAccess.openSettingsFailed).toBe('Could not open main window settings')
     expect(zhCN.quickAccess.openFailed).toBe('无法打开快速入口')
     expect(en.quickAccess.openFailed).toBe('Could not open quick access')
+    expect(zhCN.quickAccess.usefulInformation).toBe('可直接使用的信息')
+    expect(en.quickAccess.usefulInformation).toBe('Information to use')
     expect(en.settings.selectDataDirTitle).toBe('Select data directory')
     expect(en.settings.changeDataDirFailed).toBe('Could not change data directory')
     expect(en.library.saved).toBe('Saved')

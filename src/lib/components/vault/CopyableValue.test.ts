@@ -129,4 +129,32 @@ describe('CopyableValue', () => {
     const copyBtn = screen.getByRole('button', { name: /复制/ })
     expect(copyBtn.getAttribute('aria-label')).not.toContain('super-secret-value')
   })
+
+  it('shows a larger visible copy action in prominent mode', () => {
+    render(CopyableValue, {
+      label: '账号',
+      value: 'alice',
+      prominent: true,
+      onCopy: vi.fn(),
+    })
+
+    const copy = screen.getByRole('button', { name: '复制 账号' })
+    expect(copy).toHaveTextContent('复制')
+    expect(copy).toHaveAttribute('data-prominent-action', 'copy')
+  })
+
+  it('keeps copy as the final action for sensitive values', () => {
+    render(CopyableValue, {
+      label: '密码',
+      value: 'secret',
+      sensitive: true,
+      prominent: true,
+      onCopy: vi.fn(),
+    })
+
+    const actions = screen.getByTestId('copyable-actions')
+    expect(actions.lastElementChild).toBe(
+      screen.getByRole('button', { name: '复制 密码' }),
+    )
+  })
 })

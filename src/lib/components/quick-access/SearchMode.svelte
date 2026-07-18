@@ -296,6 +296,7 @@
           detail={selectedDetail}
           resetToken={detailReset}
           onCopy={handleCopy}
+          prominent
         />
       {:else}
         <div class="detail-state">{messages.quickAccess.noSelection}</div>
@@ -371,11 +372,19 @@
     display: flex;
     flex-direction: column;
     min-height: 0;
-    overflow: hidden;
     border: 1px solid var(--border-default);
     border-radius: var(--radius-md, 6px);
     background: var(--surface-1);
     padding: 0.35rem;
+  }
+
+  .left-pane {
+    overflow: hidden;
+  }
+
+  .right-pane {
+    overflow-x: hidden;
+    overflow-y: auto;
   }
 
   .empty-list {

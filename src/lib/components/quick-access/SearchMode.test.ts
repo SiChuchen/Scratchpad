@@ -386,6 +386,49 @@ describe('SearchMode', () => {
     })
   })
 
+  it('puts sorted usable fields before notes and tags with prominent copy actions', async () => {
+    configureAI(true, false)
+    mockVaultApi.searchLocal.mockResolvedValue([makeHit('a', 'A')])
+    mockVaultApi.getEntry.mockResolvedValue(detail('a', {
+      entry: {
+        id: 'a',
+        kind: 'credential',
+        title: 'GitHub 工作账号',
+        notes: '公司开发账号',
+        createdAt: '',
+        updatedAt: '',
+      },
+      tags: [{ tag: '工作', normalizedTag: '工作', source: 'manual' }],
+      fields: [
+        { id: 'f-url', entryId: 'a', key: '网址', value: 'example.test', isSensitive: false, sortOrder: 2 },
+        { id: 'f-password', entryId: 'a', key: '密码', value: 'secret', isSensitive: true, sortOrder: 1 },
+        { id: 'f-account', entryId: 'a', key: '账号', value: 'alice', isSensitive: false, sortOrder: 0 },
+      ],
+    }))
+
+    render(SearchMode, { notify: vi.fn(), autoHybridSearch: false })
+    await vi.advanceTimersByTimeAsync(0)
+    await typeQuery('github')
+    await vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS)
+    await waitFor(() => expect(screen.getByText('账号')).toBeInTheDocument())
+
+    const ordered = ['标题', '账号', '密码', '网址', '备注', '手动标签'].map(
+      (label) => screen.getByText(label),
+    )
+    for (let index = 0; index < ordered.length - 1; index += 1) {
+      expect(
+        ordered[index]!.compareDocumentPosition(ordered[index + 1]!)
+          & Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy()
+    }
+
+    for (const label of ['标题', '账号', '密码', '网址']) {
+      expect(screen.getByRole('button', { name: `复制 ${label}` })).toHaveTextContent('复制')
+    }
+    const passwordCopy = screen.getByRole('button', { name: '复制 密码' })
+    expect(passwordCopy.parentElement?.lastElementChild).toBe(passwordCopy)
+  })
+
   it('each title/notes/tag/field triggers independent copy', async () => {
     configureAI(true, false)
     const hits = [makeHit('a', 'A')]

@@ -76,6 +76,7 @@ const en: LocaleMessages = {
     configureNow: 'Configure now',
     openSettingsFailed: 'Could not open main window settings',
     openFailed: 'Could not open quick access',
+    usefulInformation: 'Information to use',
     modeLabel: 'Quick access mode',
   },
   aiSettings: {

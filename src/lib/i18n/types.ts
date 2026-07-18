@@ -76,6 +76,7 @@ export interface LocaleMessages {
     configureNow: string
     openSettingsFailed: string
     openFailed: string
+    usefulInformation: string
     modeLabel: string
   }
   aiSettings: {

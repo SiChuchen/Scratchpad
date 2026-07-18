@@ -11,7 +11,7 @@
   //   * window blur 时自动重新掩码（防止切到其他应用时泄密）；
   //   * resetToken 变化（父组件折叠 / 切换条目）时也立即重新掩码。
   //
-  // i18n：当前硬编码 zh-CN 字符串；Task 19 会迁移到统一 i18n 系统。
+  // 紧凑模式用于主资料库；prominent 模式用于快速入口的高频复制操作。
 
   import { onMount } from 'svelte'
   import { messages } from '$lib/i18n'
@@ -21,6 +21,7 @@
     value: string
     sensitive?: boolean
     resetToken?: number | string
+    prominent?: boolean
     onCopy: (payload: {
       label: string
       value: string
@@ -33,6 +34,7 @@
     value,
     sensitive = false,
     resetToken,
+    prominent = false,
     onCopy,
   }: Props = $props()
 
@@ -74,30 +76,10 @@
   const copyAriaLabel = $derived(messages.library.copyLabel.replace('{label}', label))
 </script>
 
-<div class="copyable-row">
+<div class="copyable-row" class:prominent>
   <span class="label">{label}</span>
   <code class="value">{displayValue}</code>
-  <div class="actions">
-    <button
-      type="button"
-      class="icon-btn"
-      onclick={handleCopy}
-      aria-label={copyAriaLabel}
-      title={copyAriaLabel}
-    >
-      <svg
-        width="12"
-        height="12"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        stroke-width="2"
-        aria-hidden="true"
-      >
-        <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-      </svg>
-    </button>
+  <div class="actions" data-testid="copyable-actions">
     {#if sensitive}
       <button
         type="button"
@@ -135,6 +117,32 @@
         {/if}
       </button>
     {/if}
+    <button
+      type="button"
+      class="icon-btn copy-btn"
+      class:prominent-action={prominent}
+      data-prominent-action={prominent ? 'copy' : undefined}
+      onclick={handleCopy}
+      aria-label={copyAriaLabel}
+      title={copyAriaLabel}
+    >
+      {#if prominent}
+        <span>{messages.entry.copy}</span>
+      {:else}
+        <svg
+          width="12"
+          height="12"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          aria-hidden="true"
+        >
+          <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+          <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+        </svg>
+      {/if}
+    </button>
   </div>
 </div>
 
@@ -188,5 +196,38 @@
     color: var(--color-primary);
     border-color: color-mix(in srgb, var(--color-primary) 30%, transparent);
     background: color-mix(in srgb, var(--color-primary) 10%, transparent);
+  }
+
+  .icon-btn:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 1px;
+  }
+
+  .copyable-row.prominent {
+    min-height: 2.5rem;
+    gap: 0.5rem;
+  }
+
+  .copyable-row.prominent .label {
+    width: 4.25rem;
+    font-size: var(--font-sm, 12px);
+  }
+
+  .copyable-row.prominent .value {
+    font-size: var(--font-md, 14px);
+  }
+
+  .copyable-row.prominent .icon-btn {
+    width: 2rem;
+    height: 2rem;
+    padding: 0;
+  }
+
+  .copyable-row.prominent .copy-btn {
+    width: auto;
+    min-width: 3.25rem;
+    padding: 0 0.65rem;
+    font-size: var(--font-sm, 12px);
+    font-weight: 650;
   }
 </style>

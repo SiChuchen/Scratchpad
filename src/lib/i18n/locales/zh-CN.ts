@@ -76,6 +76,7 @@ const zhCN: LocaleMessages = {
     configureNow: '立即配置',
     openSettingsFailed: '无法打开主窗口设置',
     openFailed: '无法打开快速入口',
+    usefulInformation: '可直接使用的信息',
     modeLabel: '快速入口模式',
   },
   aiSettings: {
