@@ -8,6 +8,9 @@ const mocks = vi.hoisted(() => ({
   listen: vi.fn(),
   listeners: new Map<string, (event: { payload: unknown }) => void>(),
   hide: vi.fn(),
+  isAlwaysOnTop: vi.fn(),
+  setAlwaysOnTop: vi.fn(),
+  startDragging: vi.fn(),
   getLlmConfig: vi.fn(),
   getAiSettings: vi.fn(),
   searchLocal: vi.fn(),
@@ -20,7 +23,12 @@ const mocks = vi.hoisted(() => ({
 vi.mock('@tauri-apps/api/core', () => ({ invoke: mocks.invoke }))
 vi.mock('@tauri-apps/api/event', () => ({ listen: mocks.listen }))
 vi.mock('@tauri-apps/api/window', () => ({
-  getCurrentWindow: () => ({ hide: mocks.hide }),
+  getCurrentWindow: () => ({
+    hide: mocks.hide,
+    isAlwaysOnTop: mocks.isAlwaysOnTop,
+    setAlwaysOnTop: mocks.setAlwaysOnTop,
+    startDragging: mocks.startDragging,
+  }),
 }))
 vi.mock('$lib/api/vault', () => ({
   vaultApi: {
@@ -87,6 +95,9 @@ beforeEach(() => {
     },
   )
   mocks.hide.mockResolvedValue(undefined)
+  mocks.isAlwaysOnTop.mockResolvedValue(true)
+  mocks.setAlwaysOnTop.mockResolvedValue(undefined)
+  mocks.startDragging.mockResolvedValue(undefined)
   mocks.getLlmConfig.mockResolvedValue(null)
   mocks.getAiSettings.mockResolvedValue({
     autoEnrich: true,
@@ -110,6 +121,27 @@ afterEach(() => {
 })
 
 describe('QuickAccessApp', () => {
+  it('reads and toggles the actual Quick Access pin state', async () => {
+    render(QuickAccessApp)
+    const pin = await screen.findByRole('button', { name: '取消置顶' })
+
+    await waitFor(() => expect(mocks.isAlwaysOnTop).toHaveBeenCalledTimes(1))
+    await fireEvent.click(pin)
+
+    await waitFor(() => expect(mocks.setAlwaysOnTop).toHaveBeenCalledWith(false))
+    expect(screen.getByRole('button', { name: '置顶' })).toBeInTheDocument()
+  })
+
+  it('hides and drags only through explicit work-panel actions', async () => {
+    render(QuickAccessApp)
+
+    await fireEvent.mouseDown(await screen.findByTestId('quick-access-drag-region'))
+    expect(mocks.startDragging).toHaveBeenCalledTimes(1)
+
+    await fireEvent.click(screen.getByRole('button', { name: '关闭' }))
+    expect(mocks.hide).toHaveBeenCalledTimes(1)
+  })
+
   it('renders both primary modes as icon-labelled segments', async () => {
     render(QuickAccessApp)
     const record = await screen.findByRole('tab', { name: '记录' })

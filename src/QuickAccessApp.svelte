@@ -21,6 +21,7 @@
   import { handleKeydown } from '$lib/state/quick-access'
   import { listenForPreferenceChanges } from '$lib/state/preferences-sync'
   import CaptureMode from '$lib/components/quick-access/CaptureMode.svelte'
+  import QuickAccessWindowBar from '$lib/components/quick-access/QuickAccessWindowBar.svelte'
   import SearchMode from '$lib/components/quick-access/SearchMode.svelte'
   import type { VaultEntryDetail } from '$lib/types/vault'
 
@@ -38,6 +39,8 @@
   let autoHybridSearch = $state(false)
   let aiConfigured = $state(false)
   let autoEnrich = $state(true)
+  let pinned = $state(true)
+  let pinPending = $state(false)
 
   // Inline toast notification (simple ephemeral banner).
   let noticeText = $state('')
@@ -95,6 +98,10 @@
   }
 
   onMount(async () => {
+    void win.isAlwaysOnTop().then((value) => {
+      pinned = value
+    }).catch(() => {})
+
     // Sync initial system dark mode
     if (typeof window !== 'undefined' && window.matchMedia) {
       systemDark = window.matchMedia('(prefers-color-scheme: dark)').matches
@@ -194,6 +201,26 @@
     win.hide().catch((e: unknown) => console.error('hide failed:', e))
   }
 
+  async function togglePinned() {
+    if (pinPending) return
+    pinPending = true
+    const next = !pinned
+    try {
+      await win.setAlwaysOnTop(next)
+      pinned = next
+    } catch {
+      notify(messages.toast.operationFailed, 'error')
+    } finally {
+      pinPending = false
+    }
+  }
+
+  function startDragging() {
+    return win.startDragging().catch((e: unknown) => {
+      console.error('drag failed:', e)
+    })
+  }
+
   function switchMode(next: 'record' | 'search') {
     mode = next
     focusActiveModeInput()
@@ -218,6 +245,14 @@
 <svelte:window onkeydown={onKeydown} />
 
 <main class="quick-shell">
+  <QuickAccessWindowBar
+    {pinned}
+    {pinPending}
+    onTogglePin={togglePinned}
+    onHide={requestHide}
+    onDrag={startDragging}
+  />
+
   {#if noticeText}
     <div class="notice" class:error={noticeKind === 'error'} role="status" aria-live="polite">{noticeText}</div>
   {/if}
