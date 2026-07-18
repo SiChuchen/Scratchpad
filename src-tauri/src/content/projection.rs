@@ -55,22 +55,39 @@ pub fn build_search_document(conn: &Connection, unified_id: &str) -> StorageResu
 }
 
 pub fn replace_projection(conn: &Connection, document: &SearchDocument) -> StorageResult<()> {
-    conn.execute(
-        "DELETE FROM content_fts WHERE unified_id = ?1",
-        params![&document.unified_id],
-    )?;
-    conn.execute(
-        "INSERT INTO content_fts(unified_id, title, body, tags, aliases)
-         VALUES (?1, ?2, ?3, ?4, ?5)",
-        params![
-            &document.unified_id,
-            &document.title,
-            &document.body,
-            &document.tags,
-            &document.aliases,
-        ],
-    )?;
-    Ok(())
+    conn.execute_batch("SAVEPOINT content_projection_replace")?;
+    let replacement = (|| {
+        conn.execute(
+            "DELETE FROM content_fts WHERE unified_id = ?1",
+            params![&document.unified_id],
+        )?;
+        conn.execute(
+            "INSERT INTO content_fts(unified_id, title, body, tags, aliases)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                &document.unified_id,
+                &document.title,
+                &document.body,
+                &document.tags,
+                &document.aliases,
+            ],
+        )?;
+        Ok(())
+    })();
+
+    match replacement {
+        Ok(()) => {
+            conn.execute_batch("RELEASE SAVEPOINT content_projection_replace")?;
+            Ok(())
+        }
+        Err(error) => {
+            conn.execute_batch(
+                "ROLLBACK TO SAVEPOINT content_projection_replace;
+                 RELEASE SAVEPOINT content_projection_replace;",
+            )?;
+            Err(error)
+        }
+    }
 }
 
 pub fn delete_projection(conn: &Connection, unified_id: &str) -> StorageResult<()> {
@@ -618,6 +635,58 @@ pub(crate) mod tests {
             )
             .unwrap(),
             0
+        );
+    }
+
+    #[test]
+    fn failed_projection_replacement_restores_the_previous_row() {
+        let conn = fixture_with_all_kinds();
+        let old_projection: (String, String, String, String) = conn
+            .query_row(
+                "SELECT title, body, tags, aliases
+                 FROM content_fts WHERE unified_id = 'dock:text-1'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .unwrap();
+        conn.execute_batch(
+            r#"
+            DROP TABLE content_fts;
+            CREATE TABLE content_fts (
+                unified_id TEXT NOT NULL,
+                title TEXT NOT NULL CHECK (title != 'Rejected replacement'),
+                body TEXT NOT NULL,
+                tags TEXT NOT NULL,
+                aliases TEXT NOT NULL
+            );
+            "#,
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO content_fts(unified_id, title, body, tags, aliases)
+             VALUES ('dock:text-1', ?1, ?2, ?3, ?4)",
+            params![
+                &old_projection.0,
+                &old_projection.1,
+                &old_projection.2,
+                &old_projection.3,
+            ],
+        )
+        .unwrap();
+        let mut replacement = build_search_document(&conn, "dock:text-1").unwrap();
+        replacement.title = "Rejected replacement".to_string();
+
+        assert!(replace_projection(&conn, &replacement).is_err());
+
+        assert_eq!(
+            conn.query_row(
+                "SELECT title, body, tags, aliases
+                 FROM content_fts WHERE unified_id = 'dock:text-1'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .unwrap(),
+            old_projection
         );
     }
 }

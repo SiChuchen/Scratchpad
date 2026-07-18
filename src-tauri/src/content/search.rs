@@ -14,11 +14,15 @@ const TITLE_PREFIX_WEIGHT: f64 = 80.0;
 const TAG_WEIGHT: f64 = 55.0;
 const BODY_WEIGHT: f64 = 30.0;
 const ALIAS_WEIGHT: f64 = 20.0;
+const MAX_QUERY_CHARS: usize = 512;
+const MAX_TOKENS_PER_TERM: usize = 32;
+const MAX_PLAN_TERMS: usize = 64;
 
 #[derive(Debug)]
 struct SearchTerm {
     text: String,
     comparison_key: String,
+    tokens: Vec<String>,
     ai_expanded: bool,
 }
 
@@ -37,6 +41,7 @@ pub fn search_local(
     plan: Option<&UnifiedQueryPlan>,
     limit: usize,
 ) -> StorageResult<Vec<ContentSearchHit>> {
+    validate_search_input(query, plan)?;
     ensure_complete_projections(conn)?;
     let terms = normalized_terms(query, plan);
     let limit = clamp_limit(limit);
@@ -57,7 +62,7 @@ pub fn search_local(
 
     let mut candidate_ids = BTreeSet::new();
     for term in &terms {
-        candidate_ids.extend(matching_ids(conn, &term.text)?);
+        candidate_ids.extend(matching_ids(conn, &term.text, &term.tokens)?);
     }
 
     let mut hits = Vec::new();
@@ -69,7 +74,7 @@ pub fn search_local(
         let mut score = 0.0;
         let mut ai_contributed = false;
         for term in &terms {
-            let term_score = score_term(&document, &term.comparison_key);
+            let term_score = score_term(&document, &term.comparison_key, &term.tokens);
             if term_score > 0.0 {
                 score += term_score;
                 ai_contributed |= term.ai_expanded;
@@ -103,6 +108,40 @@ pub(crate) fn clamp_limit(limit: usize) -> usize {
     limit.clamp(1, 100)
 }
 
+fn validate_search_input(query: &str, plan: Option<&UnifiedQueryPlan>) -> StorageResult<()> {
+    validate_term_boundary("query", query)?;
+    if let Some(plan) = plan {
+        let plan_term_count = plan
+            .keywords
+            .len()
+            .checked_add(plan.aliases.len())
+            .ok_or_else(|| StorageError::Validation("too many search plan terms".to_string()))?;
+        if plan_term_count > MAX_PLAN_TERMS {
+            return Err(StorageError::Validation(format!(
+                "search plan terms exceed the limit of {MAX_PLAN_TERMS}"
+            )));
+        }
+        for term in plan.keywords.iter().chain(&plan.aliases) {
+            validate_term_boundary("search plan term", term)?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_term_boundary(label: &str, value: &str) -> StorageResult<()> {
+    if value.chars().count() > MAX_QUERY_CHARS {
+        return Err(StorageError::Validation(format!(
+            "{label} exceeds the limit of {MAX_QUERY_CHARS} Unicode characters"
+        )));
+    }
+    if unicode_tokens(value).len() > MAX_TOKENS_PER_TERM {
+        return Err(StorageError::Validation(format!(
+            "{label} exceeds the limit of {MAX_TOKENS_PER_TERM} tokens"
+        )));
+    }
+    Ok(())
+}
+
 fn normalized_terms(query: &str, plan: Option<&UnifiedQueryPlan>) -> Vec<SearchTerm> {
     let original = normalize_text(query);
     let original_key = comparison_key(&original);
@@ -111,6 +150,7 @@ fn normalized_terms(query: &str, plan: Option<&UnifiedQueryPlan>) -> Vec<SearchT
     if !original.is_empty() {
         seen.insert(original_key.clone());
         terms.push(SearchTerm {
+            tokens: unicode_tokens(&original),
             text: original,
             comparison_key: original_key.clone(),
             ai_expanded: false,
@@ -125,6 +165,7 @@ fn normalized_terms(query: &str, plan: Option<&UnifiedQueryPlan>) -> Vec<SearchT
             let key = comparison_key(&text);
             if seen.insert(key.clone()) {
                 terms.push(SearchTerm {
+                    tokens: unicode_tokens(&text),
                     text,
                     comparison_key: key.clone(),
                     ai_expanded: original_key != key,
@@ -157,9 +198,13 @@ fn ensure_complete_projections(conn: &Connection) -> StorageResult<()> {
     Ok(())
 }
 
-fn matching_ids(conn: &Connection, term: &str) -> StorageResult<BTreeSet<String>> {
+fn matching_ids(
+    conn: &Connection,
+    term: &str,
+    tokens: &[String],
+) -> StorageResult<BTreeSet<String>> {
     let mut ids = BTreeSet::new();
-    let expression = fts_expression(term);
+    let expression = fts_expression(tokens);
     {
         let mut stmt = conn.prepare(
             "SELECT unified_id FROM content_fts
@@ -188,16 +233,22 @@ fn matching_ids(conn: &Connection, term: &str) -> StorageResult<BTreeSet<String>
     Ok(ids)
 }
 
-fn fts_expression(term: &str) -> String {
-    let tokens: Vec<String> = term
-        .split(|character: char| !character.is_alphanumeric())
+fn unicode_tokens(term: &str) -> Vec<String> {
+    term.split(|character: char| !character.is_alphanumeric())
         .filter(|token| !token.is_empty())
-        .map(|token| format!("\"{token}\""))
-        .collect();
+        .map(comparison_key)
+        .collect()
+}
+
+fn fts_expression(tokens: &[String]) -> String {
     if tokens.is_empty() {
         "\"contentsearchnomatchtoken\"".to_string()
     } else {
-        tokens.join(" ")
+        tokens
+            .iter()
+            .map(|token| format!("\"{token}\""))
+            .collect::<Vec<_>>()
+            .join(" ")
     }
 }
 
@@ -255,7 +306,7 @@ fn passes_filters(kind: ContentKind, created_at: &str, plan: Option<&UnifiedQuer
     true
 }
 
-fn score_term(document: &CandidateDocument, term: &str) -> f64 {
+fn score_term(document: &CandidateDocument, term: &str, tokens: &[String]) -> f64 {
     let title = comparison_key(&document.title);
     let body = comparison_key(&document.body);
     let tags = comparison_key(&document.tags);
@@ -275,6 +326,23 @@ fn score_term(document: &CandidateDocument, term: &str) -> f64 {
     }
     if aliases.contains(term) {
         score = score.max(ALIAS_WEIGHT);
+    }
+    if !tokens.is_empty() {
+        if tokens
+            .iter()
+            .all(|token| title_prefix_matches(&title, token))
+        {
+            score = score.max(TITLE_PREFIX_WEIGHT);
+        }
+        if tokens.iter().all(|token| tags.contains(token)) {
+            score = score.max(TAG_WEIGHT);
+        }
+        if tokens.iter().all(|token| body.contains(token)) {
+            score = score.max(BODY_WEIGHT);
+        }
+        if tokens.iter().all(|token| aliases.contains(token)) {
+            score = score.max(ALIAS_WEIGHT);
+        }
     }
     score
 }
@@ -304,6 +372,7 @@ mod tests {
         fixture_with_all_kinds, FILE_PATH_LITERAL, SENSITIVE_LITERAL,
     };
     use crate::scratchpad::storage::ensure_dock_schema;
+    use crate::storage::error::StorageError;
     use crate::vault::storage::ensure_vault_schema;
 
     fn initialized_payload_db() -> Connection {
@@ -344,6 +413,16 @@ mod tests {
             ("rank-exact", "irrelevant payload", "console"),
             ("rank-prefix", "guide instructions", "console guide"),
             ("rank-body", "open console later", "Body item"),
+            ("rank-middle", "database maintenance window", "Middle body"),
+            ("rank-reverse", "window database", "Reverse body"),
+            ("rank-hyphen", "foo bar", "Hyphen body"),
+            ("rank-split", "window", "database"),
+            (
+                "rank-title-tokens",
+                "irrelevant title payload",
+                "database scheduled window",
+            ),
+            ("rank-percent", "Budget 100% ready", "Percent body"),
         ];
         for (id, content, title) in dock_rows {
             conn.execute(
@@ -473,6 +552,44 @@ mod tests {
     }
 
     #[test]
+    fn multi_token_terms_score_once_per_field_without_requiring_phrase_adjacency_or_order() {
+        let conn = fixture_with_ranked_rows();
+
+        let spaced = search_local(&conn, "database window", None, 20).unwrap();
+        assert_eq!(
+            ids(&spaced),
+            [
+                "dock:rank-title-tokens",
+                "dock:rank-middle",
+                "dock:rank-reverse",
+            ]
+        );
+        assert_eq!(
+            spaced.iter().map(|hit| hit.score).collect::<Vec<_>>(),
+            [80.0, 30.0, 30.0]
+        );
+        assert!(!ids(&spaced).contains(&"dock:rank-split"));
+
+        let hyphenated = search_local(&conn, "foo-bar", None, 20).unwrap();
+        assert_eq!(ids(&hyphenated), ["dock:rank-hyphen"]);
+        assert_eq!(hyphenated[0].score, 30.0);
+
+        let reversed = search_local(&conn, "bar foo", None, 20).unwrap();
+        assert_eq!(ids(&reversed), ["dock:rank-hyphen"]);
+        assert_eq!(reversed[0].score, 30.0);
+    }
+
+    #[test]
+    fn punctuation_only_terms_use_literal_fallback_without_matching_every_row() {
+        let conn = fixture_with_ranked_rows();
+
+        let hits = search_local(&conn, "%", None, 20).unwrap();
+
+        assert_eq!(ids(&hits), ["dock:rank-percent"]);
+        assert_eq!(hits[0].score, 30.0);
+    }
+
+    #[test]
     fn empty_query_browses_in_stable_order_and_applies_kind_date_and_limit_filters() {
         let conn = fixture_with_all_kinds();
         let browse = search_local(&conn, " \u{0007} ", None, 20).unwrap();
@@ -556,5 +673,50 @@ mod tests {
                 assert!(hits.is_empty(), "query {query:?} acted like a wildcard");
             }
         }
+    }
+
+    #[test]
+    fn oversized_queries_tokens_and_raw_plan_terms_fail_before_database_access() {
+        let conn = Connection::open_in_memory().unwrap();
+        let too_many_tokens = (0..33)
+            .map(|index| format!("token{index}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let too_many_plan_terms = UnifiedQueryPlan {
+            keywords: vec!["duplicate".to_string(); 65],
+            ..Default::default()
+        };
+        let oversized_plan_term = UnifiedQueryPlan {
+            aliases: vec!["界".repeat(513)],
+            ..Default::default()
+        };
+
+        for result in [
+            search_local(&conn, &"界".repeat(513), None, 20),
+            search_local(&conn, &("a".repeat(512) + "\u{0000}"), None, 20),
+            search_local(&conn, &too_many_tokens, None, 20),
+            search_local(&conn, "", Some(&too_many_plan_terms), 20),
+            search_local(&conn, "", Some(&oversized_plan_term), 20),
+        ] {
+            assert!(matches!(result.unwrap_err(), StorageError::Validation(_)));
+        }
+    }
+
+    #[test]
+    fn query_plan_and_token_limits_accept_their_unicode_character_boundaries() {
+        let conn = fixture_with_all_kinds();
+        let thirty_two_tokens = (0..32)
+            .map(|index| format!("token{index}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let boundary_plan = UnifiedQueryPlan {
+            keywords: vec![String::new(); 63],
+            aliases: vec!["界".repeat(512)],
+            ..Default::default()
+        };
+
+        assert!(search_local(&conn, &"界".repeat(512), None, 20).is_ok());
+        assert!(search_local(&conn, &thirty_two_tokens, None, 20).is_ok());
+        assert!(search_local(&conn, "", Some(&boundary_plan), 20).is_ok());
     }
 }
