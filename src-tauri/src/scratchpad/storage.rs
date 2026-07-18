@@ -1299,6 +1299,10 @@ mod tests {
         }
     }
 
+    fn assert_dock_projection_matches(conn: &Connection, unified_id: &str) {
+        assert_unified_rows(conn, unified_id, 1);
+    }
+
     #[test]
     fn legacy_dock_writes_cannot_bypass_unified_projection() {
         let mut conn = Connection::open_in_memory().unwrap();
@@ -1345,7 +1349,7 @@ mod tests {
         assert_eq!(cleanup_at - changed_at, chrono::Duration::days(7));
         assert!(initial_retention.3.is_some());
         assert!(initial_retention.4.is_none());
-        assert_unified_rows(&conn, &unified_id, 1);
+        assert_dock_projection_matches(&conn, &unified_id);
 
         assert_eq!(
             conn.query_row(
@@ -1373,7 +1377,7 @@ mod tests {
                 .unwrap();
         assert_eq!(updated.revision, 2);
         assert_eq!(updated.changes[0].operation, ContentOperation::Updated);
-        assert_unified_rows(&conn, &unified_id, 1);
+        assert_dock_projection_matches(&conn, &unified_id);
         assert_eq!(
             conn.query_row(
                 "SELECT body FROM content_fts WHERE unified_id=?1",
@@ -1398,7 +1402,7 @@ mod tests {
             rename_entry_with_revision(&mut conn, &entry.id, Some("Projected title")).unwrap();
         assert_eq!(renamed.revision, 3);
         assert_eq!(renamed.changes[0].operation, ContentOperation::Updated);
-        assert_unified_rows(&conn, &unified_id, 1);
+        assert_dock_projection_matches(&conn, &unified_id);
         let retention_after_payload_updates: (
             String,
             String,
@@ -1448,7 +1452,7 @@ mod tests {
             saved_mutation.changes[0].operation,
             ContentOperation::Retention
         );
-        assert_unified_rows(&conn, &unified_id, 1);
+        assert_dock_projection_matches(&conn, &unified_id);
         let saved: (String, Option<String>, Option<f64>) = conn
             .query_row(
                 "SELECT retention_state, cleanup_at, saved_position
@@ -1468,7 +1472,7 @@ mod tests {
             removed_home.changes[0].operation,
             ContentOperation::Retention
         );
-        assert_unified_rows(&conn, &unified_id, 1);
+        assert_dock_projection_matches(&conn, &unified_id);
         for (sql, id) in [
             (
                 "SELECT COUNT(*) FROM entries WHERE id=?1",
@@ -1499,7 +1503,7 @@ mod tests {
             remove_from_view_with_revision(&mut conn, EntryView::Note, &entry.id).unwrap();
         assert_eq!(unsaved.revision, 6);
         assert_eq!(unsaved.changes[0].operation, ContentOperation::Retention);
-        assert_unified_rows(&conn, &unified_id, 1);
+        assert_dock_projection_matches(&conn, &unified_id);
         let temporary: (String, String, Option<String>, Option<f64>) = conn
             .query_row(
                 "SELECT retention_state, retention_changed_at, cleanup_at, inbox_position
@@ -1605,6 +1609,7 @@ mod tests {
                 )
                 .unwrap();
             assert_eq!(positions, (index as f64, index as f64));
+            assert_dock_projection_matches(&conn, &format!("dock:{id}"));
         }
         assert_eq!(
             crate::content::catalog::current_revision(&conn).unwrap(),
@@ -1654,8 +1659,8 @@ mod tests {
         assert!(first_state.1.is_none());
         assert!(second_state.1.is_none());
         assert!(second_state.2.unwrap() < first_state.2.unwrap());
-        assert_unified_rows(&conn, &first_id, 1);
-        assert_unified_rows(&conn, &second_id, 1);
+        assert_dock_projection_matches(&conn, &first_id);
+        assert_dock_projection_matches(&conn, &second_id);
     }
 
     #[test]

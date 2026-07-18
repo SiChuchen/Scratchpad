@@ -265,18 +265,29 @@ fn content_changed_event<T>(
     }
 }
 
-fn emit_content_changed<T>(app: &tauri::AppHandle, mutation: &content::models::ContentMutation<T>) {
+fn dispatch_content_changed<T, E>(
+    mutation: &content::models::ContentMutation<T>,
+    emit: impl FnOnce(&str, content::models::ContentChangedEvent) -> Result<(), E>,
+) where
+    E: std::fmt::Display,
+{
     if mutation.changes.is_empty() {
         return;
     }
-    if let Err(error) = app.emit("content-changed", content_changed_event(mutation)) {
+    if let Err(error) = emit("content-changed", content_changed_event(mutation)) {
         eprintln!("failed to emit content-changed after committed Dock mutation: {error}");
     }
 }
 
+fn emit_content_changed<T>(app: &tauri::AppHandle, mutation: &content::models::ContentMutation<T>) {
+    dispatch_content_changed(mutation, |event_name, payload| {
+        app.emit(event_name, payload)
+    });
+}
+
 #[cfg(test)]
 mod dock_ipc_tests {
-    use super::content_changed_event;
+    use super::{content_changed_event, dispatch_content_changed};
     use crate::content::models::{ContentChange, ContentMutation, ContentOperation};
 
     #[test]
@@ -300,6 +311,51 @@ mod dock_ipc_tests {
 
         assert_eq!(event.revision, 42);
         assert_eq!(event.changes, mutation.changes);
+    }
+
+    #[test]
+    fn ipc_dispatches_exact_content_changed_name_and_committed_payload() {
+        let mutation = ContentMutation {
+            value: (),
+            revision: 43,
+            changes: vec![ContentChange {
+                id: "dock:actual-id".to_string(),
+                operation: ContentOperation::Created,
+            }],
+        };
+        let mut captured = None;
+
+        dispatch_content_changed(&mutation, |event_name, payload| {
+            captured = Some((event_name.to_string(), payload));
+            Ok::<(), &'static str>(())
+        });
+
+        let (event_name, payload) = captured.expect("dispatch must invoke the emitter");
+        assert_eq!(event_name, "content-changed");
+        assert_eq!(payload.revision, 43);
+        assert_eq!(payload.changes, mutation.changes);
+    }
+
+    #[test]
+    fn ipc_dispatch_failure_is_non_fatal_after_commit() {
+        let mutation = ContentMutation {
+            value: (),
+            revision: 44,
+            changes: vec![ContentChange {
+                id: "dock:committed".to_string(),
+                operation: ContentOperation::Deleted,
+            }],
+        };
+        let mut attempted = false;
+
+        dispatch_content_changed(&mutation, |event_name, payload| {
+            attempted = true;
+            assert_eq!(event_name, "content-changed");
+            assert_eq!(payload.revision, 44);
+            Err::<(), &'static str>("forced emitter failure")
+        });
+
+        assert!(attempted);
     }
 }
 
