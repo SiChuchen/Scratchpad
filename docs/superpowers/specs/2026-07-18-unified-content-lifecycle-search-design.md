@@ -1,7 +1,9 @@
 # Unified Content Lifecycle and Search Design
 
-**Status:** Design approved; pending written-spec review  
-**Date:** 2026-07-18  
+**Status:** Design approved; pending written-spec review
+
+**Date:** 2026-07-18
+
 **Scope:** Product integration across the original scratchpad workflow and the structured Vault / Quick Access workflow
 
 ## 1. Purpose
