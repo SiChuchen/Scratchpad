@@ -150,7 +150,7 @@ impl ContentCapabilities {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ContentSummary {
-    pub id: UnifiedContentId,
+    pub id: String,
     pub kind: ContentKind,
     pub retention: RetentionState,
     pub title: String,
@@ -397,7 +397,7 @@ mod tests {
         );
 
         let summary = ContentSummary {
-            id,
+            id: "dock:de-17".to_string(),
             kind: ContentKind::Text,
             retention: RetentionState::Temporary,
             title: "Snippet".to_string(),
@@ -412,6 +412,7 @@ mod tests {
             ),
         };
         let summary_json = serde_json::to_value(&summary).unwrap();
+        assert_eq!(summary_json["id"], json!("dock:de-17"));
         assert_eq!(summary_json["kind"], json!("text"));
         assert_eq!(summary_json["retention"], json!("temporary"));
         assert_eq!(summary_json["cleanupAt"], json!("2026-07-25T08:00:00Z"));
@@ -448,7 +449,7 @@ mod tests {
     #[test]
     fn content_detail_is_tagged_by_content_kind_without_source_internals() {
         let summary = ContentSummary {
-            id: UnifiedContentId::new(ContentSource::Vault, "ve-9").unwrap(),
+            id: "vault:ve-9".to_string(),
             kind: ContentKind::Credential,
             retention: RetentionState::Saved,
             title: "Production login".to_string(),
