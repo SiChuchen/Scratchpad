@@ -119,6 +119,34 @@ fn show_quick_access_centered(app: &tauri::AppHandle) {
     let _ = app.emit("quick-access-focus-input", ());
 }
 
+fn toggle_main_window(app: &tauri::AppHandle) {
+    let Some(window) = app.get_webview_window("main") else {
+        return;
+    };
+    match system::window::visibility_toggle_action(window.is_visible().unwrap_or(false)) {
+        system::window::VisibilityToggleAction::Hide => {
+            let _ = window.hide();
+        }
+        system::window::VisibilityToggleAction::Show => {
+            let _ = window.show();
+            let _ = window.set_focus();
+        }
+    }
+}
+
+fn toggle_quick_access_window(app: &tauri::AppHandle) {
+    let Some(window) = app.get_webview_window("quick-access") else {
+        toggle_main_window(app);
+        return;
+    };
+    match system::window::visibility_toggle_action(window.is_visible().unwrap_or(false)) {
+        system::window::VisibilityToggleAction::Hide => {
+            let _ = window.hide();
+        }
+        system::window::VisibilityToggleAction::Show => show_quick_access_centered(app),
+    }
+}
+
 // --- Shortcut helpers ---
 
 fn parse_modifiers(s: &str) -> Option<Modifiers> {
@@ -430,14 +458,7 @@ fn ipc_shortcut_update(
                 .on_shortcut(new_shortcut, move |_app, _sc, event| {
                     use tauri_plugin_global_shortcut::ShortcutState;
                     if event.state == ShortcutState::Pressed {
-                        if let Some(w) = app_handle.get_webview_window("main") {
-                            if w.is_visible().unwrap_or(false) {
-                                let _ = w.hide();
-                            } else {
-                                let _ = w.show();
-                                let _ = w.set_focus();
-                            }
-                        }
+                        toggle_main_window(&app_handle);
                     }
                 })
                 .map_err(|e| format!("failed to register shortcut: {e}"))?;
@@ -447,21 +468,7 @@ fn ipc_shortcut_update(
                 .on_shortcut(new_shortcut, move |app, _sc, event| {
                     use tauri_plugin_global_shortcut::ShortcutState;
                     if event.state == ShortcutState::Pressed {
-                        if let Some(w) = app.get_webview_window("quick-access") {
-                            if w.is_visible().unwrap_or(false) {
-                                let _ = w.hide();
-                            } else {
-                                show_quick_access_centered(app);
-                            }
-                        } else if let Some(w) = app.get_webview_window("main") {
-                            // 兜底：quick-access 窗口尚未创建（旧配置）时退回 main。
-                            if w.is_visible().unwrap_or(false) {
-                                let _ = w.hide();
-                            } else {
-                                let _ = w.show();
-                                let _ = w.set_focus();
-                            }
-                        }
+                        toggle_quick_access_window(app);
                     }
                 })
                 .map_err(|e| format!("failed to register shortcut: {e}"))?;
@@ -844,11 +851,9 @@ pub fn run() {
             vault::ipc::settings::ipc_vault_set_ai_settings,
         ])
         .on_window_event(|window, event| {
-            if let tauri::WindowEvent::Focused(false) = event {
-                if window.label() == "quick-access" {
-                    let _ = window.emit("vault-sensitive-reset", ());
-                    let _ = window.hide();
-                }
+            let focused = !matches!(event, tauri::WindowEvent::Focused(false));
+            if system::window::should_reset_quick_access_on_focus_loss(window.label(), focused) {
+                let _ = window.emit("vault-sensitive-reset", ());
             }
         })
         .setup(|app| {
@@ -894,14 +899,7 @@ pub fn run() {
                         .on_shortcut(main_shortcut, move |_app, _sc, event| {
                             use tauri_plugin_global_shortcut::ShortcutState;
                             if event.state == ShortcutState::Pressed {
-                                if let Some(w) = app_handle.get_webview_window("main") {
-                                    if w.is_visible().unwrap_or(false) {
-                                        let _ = w.hide();
-                                    } else {
-                                        let _ = w.show();
-                                        let _ = w.set_focus();
-                                    }
-                                }
+                                toggle_main_window(&app_handle);
                             }
                         })
                         .is_ok()
@@ -922,20 +920,7 @@ pub fn run() {
                         .on_shortcut(qa_shortcut, move |app, _sc, event| {
                             use tauri_plugin_global_shortcut::ShortcutState;
                             if event.state == ShortcutState::Pressed {
-                                if let Some(w) = app.get_webview_window("quick-access") {
-                                    if w.is_visible().unwrap_or(false) {
-                                        let _ = w.hide();
-                                    } else {
-                                        show_quick_access_centered(app);
-                                    }
-                                } else if let Some(w) = app.get_webview_window("main") {
-                                    if w.is_visible().unwrap_or(false) {
-                                        let _ = w.hide();
-                                    } else {
-                                        let _ = w.show();
-                                        let _ = w.set_focus();
-                                    }
-                                }
+                                toggle_quick_access_window(app);
                             }
                         })
                         .is_ok()

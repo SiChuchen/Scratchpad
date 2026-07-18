@@ -117,6 +117,24 @@ pub fn restore_from_tab(app: &tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VisibilityToggleAction {
+    Show,
+    Hide,
+}
+
+pub fn visibility_toggle_action(is_visible: bool) -> VisibilityToggleAction {
+    if is_visible {
+        VisibilityToggleAction::Hide
+    } else {
+        VisibilityToggleAction::Show
+    }
+}
+
+pub fn should_reset_quick_access_on_focus_loss(label: &str, focused: bool) -> bool {
+    label == "quick-access" && !focused
+}
+
 const QUICK_ACCESS_WIDTH_LOGICAL: f64 = 680.0;
 const QUICK_ACCESS_HEIGHT_LOGICAL: f64 = 480.0;
 const QUICK_ACCESS_MIN_WIDTH_LOGICAL: f64 = 480.0;
@@ -221,5 +239,30 @@ mod tests {
 
         let small = WorkRect::new(0, 0, 400, 300);
         assert_eq!(runtime_min_size(&small, 1.5), (360, 270));
+    }
+
+    #[test]
+    fn quick_access_focus_loss_resets_sensitive_values_only() {
+        assert!(should_reset_quick_access_on_focus_loss(
+            "quick-access",
+            false
+        ));
+        assert!(!should_reset_quick_access_on_focus_loss(
+            "quick-access",
+            true
+        ));
+        assert!(!should_reset_quick_access_on_focus_loss("main", false));
+    }
+
+    #[test]
+    fn visible_windows_hide_and_hidden_windows_show() {
+        assert_eq!(
+            visibility_toggle_action(true),
+            VisibilityToggleAction::Hide
+        );
+        assert_eq!(
+            visibility_toggle_action(false),
+            VisibilityToggleAction::Show
+        );
     }
 }
