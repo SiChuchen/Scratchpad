@@ -185,7 +185,7 @@ mod preference_tests {
     #[test]
     fn preferences_roundtrip_persists_theme_fields() {
         let mut conn = Connection::open_in_memory().unwrap();
-        ensure_dock_schema(&mut conn, 0).unwrap();
+        ensure_dock_schema(&mut conn).unwrap();
 
         let mut prefs = DockPreferences {
             theme_mode: "custom".to_string(),
@@ -220,7 +220,7 @@ mod preference_tests {
     #[test]
     fn shortcut_roundtrip_persists_both_targets() {
         let mut conn = Connection::open_in_memory().unwrap();
-        ensure_dock_schema(&mut conn, 0).unwrap();
+        ensure_dock_schema(&mut conn).unwrap();
 
         let prefs = DockPreferences {
             shortcut_modifiers: "Ctrl+Alt".to_string(),
@@ -244,7 +244,7 @@ mod preference_tests {
     fn shortcut_legacy_prefs_default_quick_access_to_alt_shift_space() {
         // 模拟旧版本只有主窗口快捷键、缺少 quick_access_* 字段的偏好快照。
         let mut conn = Connection::open_in_memory().unwrap();
-        ensure_dock_schema(&mut conn, 0).unwrap();
+        ensure_dock_schema(&mut conn).unwrap();
         conn.execute(
             "INSERT INTO preferences(key, value) VALUES ('shortcut_modifiers', 'Ctrl+K')",
             [],
@@ -274,7 +274,7 @@ mod preference_tests {
     #[test]
     fn load_preferences_uses_installed_font_fallbacks() {
         let mut conn = Connection::open_in_memory().unwrap();
-        ensure_dock_schema(&mut conn, 0).unwrap();
+        ensure_dock_schema(&mut conn).unwrap();
 
         let prefs = DockPreferences {
             font_family_zh: "Removed Font".to_string(),
@@ -294,7 +294,7 @@ mod preference_tests {
     #[test]
     fn saving_dock_preferences_preserves_foreign_keys() {
         let mut conn = Connection::open_in_memory().unwrap();
-        ensure_dock_schema(&mut conn, 0).unwrap();
+        ensure_dock_schema(&mut conn).unwrap();
         conn.execute(
             "INSERT INTO preferences(key, value) VALUES ('vault_llm_config', 'secret-config')",
             [],

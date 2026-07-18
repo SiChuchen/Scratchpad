@@ -296,7 +296,7 @@ mod tests {
     #[test]
     fn get_llm_config_path_returns_summary_without_key() {
         let mut conn = rusqlite::Connection::open_in_memory().unwrap();
-        ensure_dock_schema(&mut conn, 0).unwrap();
+        ensure_dock_schema(&mut conn).unwrap();
         let stored = LlmConfigStored {
             provider_id: "deepseek".into(),
             base_url: "https://api.deepseek.com/v1".into(),
@@ -335,7 +335,7 @@ mod tests {
     #[test]
     fn delete_config_clears_db_and_runtime() {
         let mut conn = rusqlite::Connection::open_in_memory().unwrap();
-        ensure_dock_schema(&mut conn, 0).unwrap();
+        ensure_dock_schema(&mut conn).unwrap();
         let stored = LlmConfigStored {
             provider_id: "deepseek".into(),
             base_url: "u".into(),

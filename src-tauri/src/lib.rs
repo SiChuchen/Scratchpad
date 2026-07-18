@@ -5,6 +5,7 @@ pub mod storage;
 pub mod system;
 pub mod vault;
 
+use chrono::Utc;
 use rusqlite::Connection;
 use std::sync::Mutex;
 use tauri::{Emitter, Manager};
@@ -770,9 +771,10 @@ fn initialize_schemas(
     cleanup_days: i64,
 ) -> storage::error::StorageResult<()> {
     content::migrations::validate_cleanup_days(cleanup_days)?;
-    scratchpad::storage::ensure_dock_schema(conn, cleanup_days)?;
+    scratchpad::storage::ensure_dock_schema(conn)?;
     vault::storage::ensure_vault_schema(conn)?;
     content::migrations::ensure_content_schema(conn, cleanup_days)?;
+    content::service::cleanup_expired(conn, Utc::now())?;
     Ok(())
 }
 
@@ -789,7 +791,7 @@ mod init_db_tests {
     fn invalid_cleanup_days_stop_before_legacy_cleanup_or_schema_changes() {
         let mut conn = Connection::open_in_memory().unwrap();
         conn.pragma_update(None, "foreign_keys", "ON").unwrap();
-        ensure_dock_schema(&mut conn, 7).unwrap();
+        ensure_dock_schema(&mut conn).unwrap();
         conn.execute(
             "INSERT INTO entries(
                 id, kind, content, source, created_at, updated_at
@@ -840,6 +842,90 @@ mod init_db_tests {
                 "{table} should not be created"
             );
         }
+    }
+
+    #[test]
+    fn zero_day_startup_backfills_before_unified_cleanup_and_bumps_revision() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", "ON").unwrap();
+        ensure_dock_schema(&mut conn).unwrap();
+        conn.execute(
+            "INSERT INTO entries(
+                id, kind, content, source, created_at, updated_at
+             ) VALUES ('startup-due', 'text', 'remove me', 'fixture',
+                       '2026-07-18T08:00:00Z', '2026-07-18T08:00:00Z')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO home_entries(entry_id, created_at, sort_order)
+             VALUES ('startup-due', '2026-07-18T08:00:00Z', 0.0)",
+            [],
+        )
+        .unwrap();
+
+        initialize_schemas(&mut conn, 0).unwrap();
+
+        assert_eq!(
+            conn.query_row(
+                "SELECT revision FROM content_state WHERE singleton=1",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+            1
+        );
+        for sql in [
+            "SELECT COUNT(*) FROM entries WHERE id='startup-due'",
+            "SELECT COUNT(*) FROM home_entries WHERE entry_id='startup-due'",
+            "SELECT COUNT(*) FROM content_catalog WHERE unified_id='dock:startup-due'",
+            "SELECT COUNT(*) FROM content_fts WHERE unified_id='dock:startup-due'",
+        ] {
+            assert_eq!(
+                conn.query_row(sql, [], |row| row.get::<_, i64>(0)).unwrap(),
+                0,
+                "{sql}"
+            );
+        }
+    }
+
+    #[test]
+    fn startup_unified_cleanup_keeps_saved_and_future_temporary_content() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", "ON").unwrap();
+        ensure_dock_schema(&mut conn).unwrap();
+        conn.execute_batch(
+            "INSERT INTO entries(id, kind, content, source, created_at, updated_at) VALUES
+                 ('startup-future', 'text', 'future', 'fixture',
+                  '2999-07-18T08:00:00Z', '2999-07-18T08:00:00Z'),
+                 ('startup-saved', 'text', 'saved', 'fixture',
+                  '2020-07-18T08:00:00Z', '2020-07-18T08:00:00Z');
+             INSERT INTO home_entries(entry_id, created_at, sort_order) VALUES
+                 ('startup-future', '2999-07-18T08:00:00Z', 0.0),
+                 ('startup-saved', '2020-07-18T08:00:00Z', 1.0);
+             INSERT INTO note_entries(entry_id, created_at, sort_order)
+                 VALUES ('startup-saved', '2020-07-18T08:00:00Z', 0.0);",
+        )
+        .unwrap();
+
+        initialize_schemas(&mut conn, 7).unwrap();
+
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM content_catalog", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap(),
+            2
+        );
+        assert_eq!(
+            conn.query_row(
+                "SELECT revision FROM content_state WHERE singleton=1",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+            0
+        );
     }
 }
 
@@ -1129,7 +1215,7 @@ mod shortcut_tests {
     #[test]
     fn shortcut_roundtrip_persists_both_targets() {
         let mut conn = Connection::open_in_memory().unwrap();
-        scratchpad::storage::ensure_dock_schema(&mut conn, 0).unwrap();
+        scratchpad::storage::ensure_dock_schema(&mut conn).unwrap();
 
         let prefs = models::preferences::DockPreferences {
             shortcut_modifiers: "Ctrl+Alt".to_string(),
@@ -1153,7 +1239,7 @@ mod shortcut_tests {
     #[test]
     fn shortcut_legacy_prefs_default_quick_access_to_alt_shift_space() {
         let mut conn = Connection::open_in_memory().unwrap();
-        scratchpad::storage::ensure_dock_schema(&mut conn, 0).unwrap();
+        scratchpad::storage::ensure_dock_schema(&mut conn).unwrap();
         conn.execute(
             "INSERT INTO preferences(key, value) VALUES ('shortcut_modifiers', 'Ctrl+K')",
             [],

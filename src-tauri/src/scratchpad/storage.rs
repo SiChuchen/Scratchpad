@@ -407,11 +407,10 @@ pub fn dock_migrations() -> Vec<Migration> {
     ]
 }
 
-pub fn ensure_dock_schema(conn: &mut Connection, auto_cleanup_days: i64) -> StorageResult<()> {
+pub fn ensure_dock_schema(conn: &mut Connection) -> StorageResult<()> {
     ensure_schema(conn, &dock_migrations())?;
     conn.execute_batch(DOCK_SCHEMA_SQL)?;
     migrate_legacy_scratchpad_items(conn)?;
-    cleanup_home_on_startup(conn, auto_cleanup_days)?;
     Ok(())
 }
 
@@ -752,7 +751,7 @@ mod repository_tests {
         let mut conn = Connection::open_in_memory().unwrap();
         seed_legacy_v1(&mut conn);
 
-        ensure_dock_schema(&mut conn, 0).unwrap();
+        ensure_dock_schema(&mut conn).unwrap();
 
         let entries = list_entries(&conn, EntryView::Home, None).unwrap();
         assert_eq!(entries.len(), 1);
@@ -775,7 +774,7 @@ mod repository_tests {
     #[test]
     fn list_entries_filters_by_kind_and_orders_by_newest_membership_first() {
         let mut conn = Connection::open_in_memory().unwrap();
-        ensure_dock_schema(&mut conn, 0).unwrap();
+        ensure_dock_schema(&mut conn).unwrap();
 
         insert_test_text_entry(
             &mut conn,
@@ -805,7 +804,7 @@ mod repository_tests {
     #[test]
     fn removing_home_membership_keeps_entry_alive_in_note() {
         let mut conn = Connection::open_in_memory().unwrap();
-        ensure_dock_schema(&mut conn, 0).unwrap();
+        ensure_dock_schema(&mut conn).unwrap();
 
         let entry =
             create_text_entry(&mut conn, EntryView::Home, "shared note text", "manual").unwrap();
@@ -832,7 +831,7 @@ mod repository_tests {
     #[test]
     fn cleanup_home_on_startup_deletes_home_only_entries() {
         let mut conn = Connection::open_in_memory().unwrap();
-        ensure_dock_schema(&mut conn, 0).unwrap();
+        ensure_dock_schema(&mut conn).unwrap();
 
         let _home_only =
             create_text_entry(&mut conn, EntryView::Home, "remove me", "manual").unwrap();
@@ -859,7 +858,7 @@ mod repository_tests {
     #[test]
     fn toggle_collapse_returns_error_for_missing_entry() {
         let mut conn = Connection::open_in_memory().unwrap();
-        ensure_dock_schema(&mut conn, 0).unwrap();
+        ensure_dock_schema(&mut conn).unwrap();
 
         let result = toggle_collapse(&mut conn, "missing-entry", true);
 
@@ -869,7 +868,7 @@ mod repository_tests {
     #[test]
     fn rename_entry_returns_error_for_missing_entry() {
         let mut conn = Connection::open_in_memory().unwrap();
-        ensure_dock_schema(&mut conn, 0).unwrap();
+        ensure_dock_schema(&mut conn).unwrap();
 
         let result = rename_entry(&mut conn, "missing-entry", Some("title"));
 
@@ -885,7 +884,7 @@ mod repository_tests {
         assert!(file_path.exists());
 
         let mut conn = Connection::open_in_memory().unwrap();
-        ensure_dock_schema(&mut conn, 0).unwrap();
+        ensure_dock_schema(&mut conn).unwrap();
 
         let path_str = file_path.to_string_lossy().to_string();
         conn.execute(
@@ -926,7 +925,7 @@ mod repository_tests {
         std::fs::write(&file_path, b"fake pdf content").unwrap();
 
         let mut conn = Connection::open_in_memory().unwrap();
-        ensure_dock_schema(&mut conn, 0).unwrap();
+        ensure_dock_schema(&mut conn).unwrap();
 
         let path_str = file_path.to_string_lossy().to_string();
         conn.execute(
@@ -975,7 +974,7 @@ mod repository_tests {
     #[test]
     fn text_entry_deletion_works_without_file() {
         let mut conn = Connection::open_in_memory().unwrap();
-        ensure_dock_schema(&mut conn, 0).unwrap();
+        ensure_dock_schema(&mut conn).unwrap();
 
         let entry = create_text_entry(&mut conn, EntryView::Home, "hello", "manual").unwrap();
         remove_from_view(&mut conn, EntryView::Home, &entry.id).unwrap();
@@ -989,7 +988,7 @@ mod repository_tests {
     #[test]
     fn cleanup_with_days_preserves_recent_entries() {
         let mut conn = Connection::open_in_memory().unwrap();
-        ensure_dock_schema(&mut conn, 0).unwrap();
+        ensure_dock_schema(&mut conn).unwrap();
 
         // Insert a home-only entry created 2 days ago
         conn.execute(
@@ -1017,7 +1016,7 @@ mod repository_tests {
     #[test]
     fn cleanup_with_zero_days_deletes_all_unstarred() {
         let mut conn = Connection::open_in_memory().unwrap();
-        ensure_dock_schema(&mut conn, 0).unwrap();
+        ensure_dock_schema(&mut conn).unwrap();
 
         let _e1 = create_text_entry(&mut conn, EntryView::Home, "a", "manual").unwrap();
         let _e2 = create_text_entry(&mut conn, EntryView::Home, "b", "manual").unwrap();
@@ -1038,7 +1037,7 @@ mod repository_tests {
         let mut conn = Connection::open_in_memory().unwrap();
 
         // Phase 1: First startup with default prefs (auto_cleanup_days = 0)
-        ensure_dock_schema(&mut conn, 0).unwrap();
+        ensure_dock_schema(&mut conn).unwrap();
         let _home_only =
             create_text_entry(&mut conn, EntryView::Home, "will be cleaned", "manual").unwrap();
         let starred =

@@ -213,7 +213,7 @@ mod tests {
 
     fn open_db() -> Connection {
         let mut conn = Connection::open_in_memory().unwrap();
-        ensure_dock_schema(&mut conn, 0).unwrap();
+        ensure_dock_schema(&mut conn).unwrap();
         conn
     }
 

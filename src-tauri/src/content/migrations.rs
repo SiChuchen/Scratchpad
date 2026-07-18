@@ -332,7 +332,7 @@ mod tests {
     fn fixture_with_legacy_rows() -> Connection {
         let mut conn = Connection::open_in_memory().unwrap();
         conn.pragma_update(None, "foreign_keys", "ON").unwrap();
-        ensure_dock_schema(&mut conn, 7).unwrap();
+        ensure_dock_schema(&mut conn).unwrap();
         ensure_vault_schema(&mut conn).unwrap();
 
         let dock_rows = [

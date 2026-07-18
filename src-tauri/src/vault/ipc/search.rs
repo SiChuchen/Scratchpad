@@ -225,7 +225,7 @@ mod tests {
 
     fn open_db() -> Connection {
         let mut conn = Connection::open_in_memory().unwrap();
-        ensure_dock_schema(&mut conn, 0).unwrap();
+        ensure_dock_schema(&mut conn).unwrap();
         conn
     }
 
@@ -324,7 +324,7 @@ mod tests {
     fn hybrid_local_search_returns_results_via_storage() {
         use crate::vault::models::{EntryKind, FieldInput, VaultEntryInput};
         let mut conn = Connection::open_in_memory().unwrap();
-        ensure_dock_schema(&mut conn, 0).unwrap();
+        ensure_dock_schema(&mut conn).unwrap();
         crate::vault::storage::ensure_vault_schema(&mut conn).unwrap();
         crate::vault::storage::create_entry(
             &mut conn,
