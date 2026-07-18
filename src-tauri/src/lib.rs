@@ -256,16 +256,68 @@ fn parse_key_code(s: &str) -> Option<Code> {
 
 // --- Dock entry IPC commands ---
 
+fn content_changed_event<T>(
+    mutation: &content::models::ContentMutation<T>,
+) -> content::models::ContentChangedEvent {
+    content::models::ContentChangedEvent {
+        revision: mutation.revision,
+        changes: mutation.changes.clone(),
+    }
+}
+
+fn emit_content_changed<T>(app: &tauri::AppHandle, mutation: &content::models::ContentMutation<T>) {
+    if mutation.changes.is_empty() {
+        return;
+    }
+    if let Err(error) = app.emit("content-changed", content_changed_event(mutation)) {
+        eprintln!("failed to emit content-changed after committed Dock mutation: {error}");
+    }
+}
+
+#[cfg(test)]
+mod dock_ipc_tests {
+    use super::content_changed_event;
+    use crate::content::models::{ContentChange, ContentMutation, ContentOperation};
+
+    #[test]
+    fn ipc_content_changed_event_preserves_committed_revision_ids_and_operations() {
+        let mutation = ContentMutation {
+            value: (),
+            revision: 42,
+            changes: vec![
+                ContentChange {
+                    id: "dock:one".to_string(),
+                    operation: ContentOperation::Updated,
+                },
+                ContentChange {
+                    id: "dock:two".to_string(),
+                    operation: ContentOperation::Reordered,
+                },
+            ],
+        };
+
+        let event = content_changed_event(&mutation);
+
+        assert_eq!(event.revision, 42);
+        assert_eq!(event.changes, mutation.changes);
+    }
+}
+
 #[tauri::command]
 fn ipc_entries_create_text(
     state: tauri::State<AppState>,
+    app: tauri::AppHandle,
     view: models::entry::EntryView,
     content: String,
     source: String,
 ) -> Result<models::entry::DockEntry, String> {
-    let mut conn = state.db.lock().map_err(|e| e.to_string())?;
-    scratchpad::storage::create_text_entry(&mut conn, view, &content, &source)
-        .map_err(|e| e.to_string())
+    let mutation = {
+        let mut conn = state.db.lock().map_err(|e| e.to_string())?;
+        scratchpad::storage::create_text_entry_with_revision(&mut conn, view, &content, &source)
+            .map_err(|e| e.to_string())?
+    };
+    emit_content_changed(&app, &mutation);
+    Ok(mutation.value)
 }
 
 #[tauri::command]
@@ -279,29 +331,50 @@ fn ipc_entries_list(
 }
 
 #[tauri::command]
-fn ipc_entries_add_to_note(state: tauri::State<AppState>, entry_id: String) -> Result<(), String> {
-    let mut conn = state.db.lock().map_err(|e| e.to_string())?;
-    scratchpad::storage::add_to_note(&mut conn, &entry_id).map_err(|e| e.to_string())
+fn ipc_entries_add_to_note(
+    state: tauri::State<AppState>,
+    app: tauri::AppHandle,
+    entry_id: String,
+) -> Result<(), String> {
+    let mutation = {
+        let mut conn = state.db.lock().map_err(|e| e.to_string())?;
+        scratchpad::storage::add_to_note_with_revision(&mut conn, &entry_id)
+            .map_err(|e| e.to_string())?
+    };
+    emit_content_changed(&app, &mutation);
+    Ok(())
 }
 
 #[tauri::command]
 fn ipc_entries_remove_from_view(
     state: tauri::State<AppState>,
+    app: tauri::AppHandle,
     view: models::entry::EntryView,
     entry_id: String,
 ) -> Result<(), String> {
-    let mut conn = state.db.lock().map_err(|e| e.to_string())?;
-    scratchpad::storage::remove_from_view(&mut conn, view, &entry_id).map_err(|e| e.to_string())
+    let mutation = {
+        let mut conn = state.db.lock().map_err(|e| e.to_string())?;
+        scratchpad::storage::remove_from_view_with_revision(&mut conn, view, &entry_id)
+            .map_err(|e| e.to_string())?
+    };
+    emit_content_changed(&app, &mutation);
+    Ok(())
 }
 
 #[tauri::command]
 fn ipc_entries_update_text(
     state: tauri::State<AppState>,
+    app: tauri::AppHandle,
     id: String,
     content: String,
 ) -> Result<(), String> {
-    let mut conn = state.db.lock().map_err(|e| e.to_string())?;
-    scratchpad::storage::update_entry_text(&mut conn, &id, &content).map_err(|e| e.to_string())
+    let mutation = {
+        let mut conn = state.db.lock().map_err(|e| e.to_string())?;
+        scratchpad::storage::update_entry_text_with_revision(&mut conn, &id, &content)
+            .map_err(|e| e.to_string())?
+    };
+    emit_content_changed(&app, &mutation);
+    Ok(())
 }
 
 #[tauri::command]
@@ -317,21 +390,33 @@ fn ipc_entries_toggle_collapse(
 #[tauri::command]
 fn ipc_entries_rename(
     state: tauri::State<AppState>,
+    app: tauri::AppHandle,
     id: String,
     title: Option<String>,
 ) -> Result<(), String> {
-    let mut conn = state.db.lock().map_err(|e| e.to_string())?;
-    scratchpad::storage::rename_entry(&mut conn, &id, title.as_deref()).map_err(|e| e.to_string())
+    let mutation = {
+        let mut conn = state.db.lock().map_err(|e| e.to_string())?;
+        scratchpad::storage::rename_entry_with_revision(&mut conn, &id, title.as_deref())
+            .map_err(|e| e.to_string())?
+    };
+    emit_content_changed(&app, &mutation);
+    Ok(())
 }
 
 #[tauri::command]
 fn ipc_entries_reorder(
     state: tauri::State<AppState>,
+    app: tauri::AppHandle,
     view: models::entry::EntryView,
     ordered_ids: Vec<String>,
 ) -> Result<(), String> {
-    let mut conn = state.db.lock().map_err(|e| e.to_string())?;
-    scratchpad::storage::reorder_entries(&mut conn, view, &ordered_ids).map_err(|e| e.to_string())
+    let mutation = {
+        let mut conn = state.db.lock().map_err(|e| e.to_string())?;
+        scratchpad::storage::reorder_entries_with_revision(&mut conn, view, &ordered_ids)
+            .map_err(|e| e.to_string())?
+    };
+    emit_content_changed(&app, &mutation);
+    Ok(())
 }
 
 // --- Preferences IPC commands ---
@@ -522,16 +607,24 @@ fn ipc_shortcut_update(
 #[tauri::command]
 fn ipc_entries_import_file(
     state: tauri::State<AppState>,
+    app: tauri::AppHandle,
     source_path: String,
     view: models::entry::EntryView,
 ) -> Result<models::entry::DockEntry, String> {
-    let mut conn = state.db.lock().map_err(|e| e.to_string())?;
-    scratchpad::assets::import_file(&mut conn, &source_path, view).map_err(|e| e.to_string())
+    let mutation = {
+        let mut conn = state.db.lock().map_err(|e| e.to_string())?;
+        scratchpad::assets::import_file_with_revision(&mut conn, &source_path, view)
+            .map_err(|e| e.to_string())?
+    };
+    emit_content_changed(&app, &mutation);
+    Ok(mutation.value)
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 fn ipc_entries_import_image_bytes(
     state: tauri::State<AppState>,
+    app: tauri::AppHandle,
     bytes: Vec<u8>,
     file_name: String,
     mime_type: String,
@@ -539,24 +632,39 @@ fn ipc_entries_import_image_bytes(
     height: Option<i64>,
     view: models::entry::EntryView,
 ) -> Result<models::entry::DockEntry, String> {
-    let mut conn = state.db.lock().map_err(|e| e.to_string())?;
-    scratchpad::assets::import_image_bytes(
-        &mut conn, &bytes, &file_name, &mime_type, width, height, view,
-    )
-    .map_err(|e| e.to_string())
+    let mutation = {
+        let mut conn = state.db.lock().map_err(|e| e.to_string())?;
+        scratchpad::assets::import_image_bytes_with_revision(
+            &mut conn, &bytes, &file_name, &mime_type, width, height, view,
+        )
+        .map_err(|e| e.to_string())?
+    };
+    emit_content_changed(&app, &mutation);
+    Ok(mutation.value)
 }
 
 #[tauri::command]
 fn ipc_entries_import_file_bytes(
     state: tauri::State<AppState>,
+    app: tauri::AppHandle,
     bytes: Vec<u8>,
     file_name: String,
     mime_type: Option<String>,
     view: models::entry::EntryView,
 ) -> Result<models::entry::DockEntry, String> {
-    let mut conn = state.db.lock().map_err(|e| e.to_string())?;
-    scratchpad::assets::import_file_bytes(&mut conn, &bytes, &file_name, mime_type.as_deref(), view)
-        .map_err(|e| e.to_string())
+    let mutation = {
+        let mut conn = state.db.lock().map_err(|e| e.to_string())?;
+        scratchpad::assets::import_file_bytes_with_revision(
+            &mut conn,
+            &bytes,
+            &file_name,
+            mime_type.as_deref(),
+            view,
+        )
+        .map_err(|e| e.to_string())?
+    };
+    emit_content_changed(&app, &mutation);
+    Ok(mutation.value)
 }
 
 // --- Clipboard IPC commands ---
