@@ -747,12 +747,7 @@ pub fn remove_from_view_with_revision(
             "temporary Dock content cannot have Note membership: {unified_id}"
         ))),
         (EntryView::Home, RetentionState::Temporary) => {
-            if membership_count(conn, entry_id)? != 1 {
-                return Err(StorageError::Validation(format!(
-                    "temporary Dock content has inconsistent memberships: {unified_id}"
-                )));
-            }
-            crate::content::service::delete(conn, &unified_id)
+            crate::content::service::delete_temporary(conn, &unified_id)
         }
         (EntryView::Home, RetentionState::Saved) => {
             let tx = conn.transaction()?;
@@ -815,6 +810,53 @@ pub fn reorder_entries(
     Ok(())
 }
 
+fn validate_active_position_scope(
+    conn: &Connection,
+    retention: RetentionState,
+    position_column: &str,
+) -> StorageResult<()> {
+    let state = match retention {
+        RetentionState::Temporary => "temporary",
+        RetentionState::Saved => "saved",
+    };
+    let positions = {
+        let mut stmt = conn.prepare(&format!(
+            "SELECT unified_id, {position_column}
+             FROM content_catalog WHERE retention_state=?1"
+        ))?;
+        let rows = stmt
+            .query_map(params![state], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, Option<f64>>(1)?,
+                ))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        rows
+    };
+    let mut finite_positions = Vec::with_capacity(positions.len());
+    for (id, position) in positions {
+        let position = position.ok_or_else(|| {
+            StorageError::Validation(format!(
+                "cannot reorder {state} content while {id} has no active position"
+            ))
+        })?;
+        if !position.is_finite() {
+            return Err(StorageError::Validation(format!(
+                "cannot reorder {state} content while {id} has a non-finite active position"
+            )));
+        }
+        finite_positions.push(position);
+    }
+    finite_positions.sort_by(f64::total_cmp);
+    if finite_positions.windows(2).any(|pair| pair[0] == pair[1]) {
+        return Err(StorageError::Validation(format!(
+            "cannot reorder {state} content with duplicate active positions"
+        )));
+    }
+    Ok(())
+}
+
 pub fn reorder_entries_with_revision(
     conn: &mut Connection,
     view: EntryView,
@@ -828,9 +870,9 @@ pub fn reorder_entries_with_revision(
     }
 
     let table = view.membership_table();
-    let position_column = match view {
-        EntryView::Home => "inbox_position",
-        EntryView::Note => "saved_position",
+    let (active_retention, position_column) = match view {
+        EntryView::Home => (RetentionState::Temporary, "inbox_position"),
+        EntryView::Note => (RetentionState::Saved, "saved_position"),
     };
     let tx = conn.transaction()?;
     let current_ids = {
@@ -856,8 +898,10 @@ pub fn reorder_entries_with_revision(
         });
     }
 
+    validate_active_position_scope(&tx, active_retention, position_column)?;
     let mut unified_ids = Vec::with_capacity(ordered_ids.len());
-    for (index, entry_id) in ordered_ids.iter().enumerate() {
+    let mut active_targets = Vec::new();
+    for entry_id in ordered_ids {
         let unified_id = dock_unified_id(entry_id)?;
         let catalog = crate::content::catalog::catalog_entry_by_id(&tx, &unified_id)?;
         if catalog.source != ContentSource::Dock || catalog.source_id != *entry_id {
@@ -870,6 +914,41 @@ pub fn reorder_entries_with_revision(
                 "Note reorder includes non-saved content: {unified_id}"
             )));
         }
+        if catalog.retention == active_retention {
+            let position = tx.query_row(
+                &format!(
+                    "SELECT {position_column} FROM content_catalog WHERE unified_id=?1"
+                ),
+                params![unified_id],
+                |row| row.get::<_, Option<f64>>(0),
+            )?;
+            let position = position.ok_or_else(|| {
+                StorageError::Validation(format!(
+                    "Dock content is missing its active reorder position: {unified_id}"
+                ))
+            })?;
+            if !position.is_finite() {
+                return Err(StorageError::Validation(format!(
+                    "Dock content has a non-finite active reorder position: {unified_id}"
+                )));
+            }
+            active_targets.push((unified_id.clone(), position));
+        }
+        unified_ids.push(unified_id);
+    }
+
+    let mut available_slots = active_targets
+        .iter()
+        .map(|(_, position)| *position)
+        .collect::<Vec<_>>();
+    available_slots.sort_by(f64::total_cmp);
+    if available_slots.windows(2).any(|pair| pair[0] == pair[1]) {
+        return Err(StorageError::Validation(
+            "Dock reorder items do not occupy unique active positions".to_string(),
+        ));
+    }
+
+    for (index, entry_id) in ordered_ids.iter().enumerate() {
         let position = index as f64;
         let membership_rows = tx.execute(
             &format!("UPDATE {table} SET sort_order=?2 WHERE entry_id=?1"),
@@ -877,9 +956,12 @@ pub fn reorder_entries_with_revision(
         )?;
         if membership_rows != 1 {
             return Err(StorageError::Validation(format!(
-                "Dock membership disappeared while reordering {unified_id}"
+                "Dock membership disappeared while reordering {}",
+                unified_ids[index]
             )));
         }
+    }
+    for ((unified_id, _), position) in active_targets.iter().zip(available_slots) {
         let catalog_rows = tx.execute(
             &format!("UPDATE content_catalog SET {position_column}=?2 WHERE unified_id=?1"),
             params![unified_id, position],
@@ -889,7 +971,6 @@ pub fn reorder_entries_with_revision(
                 "Dock catalog row disappeared while reordering {unified_id}"
             )));
         }
-        unified_ids.push(unified_id);
     }
     let revision = bump_revision(&tx)?;
     tx.commit()?;
@@ -1303,6 +1384,54 @@ mod tests {
         assert_unified_rows(conn, unified_id, 1);
     }
 
+    fn insert_vault_position_fixture(
+        conn: &Connection,
+        source_id: &str,
+        retention: RetentionState,
+        position: f64,
+    ) -> String {
+        let unified_id = format!("vault:{source_id}");
+        conn.execute(
+            "INSERT INTO vault_entries(id, kind, title, notes, created_at, updated_at)
+             VALUES (?1, 'note', ?2, 'position fixture', ?3, ?3)",
+            params![
+                source_id,
+                format!("Vault {source_id}"),
+                "2026-07-18T08:00:00Z"
+            ],
+        )
+        .unwrap();
+        let (state, cleanup_at, inbox_position, saved_position) = match retention {
+            RetentionState::Temporary => (
+                "temporary",
+                Some("2026-07-25T08:00:00Z"),
+                Some(position),
+                None,
+            ),
+            RetentionState::Saved => ("saved", None, None, Some(position)),
+        };
+        conn.execute(
+            "INSERT INTO content_catalog(
+                 unified_id, source, source_id, kind, retention_state,
+                 retention_changed_at, cleanup_at, inbox_position, saved_position,
+                 created_at, updated_at
+             ) VALUES (?1, 'vault', ?2, 'note', ?3, ?4, ?5, ?6, ?7, ?4, ?4)",
+            params![
+                unified_id,
+                source_id,
+                state,
+                "2026-07-18T08:00:00Z",
+                cleanup_at,
+                inbox_position,
+                saved_position,
+            ],
+        )
+        .unwrap();
+        let document = build_search_document(conn, &unified_id).unwrap();
+        replace_projection(conn, &document).unwrap();
+        unified_id
+    }
+
     #[test]
     fn legacy_dock_writes_cannot_bypass_unified_projection() {
         let mut conn = Connection::open_in_memory().unwrap();
@@ -1580,6 +1709,19 @@ mod tests {
         .unwrap();
         let before_revision = crate::content::catalog::current_revision(&conn).unwrap();
         let ordered = vec![first.id.clone(), third.id.clone(), second.id.clone()];
+        let mut active_slots = ordered
+            .iter()
+            .map(|id| {
+                conn.query_row(
+                    "SELECT inbox_position FROM content_catalog
+                     WHERE source='dock' AND source_id=?1",
+                    params![id],
+                    |row| row.get::<_, f64>(0),
+                )
+                .unwrap()
+            })
+            .collect::<Vec<_>>();
+        active_slots.sort_by(f64::total_cmp);
 
         let mutation = reorder_entries_with_revision(&mut conn, EntryView::Home, &ordered).unwrap();
         assert_eq!(mutation.revision, before_revision + 1);
@@ -1596,7 +1738,7 @@ mod tests {
             ]
         );
 
-        for (index, id) in ordered.iter().enumerate() {
+        for ((index, id), active_slot) in ordered.iter().enumerate().zip(active_slots) {
             let positions: (f64, f64) = conn
                 .query_row(
                     "SELECT h.sort_order, c.inbox_position
@@ -1608,7 +1750,7 @@ mod tests {
                     |row| Ok((row.get(0)?, row.get(1)?)),
                 )
                 .unwrap();
-            assert_eq!(positions, (index as f64, index as f64));
+            assert_eq!(positions, (index as f64, active_slot));
             assert_dock_projection_matches(&conn, &format!("dock:{id}"));
         }
         assert_eq!(
@@ -1622,6 +1764,183 @@ mod tests {
         assert_eq!(
             crate::content::catalog::current_revision(&conn).unwrap(),
             revision
+        );
+    }
+
+    #[test]
+    fn home_reorder_reuses_temporary_dock_slots_without_moving_vault_or_saved_positions() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        ensure_unified_schema(&mut conn);
+        let first = create_text_entry(&mut conn, EntryView::Home, "first", "manual").unwrap();
+        let second = create_text_entry(&mut conn, EntryView::Home, "second", "manual").unwrap();
+        let third = create_text_entry(&mut conn, EntryView::Home, "third", "manual").unwrap();
+        let saved = create_text_entry(&mut conn, EntryView::Home, "saved", "manual").unwrap();
+        add_to_note(&mut conn, &saved.id).unwrap();
+        let vault_id = insert_vault_position_fixture(
+            &conn,
+            "temporary-position",
+            RetentionState::Temporary,
+            1.0,
+        );
+        let saved_before: (Option<f64>, Option<f64>) = conn
+            .query_row(
+                "SELECT inbox_position, saved_position FROM content_catalog
+                 WHERE unified_id=?1",
+                params![format!("dock:{}", saved.id)],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        let revision = crate::content::catalog::current_revision(&conn).unwrap();
+        let ordered = vec![
+            first.id.clone(),
+            saved.id.clone(),
+            third.id.clone(),
+            second.id.clone(),
+        ];
+
+        let mutation =
+            reorder_entries_with_revision(&mut conn, EntryView::Home, &ordered).unwrap();
+
+        assert_eq!(mutation.revision, revision + 1);
+        assert_eq!(
+            conn.query_row(
+                "SELECT inbox_position FROM content_catalog WHERE unified_id=?1",
+                params![vault_id],
+                |row| row.get::<_, f64>(0),
+            )
+            .unwrap(),
+            1.0
+        );
+        assert_eq!(
+            conn.query_row(
+                "SELECT inbox_position, saved_position FROM content_catalog
+                 WHERE unified_id=?1",
+                params![format!("dock:{}", saved.id)],
+                |row| Ok((row.get::<_, Option<f64>>(0)?, row.get::<_, Option<f64>>(1)?)),
+            )
+            .unwrap(),
+            saved_before
+        );
+        for (index, id) in ordered.iter().enumerate() {
+            assert_eq!(
+                conn.query_row(
+                    "SELECT sort_order FROM home_entries WHERE entry_id=?1",
+                    params![id],
+                    |row| row.get::<_, f64>(0),
+                )
+                .unwrap(),
+                index as f64
+            );
+        }
+        assert_eq!(
+            crate::content::catalog::catalog_ids_for_scope(
+                &conn,
+                crate::content::models::BrowseScope::Temporary,
+            )
+            .unwrap(),
+            vec![
+                format!("dock:{}", first.id),
+                format!("dock:{}", third.id),
+                format!("dock:{}", second.id),
+                vault_id.clone(),
+            ]
+        );
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) - COUNT(DISTINCT inbox_position)
+                 FROM content_catalog WHERE retention_state='temporary'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+            0
+        );
+        for id in [&first.id, &second.id, &third.id] {
+            assert_dock_projection_matches(&conn, &format!("dock:{id}"));
+        }
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM content_fts WHERE unified_id=?1",
+                params![vault_id],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+            1
+        );
+    }
+
+    #[test]
+    fn note_reorder_reuses_saved_dock_slots_without_moving_vault() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        ensure_unified_schema(&mut conn);
+        let first = create_text_entry(&mut conn, EntryView::Note, "first", "manual").unwrap();
+        let second = create_text_entry(&mut conn, EntryView::Note, "second", "manual").unwrap();
+        let third = create_text_entry(&mut conn, EntryView::Note, "third", "manual").unwrap();
+        let vault_id =
+            insert_vault_position_fixture(&conn, "saved-position", RetentionState::Saved, 1.0);
+        let revision = crate::content::catalog::current_revision(&conn).unwrap();
+        let ordered = vec![first.id.clone(), third.id.clone(), second.id.clone()];
+
+        reorder_entries_with_revision(&mut conn, EntryView::Note, &ordered).unwrap();
+
+        assert_eq!(
+            crate::content::catalog::current_revision(&conn).unwrap(),
+            revision + 1
+        );
+        assert_eq!(
+            conn.query_row(
+                "SELECT saved_position FROM content_catalog WHERE unified_id=?1",
+                params![vault_id],
+                |row| row.get::<_, f64>(0),
+            )
+            .unwrap(),
+            1.0
+        );
+        for (index, id) in ordered.iter().enumerate() {
+            assert_eq!(
+                conn.query_row(
+                    "SELECT sort_order FROM note_entries WHERE entry_id=?1",
+                    params![id],
+                    |row| row.get::<_, f64>(0),
+                )
+                .unwrap(),
+                index as f64
+            );
+        }
+        assert_eq!(
+            crate::content::catalog::catalog_ids_for_scope(
+                &conn,
+                crate::content::models::BrowseScope::Saved,
+            )
+            .unwrap(),
+            vec![
+                format!("dock:{}", first.id),
+                format!("dock:{}", third.id),
+                format!("dock:{}", second.id),
+                vault_id.clone(),
+            ]
+        );
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) - COUNT(DISTINCT saved_position)
+                 FROM content_catalog WHERE retention_state='saved'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+            0
+        );
+        for id in [&first.id, &second.id, &third.id] {
+            assert_dock_projection_matches(&conn, &format!("dock:{id}"));
+        }
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM content_fts WHERE unified_id=?1",
+                params![vault_id],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+            1
         );
     }
 

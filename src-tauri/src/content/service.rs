@@ -171,6 +171,44 @@ pub fn delete(conn: &mut Connection, id: &str) -> StorageResult<ContentMutation<
     })
 }
 
+pub fn delete_temporary(conn: &mut Connection, id: &str) -> StorageResult<ContentMutation<()>> {
+    let tx = conn.transaction()?;
+    let identity = catalog_entry_by_id(&tx, id)?;
+    if identity.retention != crate::content::models::RetentionState::Temporary {
+        return Err(StorageError::Validation(format!(
+            "content is no longer temporary: {id}"
+        )));
+    }
+    ensure_payload_identity(&tx, id, &identity)?;
+    if identity.source == ContentSource::Dock {
+        let memberships: (i64, i64) = tx.query_row(
+            "SELECT
+                 EXISTS(SELECT 1 FROM home_entries WHERE entry_id=?1),
+                 EXISTS(SELECT 1 FROM note_entries WHERE entry_id=?1)",
+            params![identity.source_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        if memberships != (1, 0) {
+            return Err(StorageError::Validation(format!(
+                "temporary Dock content has inconsistent memberships: {id}"
+            )));
+        }
+    }
+    let attachment = delete_in_transaction(&tx, id)?;
+    let revision = bump_revision(&tx)?;
+    tx.commit()?;
+    remove_attachment(id, attachment);
+
+    Ok(ContentMutation {
+        value: (),
+        revision,
+        changes: vec![ContentChange {
+            id: id.to_string(),
+            operation: ContentOperation::Deleted,
+        }],
+    })
+}
+
 pub fn cleanup_expired(
     conn: &mut Connection,
     now: DateTime<Utc>,
@@ -679,7 +717,9 @@ mod tests {
     use chrono::{DateTime, Utc};
     use rusqlite::{params, Connection};
 
-    use super::{cleanup_expired, delete, detail, list, reorder, save, search, unsave};
+    use super::{
+        cleanup_expired, delete, delete_temporary, detail, list, reorder, save, search, unsave,
+    };
     use crate::content::models::{
         BrowseScope, ContentDetail, ContentKind, RetentionState, UnifiedQueryPlan,
     };
@@ -1396,6 +1436,97 @@ mod tests {
             0
         );
         assert!(!path.exists());
+    }
+
+    #[test]
+    fn conditional_delete_rechecks_temporary_retention_after_stale_intent() {
+        let database_path = temp_asset("conditional-delete-db");
+        let mut first = Connection::open(&database_path).unwrap();
+        first.pragma_update(None, "foreign_keys", "ON").unwrap();
+        crate::scratchpad::storage::ensure_dock_schema(&mut first).unwrap();
+        crate::vault::storage::ensure_vault_schema(&mut first).unwrap();
+        crate::content::migrations::ensure_content_schema(&mut first, 7).unwrap();
+        let entry = crate::scratchpad::storage::create_text_entry(
+            &mut first,
+            crate::models::entry::EntryView::Home,
+            "stale intent",
+            "manual",
+        )
+        .unwrap();
+        let unified_id = format!("dock:{}", entry.id);
+        assert_eq!(
+            first
+                .query_row(
+                    "SELECT retention_state FROM content_catalog WHERE unified_id=?1",
+                    params![unified_id],
+                    |row| row.get::<_, String>(0),
+                )
+                .unwrap(),
+            "temporary"
+        );
+
+        let mut second = Connection::open(&database_path).unwrap();
+        second.pragma_update(None, "foreign_keys", "ON").unwrap();
+        save(&mut second, &unified_id).unwrap();
+        let saved_revision = revision(&second);
+
+        assert!(matches!(
+            delete_temporary(&mut first, &unified_id),
+            Err(StorageError::Validation(_))
+        ));
+
+        assert_eq!(revision(&first), saved_revision);
+        for sql in [
+            "SELECT COUNT(*) FROM entries WHERE id=?1",
+            "SELECT COUNT(*) FROM home_entries WHERE entry_id=?1",
+            "SELECT COUNT(*) FROM note_entries WHERE entry_id=?1",
+        ] {
+            assert_eq!(
+                first
+                    .query_row(sql, params![entry.id], |row| row.get::<_, i64>(0))
+                    .unwrap(),
+                1,
+                "{sql}"
+            );
+        }
+        for table in ["content_catalog", "content_fts"] {
+            assert_eq!(
+                first
+                    .query_row(
+                        &format!("SELECT COUNT(*) FROM {table} WHERE unified_id=?1"),
+                        params![unified_id],
+                        |row| row.get::<_, i64>(0),
+                    )
+                    .unwrap(),
+                1,
+                "{table}"
+            );
+        }
+        drop(second);
+        drop(first);
+        std::fs::remove_file(database_path).unwrap();
+    }
+
+    #[test]
+    fn conditional_delete_removes_a_still_temporary_dock_item() {
+        let mut conn = fixture_with_all_kinds();
+        let start = revision(&conn);
+
+        let mutation = delete_temporary(&mut conn, "dock:text-1").unwrap();
+
+        assert_eq!(mutation.revision, start + 1);
+        assert_eq!(
+            mutation.changes[0].operation,
+            crate::content::models::ContentOperation::Deleted
+        );
+        for sql in [
+            "SELECT COUNT(*) FROM entries WHERE id='text-1'",
+            "SELECT COUNT(*) FROM home_entries WHERE entry_id='text-1'",
+            "SELECT COUNT(*) FROM content_catalog WHERE unified_id='dock:text-1'",
+            "SELECT COUNT(*) FROM content_fts WHERE unified_id='dock:text-1'",
+        ] {
+            assert_eq!(scalar_i64(&conn, sql), 0, "{sql}");
+        }
     }
 
     #[test]
