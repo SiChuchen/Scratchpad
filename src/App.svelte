@@ -211,7 +211,7 @@
     quickAccessOpening = true;
     try {
       await import("@tauri-apps/api/core").then(({ invoke }) =>
-        invoke("ipc_quick_access_open"),
+        invoke("ipc_open_quick_access"),
       );
     } catch (e) {
       notify(format(e), "error");
