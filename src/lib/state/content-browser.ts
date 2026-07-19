@@ -101,6 +101,7 @@ export class ContentBrowserController {
     }
 
     const before = this.state.items;
+    const scope = this.state.scope;
     const byId = new Map(before.map((item) => [item.id, item]));
     const reordered = orderedIds
       .map((id) => byId.get(id))
@@ -108,12 +109,16 @@ export class ContentBrowserController {
     this.publish({ items: reordered });
 
     try {
-      await this.api.reorder(this.state.scope, orderedIds);
-      await this.refresh();
+      await this.api.reorder(scope, orderedIds);
+      if (this.state.scope === scope) await this.refresh();
     } catch (error) {
-      this.publish({ items: before });
+      if (this.state.scope === scope) this.publish({ items: before });
       throw error;
     }
+  }
+
+  dispose(): void {
+    this.requestVersion += 1;
   }
 
   private publish(patch: Partial<ContentBrowserState>): void {

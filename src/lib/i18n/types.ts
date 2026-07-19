@@ -1,4 +1,15 @@
 export interface LocaleMessages {
+  workspace: {
+    scope: { temporary: string; all: string; saved: string }
+    kind: { text: string; image: string; file: string; credential: string; bookmark: string; note: string }
+    searchPlaceholder: string
+    temporaryRetention: string
+    createText: string
+    save: string
+    unsave: string
+    delete: string
+    undo: string
+  }
   nav: {
     home: string
     all: string

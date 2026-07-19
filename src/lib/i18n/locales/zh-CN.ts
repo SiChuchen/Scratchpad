@@ -1,6 +1,7 @@
 import type { LocaleMessages } from '../types'
 
 const zhCN: LocaleMessages = {
+  workspace: { scope: { temporary: '收纳', all: '全部', saved: '收藏' }, kind: { text:'文本',image:'图片',file:'文件',credential:'凭据',bookmark:'书签',note:'笔记' }, searchPlaceholder:'搜索全部内容',temporaryRetention:'临时内容会按设置自动清理',createText:'新建文本',save:'收藏',unsave:'取消收藏',delete:'删除',undo:'撤销' },
   nav: {
     home: '收纳',
     all: '全部',

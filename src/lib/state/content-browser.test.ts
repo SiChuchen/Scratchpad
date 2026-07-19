@@ -317,6 +317,23 @@ describe("ContentBrowserController", () => {
     ]);
   });
 
+  it("does not roll a failed reorder into a newer scope", async () => {
+    const pending = deferred<void>();
+    const api = fakeContentApi({
+      temporary: [summary("dock:a"), summary("dock:b")],
+      saved: [summary("vault:saved", "saved")],
+    });
+    vi.spyOn(api, "reorder").mockReturnValueOnce(pending.promise);
+    const controller = new ContentBrowserController(api, vi.fn());
+    await controller.load("temporary");
+    const reorder = controller.reorder(["dock:b", "dock:a"]);
+    await controller.load("saved");
+    pending.reject(new Error("write failed"));
+    await expect(reorder).rejects.toThrow("write failed");
+    expect(controller.snapshot.scope).toBe("saved");
+    expect(controller.snapshot.items.map((item) => item.id)).toEqual(["vault:saved"]);
+  });
+
   it("persists a reorder and refreshes the authoritative order", async () => {
     const api = fakeContentApi({
       saved: [summary("dock:a", "saved"), summary("vault:b", "saved")],

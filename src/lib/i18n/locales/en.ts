@@ -1,6 +1,7 @@
 import type { LocaleMessages } from '../types'
 
 const en: LocaleMessages = {
+  workspace: { scope: { temporary: 'Inbox', all: 'All', saved: 'Saved' }, kind: { text:'Text',image:'Image',file:'File',credential:'Credential',bookmark:'Bookmark',note:'Note' }, searchPlaceholder:'Search all content',temporaryRetention:'Temporary content is cleaned up according to settings',createText:'New text',save:'Save',unsave:'Remove from saved',delete:'Delete',undo:'Undo' },
   nav: {
     home: 'Dock',
     all: 'All',

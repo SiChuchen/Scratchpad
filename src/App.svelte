@@ -1,955 +1,550 @@
 <script lang="ts">
-  import { onMount } from 'svelte'
-  import { invoke } from '@tauri-apps/api/core'
-  import { listen } from '@tauri-apps/api/event'
-  import TopBar from '$lib/components/TopBar.svelte'
-  import QuickAccessFab from '$lib/components/QuickAccessFab.svelte'
-  import HomeView from '$lib/components/views/HomeView.svelte'
-  import CategoriesView from '$lib/components/views/CategoriesView.svelte'
-  import NoteView from '$lib/components/views/NoteView.svelte'
-  import SettingsView from '$lib/components/views/SettingsView.svelte'
-  import VaultView from '$lib/components/views/VaultView.svelte'
-  import { dockApi } from '$lib/api/dock'
-  import { insertHomeEntry } from '$lib/state/dock'
-  import { broadcastPreferences } from '$lib/state/preferences-sync'
-  import { computeThemeTokens } from '$lib/themes/engine'
-  import { messages, loadLocale, detectLanguage } from '$lib/i18n'
+  import { onMount, onDestroy } from "svelte";
+  import TopBar from "$lib/components/TopBar.svelte";
+  import QuickAccessFab from "$lib/components/QuickAccessFab.svelte";
+  import ContentWorkspace from "$lib/components/views/ContentWorkspace.svelte";
+  import SettingsView from "$lib/components/views/SettingsView.svelte";
+  import {
+    contentApi,
+    onContentChanged,
+    onContentDeleteFailed,
+  } from "$lib/api/content";
+  import { dockApi } from "$lib/api/dock";
+  import {
+    ContentBrowserController,
+    type ContentBrowserState,
+  } from "$lib/state/content-browser";
+  import {
+    UnifiedSearchController,
+    initialSearchState,
+    type ContentSearchState,
+  } from "$lib/state/content-search";
+  import { broadcastPreferences } from "$lib/state/preferences-sync";
+  import { computeThemeTokens } from "$lib/themes/engine";
+  import { messages, loadLocale, detectLanguage } from "$lib/i18n";
+  import type {
+    BrowseScope,
+    ContentDetail,
+    ContentKind,
+    ContentSummary,
+  } from "$lib/types/content";
+  import type { DockPreferences } from "$lib/types/dock";
 
-  import type { DockEntry, DockPreferences, DockView } from '$lib/types/dock'
-
-  let currentView = $state<DockView>('home')
-  let homeEntries = $state<DockEntry[]>([])
-  let noteEntries = $state<DockEntry[]>([])
-  let langKey = $state(0)
-  let preferences = $state<DockPreferences | null>(null)
-  let quickAccessOpening = $state(false)
-  let toast = $state<{ text: string; kind: 'success' | 'error'; undo?: () => void; actionLabel?: string } | null>(null)
-  let confirmDialog = $state<{ message: string; onConfirm: () => void; onCancel: () => void; confirmLabel?: string; cancelLabel?: string } | null>(null)
-  let toastTimer: ReturnType<typeof setTimeout> | null = null
-
-  // Reactive system dark mode — separate from main async onMount
-  let systemDark = $state(window.matchMedia('(prefers-color-scheme: dark)').matches)
-
-  onMount(async () => {
-    try {
-      ;[homeEntries, noteEntries, preferences] = await Promise.all([
-        dockApi.listEntries('home'),
-        dockApi.listEntries('note'),
-        dockApi.getPreferences(),
-      ])
-      // Resolve language
-      if (!preferences.language) {
-        const detected = detectLanguage()
-        preferences = { ...preferences, language: detected }
-        dockApi.setPreferences(preferences)
-      }
-      loadLocale(preferences.language)
-      langKey++
-      // Warn if either global shortcut failed to register at startup
-      if (preferences) {
-        if (!preferences.shortcutRegistered) {
-          showToast(`${messages.settings.shortcutFailed}（主窗口）`, 'error')
-        }
-        if (!preferences.quickAccessShortcutRegistered) {
-          showToast(`${messages.settings.shortcutFailed}（全局资料入口）`, 'error')
-        }
-      }
-    } catch (e) {
-      showToast(`${messages.toast.loadFailed}: ${formatError(e)}`, 'error')
-    }
-
-    window.addEventListener('paste', handleGlobalPaste as unknown as EventListener)
-
-    // Tauri native drag-drop for file imports
-    const { getCurrentWindow } = await import('@tauri-apps/api/window')
-    const win = getCurrentWindow()
-    const unlisten = await win.onDragDropEvent((event: any) => {
-      if (event.payload.type === 'enter') {
-        dragOverlay = { active: true, count: event.payload.paths?.length ?? 1 }
-      } else if (event.payload.type === 'drop') {
-        dragOverlay = { active: false, count: 0 }
-        handleNativeFileDrop(event.payload.paths)
-        win.setFocus()
-      } else if (event.payload.type === 'leave') {
-        dragOverlay = { active: false, count: 0 }
-      }
-    })
-
-    // Check for updates on startup
-    checkForUpdate()
-  })
-
-  // Synchronous onMount for matchMedia listener — cleanup function works correctly
-  onMount(() => {
-    const mq = window.matchMedia('(prefers-color-scheme: dark)')
-    function onSystemThemeChange(e: MediaQueryListEvent) {
-      systemDark = e.matches
-    }
-    mq.addEventListener('change', onSystemThemeChange)
-    return () => mq.removeEventListener('change', onSystemThemeChange)
-  })
+  type MainView = BrowseScope | "settings";
+  let currentView = $state<MainView>("temporary");
+  let lastScope = $state<BrowseScope>("temporary");
+  let browserState = $state<ContentBrowserState>({
+    scope: "temporary",
+    kind: null,
+    items: [],
+    selectedId: null,
+    revision: 0,
+    phase: "idle",
+    error: null,
+  });
+  let searchState = $state<ContentSearchState>(initialSearchState());
+  let selectedDetail = $state<ContentDetail | null>(null);
+  let detailLoading = $state(false);
+  let detailRequest = 0;
+  let pendingDeleteIds = $state<string[]>([]);
+  let preferences = $state<DockPreferences | null>(null);
+  let systemDark = $state(
+    window.matchMedia?.("(prefers-color-scheme: dark)").matches ?? false,
+  );
+  let toast = $state<{
+    text: string;
+    kind: "success" | "error";
+    undo?: () => void;
+  } | null>(null);
+  let toastTimer: ReturnType<typeof setTimeout> | null = null;
+  let quickAccessOpening = $state(false);
+  let composeOpen = $state(false);
+  let composeText = $state("");
+  let dragOverlay = $state(false);
+  const browser = new ContentBrowserController(
+    contentApi,
+    (s) => (browserState = s),
+  );
+  const search = new UnifiedSearchController(
+    contentApi,
+    (s) => (searchState = s),
+  );
+  const visibleBrowser = $derived({
+    ...browserState,
+    items: browserState.items.filter((x) => !pendingDeleteIds.includes(x.id)),
+  });
+  const visibleSearch = $derived({
+    ...searchState,
+    hits: searchState.hits.filter(
+      (x) => !pendingDeleteIds.includes(x.summary.id),
+    ),
+  });
 
   onMount(() => {
-    let disposed = false
-    let unlisten: (() => void) | null = null
-
-    void listen('main-open-settings', () => navigate('settings')).then((fn) => {
-      if (disposed) fn()
-      else unlisten = fn
-    })
-
-    return () => {
-      disposed = true
-      unlisten?.()
-    }
-  })
-
-  // --- Update check ---
-
-  async function checkForUpdate() {
-    try {
-      const { check } = await import('@tauri-apps/plugin-updater')
-      const proxy = preferences?.updateProxy?.trim()
-      const proxyUrl = proxy ? (proxy.startsWith('http') ? proxy : `http://${proxy}`) : undefined
-      const update = await check({ proxy: proxyUrl })
-      if (update?.available) {
-        showToast(`${messages.toast.newVersion} v${update.version}`, 'success', () => installUpdate(update), messages.settings.updateNow)
+    let disposed = false;
+    const cleanups: (() => void)[] = [];
+    void Promise.all([dockApi.getPreferences(), browser.load("temporary")])
+      .then(([prefs]) => {
+        if (disposed) return;
+        preferences = prefs;
+        if (!prefs.language) {
+          prefs = { ...prefs, language: detectLanguage() };
+          preferences = prefs;
+          void dockApi.setPreferences(prefs);
+        }
+        loadLocale(prefs.language);
+      })
+      .catch((e) => notify(`加载失败：${format(e)}`, "error"));
+    void onContentChanged(async (event) => {
+      if (event.revision <= browser.snapshot.revision) return;
+      const selected = selectedDetail?.summary.id;
+      const remoteDeleted =
+        selected &&
+        event.changes.some(
+          (c) => c.id === selected && c.operation === "deleted",
+        ) &&
+        !pendingDeleteIds.includes(selected);
+      if (remoteDeleted) {
+        selectedDetail = null;
+        browser.select(null);
+        search.select(null);
+        notify("该内容已在另一窗口删除", "error");
       }
-    } catch {
-      // update check is not critical
-    }
-  }
-
-  async function installUpdate(update: any) {
-    showToast(messages.toast.downloading, 'success')
-    try {
-      await update.downloadAndInstall()
-      showToast(messages.toast.updateDone, 'success')
-      setTimeout(async () => {
-        const { getCurrentWindow } = await import('@tauri-apps/api/window')
-        getCurrentWindow().close()
-      }, 1500)
-    } catch (e) {
-      showToast(`${messages.toast.updateFailed}: ${formatError(e)}`, 'error')
-    }
-  }
-
-  // Apply theme tokens as CSS variables — reacts to both preferences and systemDark
-  $effect(() => {
-    if (!preferences) return
-    const tokens = computeThemeTokens(preferences, systemDark)
-    const root = document.documentElement.style
-    for (const [key, value] of Object.entries(tokens)) {
-      root.setProperty(key, value)
-    }
-    // Non-token preferences
-    root.setProperty('--font-family-zh', preferences.fontFamilyZh)
-    root.setProperty('--font-family-en', preferences.fontFamilyEn)
-  })
-
-  // --- Home handlers ---
-
-  const collapsePendingIds = new Set<string>()
-
-  async function createHomeText(content: string) {
-    try {
-      const created = await dockApi.createText('home', content, 'manual')
-      homeEntries = insertHomeEntry(homeEntries, created)
-    } catch (e) {
-      showToast(`${messages.toast.createFailed}: ${formatError(e)}`, 'error')
-    }
-  }
-
-  function importHomeEntry(entry: DockEntry) {
-    homeEntries = insertHomeEntry(homeEntries, { ...entry, inHome: true })
-  }
-
-  async function toggleCollapse(entryId: string) {
-    const entry = [...homeEntries, ...noteEntries].find((e) => e.id === entryId)
-    if (collapsePendingIds.has(entryId)) return
-    if (!entry) return
-    const previousCollapsed = entry.collapsed
-    const newCollapsed = !entry.collapsed
-    collapsePendingIds.add(entryId)
-    homeEntries = homeEntries.map((e) =>
-      e.id === entryId ? { ...e, collapsed: newCollapsed } : e,
-    )
-    noteEntries = noteEntries.map((e) =>
-      e.id === entryId ? { ...e, collapsed: newCollapsed } : e,
-    )
-    try {
-      await dockApi.toggleCollapse(entryId, newCollapsed)
-    } catch (e) {
-      homeEntries = homeEntries.map((entry) =>
-        entry.id === entryId ? { ...entry, collapsed: previousCollapsed } : entry,
-      )
-      noteEntries = noteEntries.map((entry) =>
-        entry.id === entryId ? { ...entry, collapsed: previousCollapsed } : entry,
-      )
-      showToast(`${messages.toast.operationFailed}: ${formatError(e)}`, 'error')
-    } finally {
-      collapsePendingIds.delete(entryId)
-    }
-  }
-
-  async function deleteFromView(view: 'home' | 'note', entryId: string) {
-    const list = view === 'home' ? homeEntries : noteEntries
-    const entry = list.find((e) => e.id === entryId)
-    if (!entry) return
-    const entryIdx = list.indexOf(entry)
-
-    // Optimistically remove from UI
-    if (view === 'home') {
-      homeEntries = homeEntries.filter((e) => e.id !== entryId)
-    } else {
-      noteEntries = noteEntries.filter((e) => e.id !== entryId)
-    }
-
-    let committed = false
-    const commitDelete = async () => {
-      if (committed) return
-      committed = true
-      try {
-        await dockApi.removeFromView(view, entryId)
-      } catch (e) {
-        showToast(`${messages.toast.deleteFailed}: ${formatError(e)}`, 'error')
-      }
-    }
-
-    const undoDelete = () => {
-      if (committed) return
-      // Re-insert at original position
-      if (view === 'home') {
-        const next = [...homeEntries]
-        next.splice(entryIdx, 0, entry)
-        homeEntries = next
-      } else {
-        const next = [...noteEntries]
-        next.splice(entryIdx, 0, entry)
-        noteEntries = next
-      }
-      toast = null
-      if (toastTimer) clearTimeout(toastTimer)
-    }
-
-    // Show toast with undo, auto-commit after 3s
-    showToast(messages.toast.deleted, 'success', undoDelete)
-    toastTimer = setTimeout(() => {
-      commitDelete()
-    }, 3000)
-  }
-
-  async function toggleNote(entryId: string) {
-    const entry = allEntries.find((e) => e.id === entryId)
-    if (!entry) return
-
-    try {
-      if (entry.inNote) {
-        await dockApi.removeFromView('note', entryId)
-        homeEntries = homeEntries.map((e) =>
-          e.id === entryId ? { ...e, inNote: false } : e,
-        )
-        noteEntries = noteEntries.filter((e) => e.id !== entryId)
-      } else {
-        await dockApi.addToNote(entryId)
-        homeEntries = homeEntries.map((e) =>
-          e.id === entryId ? { ...e, inNote: true } : e,
-        )
-        noteEntries = noteEntries.map((e) =>
-          e.id === entryId ? { ...e, inNote: true } : e,
-        )
-        noteEntries = await dockApi.listEntries('note')
-      }
-    } catch (e) {
-      showToast(`${messages.toast.favoriteFailed}: ${formatError(e)}`, 'error')
-    }
-  }
-
-  async function updateText(id: string, content: string) {
-    try {
-      await dockApi.updateText(id, content)
-      homeEntries = homeEntries.map((e) =>
-        e.id === id ? { ...e, content } : e,
-      )
-      noteEntries = noteEntries.map((e) =>
-        e.id === id ? { ...e, content } : e,
-      )
-    } catch (e) {
-      showToast(`${messages.toast.editFailed}: ${formatError(e)}`, 'error')
-    }
-  }
-
-  async function renameEntry(id: string, title: string | null) {
-    try {
-      await dockApi.rename(id, title)
-      homeEntries = homeEntries.map((e) =>
-        e.id === id ? { ...e, title } : e,
-      )
-      noteEntries = noteEntries.map((e) =>
-        e.id === id ? { ...e, title } : e,
-      )
-    } catch (e) {
-      showToast(`${messages.toast.renameFailed}: ${formatError(e)}`, 'error')
-    }
-  }
-
-  async function copyContent(content: string) {
-    try {
-      await navigator.clipboard.writeText(content)
-      showToast(messages.toast.copied)
-    } catch {
-      showToast(messages.toast.copyFailed, 'error')
-    }
-  }
-
-  async function copyPath(path: string) {
-    try {
-      await navigator.clipboard.writeText(path)
-      showToast(messages.toast.copiedPath)
-    } catch {
-      showToast(messages.toast.copyFailed, 'error')
-    }
-  }
-
-  // --- Note handlers ---
-
-  async function createNoteText(content: string) {
-    try {
-      const created = await dockApi.createText('note', content, 'manual')
-      noteEntries = [{ ...created, inNote: true, inHome: false }, ...noteEntries]
-    } catch (e) {
-      showToast(`${messages.toast.createFailed}: ${formatError(e)}`, 'error')
-    }
-  }
-
-  function importNoteEntry(entry: DockEntry) {
-    noteEntries = [{ ...entry, inNote: true, inHome: false }, ...noteEntries]
-  }
-
-  // --- Preferences ---
-
-  let saveTimer: ReturnType<typeof setTimeout> | null = null
-
-  async function updatePreferences(next: DockPreferences) {
-    const prev = preferences
-    const prevLang = prev?.language ?? ''
-    preferences = next  // immediate visual effect via $effect
-    void broadcastPreferences(next).catch(() => {})
-
-    // Detect if language changed — apply immediately
-    if (prevLang && prevLang !== next.language) {
-      loadLocale(next.language)
-      langKey++
-    }
-
-    // Detect if system settings changed (need immediate save + OS sync)
-    const autostartChanged = prev?.launchOnStartup !== next.launchOnStartup
-
-    if (saveTimer) { clearTimeout(saveTimer); saveTimer = null }
-
-    if (autostartChanged) {
-      // Immediate save for system settings
-      try {
-        await dockApi.setPreferences(next)
-        // Sync autostart with OS
-        try {
-          const { enable, disable, isEnabled } = await import('@tauri-apps/plugin-autostart')
-          if (next.launchOnStartup) {
-            if (!(await isEnabled())) await enable()
-          } else {
-            if (await isEnabled()) await disable()
+      for (const c of event.changes)
+        if (c.operation === "deleted")
+          pendingDeleteIds = pendingDeleteIds.filter((id) => id !== c.id);
+      await refreshAll();
+    }).then((fn) => (disposed ? fn() : cleanups.push(fn)));
+    void onContentDeleteFailed(async (e) => {
+      pendingDeleteIds = pendingDeleteIds.filter((id) => id !== e.id);
+      await refreshAll();
+      notify("删除失败，内容已恢复", "error");
+    }).then((fn) => (disposed ? fn() : cleanups.push(fn)));
+    const focus = () =>
+      void browser.refreshIfStale().then((stale) => {
+        if (stale) return refreshSearch();
+      });
+    window.addEventListener("focus", focus);
+    window.addEventListener("paste", handlePaste);
+    cleanups.push(
+      () => window.removeEventListener("focus", focus),
+      () => window.removeEventListener("paste", handlePaste),
+    );
+    void import("@tauri-apps/api/window")
+      .then(async ({ getCurrentWindow }) => {
+        const un = await getCurrentWindow().onDragDropEvent((e: any) => {
+          if (e.payload.type === "enter") dragOverlay = true;
+          else if (e.payload.type === "leave") dragOverlay = false;
+          else if (e.payload.type === "drop") {
+            dragOverlay = false;
+            void importPaths(e.payload.paths);
           }
-        } catch {
-          // autostart plugin may not be available in dev
-        }
-      } catch (e) {
-        showToast(`${messages.toast.saveFailed}: ${formatError(e)}`, 'error')
-      }
-    } else {
-      // Debounce appearance/theme changes (300ms)
-      saveTimer = setTimeout(async () => {
-        try {
-          await dockApi.setPreferences(preferences!)
-        } catch (e) {
-          showToast(`${messages.toast.saveFailed}: ${formatError(e)}`, 'error')
-        }
-        saveTimer = null
-      }, 300)
-    }
+        });
+        if (disposed) un();
+        else cleanups.push(un);
+      })
+      .catch(() => {});
+    return () => {
+      disposed = true;
+      for (const c of cleanups) c();
+    };
+  });
+  onMount(() => {
+    const mq = window.matchMedia?.("(prefers-color-scheme: dark)");
+    if (!mq) return;
+    const h = (e: MediaQueryListEvent) => (systemDark = e.matches);
+    mq.addEventListener("change", h);
+    return () => mq.removeEventListener("change", h);
+  });
+  onDestroy(() => {
+    browser.dispose?.();
+    search.dispose();
+    if (toastTimer) clearTimeout(toastTimer);
+  });
+  $effect(() => {
+    if (!preferences) return;
+    const root = document.documentElement.style;
+    for (const [k, v] of Object.entries(
+      computeThemeTokens(preferences, systemDark),
+    ))
+      root.setProperty(k, v);
+    root.setProperty("--font-family-zh", preferences.fontFamilyZh);
+    root.setProperty("--font-family-en", preferences.fontFamilyEn);
+  });
+
+  async function navigate(scope: BrowseScope) {
+    currentView = scope;
+    lastScope = scope;
+    selectedDetail = null;
+    await browser.load(scope);
   }
-
-  // --- Merged entries for categories view ---
-  let allEntries = $derived.by(() => {
-    const seen = new Set<string>()
-    const result: DockEntry[] = []
-    for (const e of [...homeEntries, ...noteEntries]) {
-      if (!seen.has(e.id)) {
-        seen.add(e.id)
-        result.push(e)
-      }
-    }
-    return result
-  })
-
-  function deleteFromAnyView(entryId: string) {
-    const entry = allEntries.find((e) => e.id === entryId)
-    if (!entry) return
-    if (entry.inHome) deleteFromView('home', entryId)
-    if (entry.inNote) deleteFromView('note', entryId)
-  }
-
-  // --- Navigation ---
-
-  let prevView: DockView = 'home'
-
-  function navigate(view: DockView) {
-    if (view === 'settings' && currentView !== 'settings') {
-      prevView = currentView
-    }
-    currentView = view
-  }
-
   function toggleSettings() {
-    if (currentView === 'settings') {
-      currentView = prevView
-    } else {
-      prevView = currentView
-      currentView = 'settings'
-    }
+    currentView = currentView === "settings" ? lastScope : "settings";
   }
-
   async function minimize() {
     try {
-      await invoke('ipc_dock_minimize_to_tab')
+      const { getCurrentWindow } = await import("@tauri-apps/api/window");
+      await getCurrentWindow().hide();
     } catch (e) {
-      showToast(`${messages.toast.minimizeFailed}: ${formatError(e)}`, 'error')
+      notify(format(e), "error");
     }
   }
-
   async function openQuickAccess() {
-    if (quickAccessOpening) return
-    quickAccessOpening = true
+    if (quickAccessOpening) return;
+    quickAccessOpening = true;
     try {
-      await invoke('ipc_open_quick_access')
+      await import("@tauri-apps/api/core").then(({ invoke }) =>
+        invoke("ipc_quick_access_open"),
+      );
     } catch (e) {
-      showToast(`${messages.quickAccess.openFailed}: ${formatError(e)}`, 'error')
+      notify(format(e), "error");
     } finally {
-      quickAccessOpening = false
+      quickAccessOpening = false;
     }
   }
-
-  // --- Ctrl+click drag ---
-
-  let ctrlHeld = $state(false)
-  let dragOverlay = $state<{ active: boolean; count: number }>({ active: false, count: 0 })
-
-  let pasteConsumed = false
-
-  function handleKeyDown(e: KeyboardEvent) {
-    if (e.key === 'Control') ctrlHeld = true
-    if (e.ctrlKey && e.code === 'KeyV') {
-      const target = e.target as HTMLElement
-      if (target.closest('textarea, input')) return
-      pasteConsumed = false
-      setTimeout(() => {
-        if (!pasteConsumed) handleClipboardTextFallback()
-      }, 100)
+  async function select(id: string | null) {
+    if (searchState.query.trim()) search.select(id);
+    else browser.select(id);
+    if (!id) {
+      selectedDetail = null;
+      return;
     }
-  }
-
-  function handleKeyUp(e: KeyboardEvent) {
-    if (e.key === 'Control') ctrlHeld = false
-  }
-
-  // --- Global paste ---
-
-  async function handleGlobalPaste(event: ClipboardEvent) {
-    const target = event.target as HTMLElement
-    const inEditor = !!target.closest('textarea, input')
-
-    const items = Array.from(event.clipboardData?.items ?? [])
-    const files = Array.from(event.clipboardData?.files ?? [])
-    const imageItem = items.find((item) => item.type.startsWith('image/'))
-    const pastedText = event.clipboardData?.getData('text/plain')?.trim()
-
-    // Always handle images and files regardless of focus target
-    if (imageItem) {
-      event.preventDefault()
-      pasteConsumed = true
-      const blob = imageItem.getAsFile()
-      if (!blob) return
-      if (blob.size > MAX_BLOB_IMPORT_BYTES) {
-        const ok = await confirmLargeFile(`pasted-${Date.now()}.png`, blob.size)
-        if (!ok) return
-      }
-      try {
-        const view = currentView === 'note' ? 'note' : 'home'
-        const created = await dockApi.importImageBlob(blob, `pasted-${Date.now()}.png`, view)
-        if (view === 'note') {
-          noteEntries = [{ ...created, inNote: true, inHome: false }, ...noteEntries]
-        } else {
-          homeEntries = insertHomeEntry(homeEntries, { ...created, inHome: true })
-        }
-        showToast(messages.toast.storedImage)
-      } catch (e) {
-        showToast(`${messages.toast.pasteFailed}: ${formatError(e)}`, 'error')
-      }
-      return
-    }
-
-    // Handle files copied from Explorer (Ctrl+C file → Ctrl+V here)
-    if (files.length > 0) {
-      event.preventDefault()
-      pasteConsumed = true
-      try {
-        const view = currentView === 'note' ? 'note' : 'home'
-        let imported = 0
-
-        // 1. Try reading file paths from Windows clipboard (CF_HDROP)
-        let clipboardPaths: string[] = []
-        try { clipboardPaths = await dockApi.readClipboardFilePaths() } catch {}
-        if (clipboardPaths.length > 0) {
-          for (const path of clipboardPaths) {
-            const created = await dockApi.importFile(path, view)
-            if (view === 'note') {
-              noteEntries = [{ ...created, inNote: true, inHome: false }, ...noteEntries]
-            } else {
-              homeEntries = insertHomeEntry(homeEntries, { ...created, inHome: true })
-            }
-            imported++
-          }
-          showToast(messages.toast.storedFiles.replace('{n}', String(imported)))
-          return
-        }
-
-        // 2. Fallback: blob-based import with size guard
-        for (const file of files) {
-          const rawPath = (file as any).path as string | undefined
-          if (rawPath) {
-            const created = await dockApi.importFile(rawPath, view)
-            if (view === 'note') {
-              noteEntries = [{ ...created, inNote: true, inHome: false }, ...noteEntries]
-            } else {
-              homeEntries = insertHomeEntry(homeEntries, { ...created, inHome: true })
-            }
-            imported++
-            continue
-          }
-
-          if (file.size > MAX_BLOB_IMPORT_BYTES) {
-            const ok = await confirmLargeFile(file.name || messages.entry.unnamedFile, file.size)
-            if (!ok) continue
-          }
-
-          if (file.type.startsWith('image/')) {
-            const created = await dockApi.importImageBlob(file, file.name || `pasted-${Date.now()}.png`, view)
-            if (view === 'note') {
-              noteEntries = [{ ...created, inNote: true, inHome: false }, ...noteEntries]
-            } else {
-              homeEntries = insertHomeEntry(homeEntries, { ...created, inHome: true })
-            }
-          } else {
-            const created = await dockApi.importFileBlob(file, file.name || `file-${Date.now()}`, view)
-            if (view === 'note') {
-              noteEntries = [{ ...created, inNote: true, inHome: false }, ...noteEntries]
-            } else {
-              homeEntries = insertHomeEntry(homeEntries, { ...created, inHome: true })
-            }
-          }
-          imported++
-        }
-        if (imported > 0) {
-          showToast(messages.toast.storedFiles.replace('{n}', String(imported)))
-        }
-      } catch (e) {
-        showToast(`${messages.toast.importFailed}: ${formatError(e)}`, 'error')
-      }
-      return
-    }
-
-    // Only create text entries if not pasting into a textarea/input (normal input behavior)
-    if (pastedText && !inEditor) {
-      event.preventDefault()
-      pasteConsumed = true
-      try {
-        if (currentView === 'note') {
-          const created = await dockApi.createText('note', pastedText, 'manual')
-          noteEntries = [{ ...created, inNote: true, inHome: false }, ...noteEntries]
-        } else {
-          const created = await dockApi.createText('home', pastedText, 'manual')
-          homeEntries = insertHomeEntry(homeEntries, created)
-        }
-        showToast(messages.toast.storedText)
-      } catch (e) {
-        showToast(`${messages.toast.pasteFailed}: ${formatError(e)}`, 'error')
-      }
-    }
-  }
-
-  async function handleClipboardTextFallback() {
+    const request = ++detailRequest;
+    detailLoading = true;
     try {
-      const text = await navigator.clipboard.readText()
-      if (text?.trim()) {
-        if (currentView === 'note') {
-          const created = await dockApi.createText('note', text, 'manual')
-          noteEntries = [{ ...created, inNote: true, inHome: false }, ...noteEntries]
-        } else {
-          const created = await dockApi.createText('home', text, 'manual')
-          homeEntries = insertHomeEntry(homeEntries, created)
-        }
-        showToast(messages.toast.storedText)
-      }
-    } catch {
-      showToast(messages.toast.pasteFailed, 'error')
-    }
-  }
-
-  async function handleNativeFileDrop(paths: string[]) {
-    try {
-      const view: 'home' | 'note' = currentView === 'note' ? 'note' : 'home'
-      for (const path of paths) {
-        const created = await dockApi.importFile(path, view)
-        if (view === 'note') {
-          noteEntries = [{ ...created, inNote: true, inHome: false }, ...noteEntries]
-        } else {
-          homeEntries = insertHomeEntry(homeEntries, { ...created, inHome: true })
-        }
-      }
-      const fileNames = paths.map((p) => p.split(/[\\/]/).pop()).filter(Boolean)
-      if (paths.length === 1 && fileNames[0]) {
-        showToast(messages.toast.storedFileNamed.replace('{name}', fileNames[0]))
-      } else {
-        showToast(messages.toast.storedFiles.replace('{n}', String(paths.length)))
-      }
+      const detail = await contentApi.detail(id);
+      if (request === detailRequest) selectedDetail = detail;
     } catch (e) {
-      showToast(`${messages.toast.importFailed}: ${formatError(e)}`, 'error')
-    }
-  }
-
-
-  async function handleAppPointerDown(event: MouseEvent) {
-    if (!event.ctrlKey) return
-    event.preventDefault()
-    try {
-      const { getCurrentWindow } = await import('@tauri-apps/api/window')
-      await getCurrentWindow().startDragging()
-    } catch {}
-  }
-
-  function handleGlobalDragStart(event: DragEvent) {
-    if (ctrlHeld) {
-      event.preventDefault()
-    }
-  }
-
-  // --- Toast ---
-
-  function showToast(text: string, kind: 'success' | 'error' = 'success', undo?: () => void, actionLabel?: string) {
-    if (toastTimer) clearTimeout(toastTimer)
-    toast = { text, kind, undo, actionLabel }
-    toastTimer = setTimeout(() => {
-      toast = null
-    }, 3000)
-  }
-
-  function formatError(error: unknown): string {
-    if (error instanceof Error && error.message) return error.message
-    if (typeof error === 'string') return error
-    return messages.toast.unknownError
-  }
-
-  // --- Large file guard ---
-
-  const MAX_BLOB_IMPORT_BYTES = 100 * 1024 * 1024 // 100 MB
-
-  function formatSize(bytes: number): string {
-    if (bytes < 1024) return `${bytes} B`
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-    if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-    return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`
-  }
-
-  function confirmLargeFile(fileName: string, sizeBytes: number): Promise<boolean> {
-    return new Promise((resolve) => {
-      confirmDialog = {
-        message: messages.toast.largeFileWarn.replace('{name}', fileName).replace('{size}', formatSize(sizeBytes)),
-        confirmLabel: messages.toast.largeFileProceed,
-        cancelLabel: messages.toast.largeFileCancel,
-        onConfirm: () => { confirmDialog = null; resolve(true) },
-        onCancel: () => { confirmDialog = null; resolve(false) },
+      if (request === detailRequest) {
+        selectedDetail = null;
+        notify(`详情加载失败：${format(e)}`, "error");
       }
-    })
+    } finally {
+      if (request === detailRequest) detailLoading = false;
+    }
+  }
+  function doSearch(q: string) {
+    void search.search(q);
+  }
+  function clearSearch() {
+    void search.search("");
+  }
+  async function setKind(kind: ContentKind | null) {
+    search.setKinds(kind ? [kind] : []);
+    await browser.setKind(kind);
+    if (searchState.query.trim()) await search.search(searchState.query);
+  }
+  async function refreshSearch() {
+    if (searchState.query.trim()) await search.search(searchState.query);
+  }
+  async function refreshAll() {
+    await browser.refresh();
+    await refreshSearch();
+    if (selectedDetail) await reloadDetail(selectedDetail.summary.id);
+  }
+  async function reloadDetail(id: string) {
+    const request = ++detailRequest;
+    try {
+      const d = await contentApi.detail(id);
+      if (request === detailRequest) selectedDetail = d;
+    } catch {
+      if (request === detailRequest) selectedDetail = null;
+    }
+  }
+  async function toggleSaved(item: ContentSummary) {
+    try {
+      item.retention === "saved"
+        ? await contentApi.unsave(item.id)
+        : await contentApi.save(item.id);
+      await refreshAll();
+      notify(item.retention === "saved" ? "已取消收藏" : "已收藏");
+    } catch (e) {
+      notify(format(e), "error");
+    }
+  }
+  async function copySummary(item: ContentSummary) {
+    try {
+      const d = await contentApi.detail(item.id);
+      if (d.kind === "text") await navigator.clipboard.writeText(d.body);
+      else if (d.kind === "image" && d.available)
+        await dockApi.copyImage(d.assetPath);
+      else if (d.kind === "file" && d.available)
+        await dockApi.copyFile(d.assetPath);
+      else if (d.kind === "bookmark")
+        await navigator.clipboard.writeText(d.url);
+      else if (d.kind === "note") await navigator.clipboard.writeText(d.body);
+      else if (d.kind === "credential") {
+        const first = d.fields.find((f) => !f.isSensitive) ?? d.fields[0];
+        if (first) await navigator.clipboard.writeText(first.value);
+      }
+      notify("已复制");
+    } catch (e) {
+      notify(format(e), "error");
+    }
+  }
+  async function remove(item: ContentSummary) {
+    if (pendingDeleteIds.includes(item.id)) return;
+    pendingDeleteIds = [...pendingDeleteIds, item.id];
+    if (selectedDetail?.summary.id === item.id) selectedDetail = null;
+    try {
+      const token = await contentApi.delete(item.id);
+      notify("已删除", "success", async () => {
+        try {
+          await contentApi.restore(token.token);
+          pendingDeleteIds = pendingDeleteIds.filter((id) => id !== item.id);
+          await refreshAll();
+          notify("已恢复");
+        } catch (e) {
+          notify(`撤销失败：${format(e)}`, "error");
+        }
+      });
+    } catch (e) {
+      pendingDeleteIds = pendingDeleteIds.filter((id) => id !== item.id);
+      notify(`删除失败：${format(e)}`, "error");
+    }
+  }
+  async function saveText() {
+    const text = composeText.trim();
+    if (!text) return;
+    try {
+      await dockApi.createText("home", text, "manual");
+      composeOpen = false;
+      composeText = "";
+      notify("已收纳");
+      setTimeout(() => void refreshAll(), 0);
+    } catch (e) {
+      notify(format(e), "error");
+    }
+  }
+  async function handlePaste(e: ClipboardEvent) {
+    const target = e.target as HTMLElement;
+    if (target?.closest('input,textarea,[contenteditable="true"]')) return;
+    const files = [...(e.clipboardData?.files ?? [])];
+    const text = e.clipboardData?.getData("text/plain")?.trim();
+    if (files.length) {
+      e.preventDefault();
+      for (const f of files)
+        f.type.startsWith("image/")
+          ? await dockApi.importImageBlob(
+              f,
+              f.name || `pasted-${Date.now()}.png`,
+              "home",
+            )
+          : await dockApi.importFileBlob(
+              f,
+              f.name || `file-${Date.now()}`,
+              "home",
+            );
+      notify("已收纳");
+      setTimeout(() => void refreshAll(), 0);
+    } else if (text) {
+      e.preventDefault();
+      await dockApi.createText("home", text, "manual");
+      notify("已收纳");
+      setTimeout(() => void refreshAll(), 0);
+    }
+  }
+  async function importPaths(paths: string[]) {
+    try {
+      for (const p of paths) await dockApi.importFile(p, "home");
+      notify(`已收纳 ${paths.length} 个文件`);
+      setTimeout(() => void refreshAll(), 0);
+    } catch (e) {
+      notify(format(e), "error");
+    }
+  }
+  function notify(
+    text: string,
+    kind: "success" | "error" = "success",
+    undo?: () => void,
+  ) {
+    if (toastTimer) clearTimeout(toastTimer);
+    toast = { text, kind, undo };
+    toastTimer = setTimeout(() => (toast = null), 10000);
+  }
+  function format(e: unknown) {
+    return e instanceof Error
+      ? e.message
+      : typeof e === "string"
+        ? e
+        : "未知错误";
+  }
+  async function updatePreferences(next: DockPreferences) {
+    const previous = preferences?.language;
+    preferences = next;
+    void broadcastPreferences(next).catch(() => {});
+    if (previous !== next.language) loadLocale(next.language);
+    try {
+      await dockApi.setPreferences(next);
+    } catch (e) {
+      notify(format(e), "error");
+    }
   }
 </script>
 
-<!-- svelte-ignore a11y_no_static_element_interactions -->
-<svelte:window onkeydown={handleKeyDown} onkeyup={handleKeyUp} ondragstart={handleGlobalDragStart} />
-
-<!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="app-shell" class:ctrl-drag={ctrlHeld} onmousedown={handleAppPointerDown}>
-  {#key langKey}
-  <TopBar {currentView} onNavigate={navigate} onToggleSettings={toggleSettings} onMinimize={minimize} />
-
-  {#if currentView === 'home'}
-  <HomeView
-    entries={homeEntries}
-    onToggleCollapse={toggleCollapse}
-    onDeleteFromView={(id) => deleteFromView('home', id)}
-    onToggleNote={toggleNote}
-    onCreateText={createHomeText}
-    onImportEntry={importHomeEntry}
-    onUpdateText={updateText}
-    onRename={renameEntry}
-    onCopy={copyContent}
-    onCopyPath={copyPath}
-    onError={(m) => showToast(m, 'error')}
+<div class="app-shell">
+  <TopBar
+    {currentView}
+    onNavigate={navigate}
+    onToggleSettings={toggleSettings}
+    onMinimize={minimize}
+  />{#if currentView === "settings" && preferences}<SettingsView
+      {preferences}
+      onChange={updatePreferences}
+      onBack={() => (currentView = lastScope)}
+      {notify}
+    />{:else}<ContentWorkspace
+      browser={visibleBrowser}
+      search={visibleSearch}
+      {selectedDetail}
+      {detailLoading}
+      {pendingDeleteIds}
+      onSearch={doSearch}
+      onClearSearch={clearSearch}
+      onSelect={select}
+      onSetKind={setKind}
+      onReorder={(ids) => browser.reorder(ids)}
+      onToggleSaved={toggleSaved}
+      onCopy={copySummary}
+      onDelete={remove}
+      onCreateText={() => (composeOpen = true)}
+      onDetailChanged={async (id) => {
+        await refreshAll();
+        await select(id);
+      }}
+      onNotify={notify}
+    />{/if}<QuickAccessFab
+    onOpen={openQuickAccess}
+    disabled={quickAccessOpening}
   />
-{:else if currentView === 'categories'}
-  <CategoriesView
-    entries={allEntries}
-    onToggleCollapse={toggleCollapse}
-    onDeleteFromView={deleteFromAnyView}
-    onToggleNote={toggleNote}
-    onUpdateText={updateText}
-    onRename={renameEntry}
-    onCopy={copyContent}
-    onCopyPath={copyPath}
-    onError={(m) => showToast(m, 'error')}
-  />
-{:else if currentView === 'note'}
-  <NoteView
-    entries={noteEntries}
-    onToggleCollapse={toggleCollapse}
-    onDeleteFromView={(id) => deleteFromView('note', id)}
-    onToggleNote={toggleNote}
-    onCreateText={createNoteText}
-    onImportEntry={importNoteEntry}
-    onUpdateText={updateText}
-    onRename={renameEntry}
-    onCopy={copyContent}
-    onCopyPath={copyPath}
-    onError={(m) => showToast(m, 'error')}
-  />
-{:else if currentView === 'vault'}
-  <VaultView notify={showToast} />
-  {:else if currentView === 'settings' && preferences}
-  <SettingsView
-    preferences={preferences}
-    onChange={updatePreferences}
-    onBack={() => navigate('home')}
-    notify={showToast}
-  />
-  {/if}
-
-  <QuickAccessFab onOpen={openQuickAccess} disabled={quickAccessOpening} />
-  {/key}
-
-{#if toast}
-  <div class="toast" class:toast-error={toast.kind === 'error'}>
-    <span>{toast.text}</span>
-    {#if toast.undo}
-      <button class="toast-undo" onclick={toast.undo}>{toast.actionLabel || messages.toast.undo}</button>
-    {/if}
-  </div>
-{/if}
-
-{#if confirmDialog}
-  <div class="confirm-backdrop" onclick={confirmDialog.onCancel}>
-    <div class="confirm-dialog">
-      <p class="confirm-msg">{confirmDialog.message}</p>
-      <div class="confirm-actions">
-        <button class="confirm-btn cancel" onclick={confirmDialog.onCancel}>{confirmDialog.cancelLabel || messages.settings.restartLater}</button>
-        <button class="confirm-btn ok" onclick={confirmDialog.onConfirm}>{confirmDialog.confirmLabel || messages.settings.restartNow}</button>
+  {#if composeOpen}<div class="compose" role="dialog" aria-label="新建文本">
+      <textarea
+        bind:value={composeText}
+        placeholder="输入要收纳的内容"
+      ></textarea>
+      <div>
+        <button type="button" onclick={() => (composeOpen = false)}>取消</button
+        ><button type="button" onclick={saveText}>收纳</button>
       </div>
-    </div>
-  </div>
-{/if}
-
-{#if dragOverlay.active}
-  <div class="drag-overlay">
-    <div class="drag-overlay-content">
-      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-        <polyline points="7 10 12 15 17 10" />
-        <line x1="12" y1="15" x2="12" y2="3" />
-      </svg>
-      <span>{dragOverlay.count > 1 ? messages.toast.dragDropFiles.replace('{n}', String(dragOverlay.count)) : messages.toast.dragDropFile}</span>
-    </div>
-  </div>
-{/if}
+    </div>{/if}
+  {#if toast}<div
+      class="toast"
+      class:error={toast.kind === "error"}
+      role="status"
+    >
+      <span>{toast.text}</span>{#if toast.undo}<button
+          type="button"
+          onclick={toast.undo}>撤销</button
+        >{/if}
+    </div>{/if}{#if dragOverlay}<div class="drag-overlay">
+      松开即可收纳文件
+    </div>{/if}
 </div>
 
 <style>
   .app-shell {
+    box-sizing: border-box;
     width: 100vw;
     height: 100vh;
     min-width: 240px;
+    min-height: 180px;
     position: relative;
     display: flex;
     flex-direction: column;
+    overflow: hidden;
     background: var(--surface-0);
-    backdrop-filter: blur(24px);
+    color: var(--text-primary);
     border: 1px solid var(--border-emphasis);
-    box-shadow: var(--shadow-default);
+    font-family: var(--font-family-zh), var(--font-family-en), sans-serif;
   }
-
-  .app-shell :global(.home-body),
-  .app-shell :global(.note-body),
-  .app-shell :global(.categories-body),
-  .app-shell :global(.library-body),
-  .app-shell :global(.settings-body) {
-    padding-bottom: 4.25rem;
-  }
-
-  .ctrl-drag {
-    cursor: move !important;
-  }
-
-  .ctrl-drag :global(*) {
-    cursor: move !important;
-  }
-
   .toast {
     position: absolute;
-    bottom: 0.75rem;
     left: 50%;
-    transform: translateX(-50%);
-    background: var(--surface-2);
-    border: 1px solid color-mix(in srgb, var(--color-primary) 30%, transparent);
-    color: var(--color-primary);
-    padding: 0.35rem 0.6rem;
-    border-radius: 0.5rem;
-    font-size: 0.7rem;
-    white-space: nowrap;
+    bottom: 0.75rem;
     z-index: 110;
+    max-width: calc(100% - 1rem);
     display: flex;
     align-items: center;
     gap: 0.5rem;
-    animation: toast-in 0.2s ease-out;
+    padding: 0.45rem 0.7rem;
+    border: 1px solid var(--color-primary);
+    border-radius: 999px;
+    background: var(--surface-2);
+    color: var(--text-primary);
+    font-size: var(--font-sm);
+    transform: translateX(-50%);
+    box-shadow: var(--shadow-default);
   }
-
-  .toast-undo {
+  .toast.error {
+    border-color: var(--color-danger);
+  }
+  .toast button {
+    border: 0;
     background: none;
-    border: none;
     color: var(--color-primary);
-    font-weight: 600;
-    font-size: 0.7rem;
-    cursor: pointer;
-    padding: 0;
-    font-family: inherit;
+    font: inherit;
     text-decoration: underline;
+    cursor: pointer;
   }
-
-  .toast-undo:hover {
-    opacity: 0.85;
-  }
-
-  .toast-error {
-    border-color: color-mix(in srgb, var(--color-danger) 30%, transparent);
-    color: var(--color-danger);
-  }
-
-  @keyframes toast-in {
-    from {
-      opacity: 0;
-      transform: translateX(-50%) translateY(8px);
-    }
-    to {
-      opacity: 1;
-      transform: translateX(-50%) translateY(0);
-    }
-  }
-
-  .drag-overlay {
+  .compose {
     position: absolute;
-    inset: 0;
-    background: color-mix(in srgb, var(--surface-0) 85%, transparent);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 200;
-    border: 2px dashed color-mix(in srgb, var(--color-primary) 50%, transparent);
-    border-radius: var(--radius-lg, 0.5rem);
-  }
-
-  .drag-overlay-content {
+    inset: auto 0.6rem 0.6rem;
+    z-index: 100;
     display: flex;
     flex-direction: column;
-    align-items: center;
-    gap: 0.5rem;
-    color: var(--color-primary);
-    font-size: var(--font-sm, 0.75rem);
-    font-weight: 500;
-  }
-
-  .confirm-backdrop {
-    position: absolute;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.4);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 300;
-  }
-
-  .confirm-dialog {
-    background: var(--surface-0);
+    gap: 0.45rem;
+    padding: 0.6rem;
     border: 1px solid var(--border-emphasis);
-    border-radius: var(--radius-lg, 0.5rem);
-    padding: 1rem 1.1rem 0.8rem;
-    min-width: 220px;
-    max-width: 300px;
+    border-radius: var(--radius-lg);
+    background: var(--surface-1);
     box-shadow: var(--shadow-default);
-    backdrop-filter: blur(24px);
-    animation: dialog-in 0.15s ease-out;
   }
-
-  .confirm-msg {
-    margin: 0 0 0.8rem;
-    font-size: 0.8rem;
+  .compose textarea {
+    box-sizing: border-box;
+    width: 100%;
+    min-height: 7rem;
+    padding: 0.55rem;
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md);
+    background: var(--surface-0);
     color: var(--text-primary);
-    line-height: 1.5;
+    font: inherit;
+    resize: vertical;
   }
-
-  .confirm-actions {
+  .compose div {
     display: flex;
     justify-content: flex-end;
     gap: 0.4rem;
   }
-
-  .confirm-btn {
-    padding: 0.3rem 0.7rem;
-    border-radius: var(--radius-md, 0.35rem);
-    font-size: 0.72rem;
-    cursor: pointer;
-    font-family: inherit;
+  .compose button {
+    min-height: 2.2rem;
+    padding: 0.35rem 0.7rem;
     border: 1px solid var(--border-default);
-    transition: background 0.15s, border-color 0.15s;
-  }
-
-  .confirm-btn.cancel {
-    background: transparent;
-    color: var(--text-muted);
-  }
-
-  .confirm-btn.cancel:hover {
-    border-color: var(--border-emphasis);
+    border-radius: var(--radius-md);
+    background: var(--surface-2);
     color: var(--text-primary);
+    font: inherit;
   }
-
-  .confirm-btn.ok {
-    background: var(--color-primary-faint);
-    border-color: var(--color-primary);
-    color: var(--color-primary);
-    font-weight: 500;
+  .drag-overlay {
+    position: absolute;
+    inset: 0.5rem;
+    z-index: 120;
+    display: grid;
+    place-items: center;
+    border: 2px dashed var(--color-primary);
+    border-radius: var(--radius-lg);
+    background: color-mix(in srgb, var(--surface-0) 90%, transparent);
+    font-weight: 700;
   }
-
-  .confirm-btn.ok:hover {
-    opacity: 0.85;
-  }
-
-  @keyframes dialog-in {
-    from { opacity: 0; transform: scale(0.95); }
-    to { opacity: 1; transform: scale(1); }
+  @media (max-width: 260px) {
+    .toast {
+      bottom: 0.25rem;
+    }
+    .compose {
+      inset: 0.2rem;
+    }
+    .compose textarea {
+      min-height: 4rem;
+    }
   }
 </style>
