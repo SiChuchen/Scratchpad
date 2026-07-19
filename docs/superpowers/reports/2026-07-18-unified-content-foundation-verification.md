@@ -103,13 +103,26 @@ Reproducible command, run from src-tauri:
 The example requires the final output path not to exist. It creates a CSPRNG-
 named staging directory with exclusive `create_dir`, records an ownership token,
 opens both databases READ_WRITE|CREATE|EXCLUSIVE|NOFOLLOW, writes and validates
-only inside staging, then publishes with one directory rename. The failure guard
-acts only on a staging directory whose path, type, and ownership token still
-match. Cleanup removes only the known database/sidecar files and
-then performs a non-recursive directory removal, so an attacker-added link or
-sentinel is never traversed. Existing output directories and symlinks are
-rejected without touching their sentinels. SQLite file-byte determinism is not
-promised; logical fixture content is deterministic.
+only inside staging, removes the ownership marker, then publishes with one
+directory rename. The guard exists immediately after `create_dir`: before its
+marker is complete it removes only the exact partial marker created by this run
+and the now-empty directory; after marker completion it can clean the owned
+tree recursively. Injected owner-open, owner-write, and owner-remove failures
+leave no staging directory and never publish. Existing output directories and
+symlinks are rejected without touching their sentinels. Successful publication
+is permitted only when staging contains exactly the two databases plus the
+marker, so the final output contains exactly the two databases.
+
+The read-only verifier computes fixed per-table SHA-256 logical digests. Every
+query explicitly names every logical column and a stable `ORDER BY`; each SQLite
+NULL/integer/real/text/blob value is encoded with a type tag and unambiguous
+fixed-width or length-prefixed payload. Hard-coded legacy and fresh digests
+cover all Dock payload/membership tables, all Vault payload/field/tag/AI/capture
+tables, vault_fts, and, for fresh fixtures, the full catalog, content_fts,
+content_state, and the five pending-delete columns. Schema versions, exact
+pending-delete schema, foreign keys, retention, membership, privacy, and useful
+search assertions remain independent checks. SQLite file-byte determinism is
+not promised; logical fixture content is deterministic.
 
 Read-only validation output:
 
@@ -137,17 +150,20 @@ them.
 
 The example tests also inject a staging failure with a SQLite journal present;
 the owned staging tree is removed while an unrelated file and its hash/mtime are
-preserved. Separate regressions cover a competing output appearing immediately
-before publish, a pre-existing output directory, and a pre-existing output
-symlink/junction.
+preserved. Separate regressions cover owner initialization/removal failures, a
+competing output immediately before publish, pre-existing directory and
+symlink/junction outputs, and exact two-file publication.
 
 ## Final quality RED/GREEN
 
 The final audit found that the earlier verifier was primarily count-based, the
 pending-delete schema check accepted extra columns, idempotence omitted the
 vault_fts snapshot, and fixture publication wrote directly into the final
-directory. The new negative tests reject an added sixth pending-delete column
-and count-preserving catalog/membership swaps. Ownership, publish-race, output
+directory. The new negative tests independently reject an added sixth pending-
+delete column, a Dock payload-column change, Vault metadata/provider/timestamp
+changes, catalog identity and timestamp changes, a membership change, foreign-
+key corruption, and safe-text changes in either FTS table, even where counts
+remain unchanged. Ownership initialization, owner removal, publish race, output
 sentinel, full-snapshot atomicity, production-path privacy, and complete
 idempotence regressions are GREEN.
 
@@ -159,7 +175,7 @@ idempotence regressions are GREEN.
 | cargo test upgrade_preserves_all_legacy_payload_counts_and_membership | exit 0, 1 passed |
 | cargo test failed_projection_write_rolls_back_payload_and_revision | exit 0, 1 passed |
 | privacy boundary regression filter | exit 0, 1 passed |
-| cargo test --example create_validation_fixtures | exit 0; 7 passed |
+| cargo test --example create_validation_fixtures | exit 0; 18 passed |
 | fixture generation | exit 0; counts shown above |
 | fixture generation into the same directory | inner exit 1; hashes and mtimes unchanged |
 | two real fixture CLIs racing an absent output | exits 0/1; 2 output files; 0 staging leftovers |
