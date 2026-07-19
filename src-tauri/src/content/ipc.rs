@@ -11,7 +11,8 @@ use crate::content::catalog::{bump_revision, current_revision, summary_by_id};
 use crate::content::models::{
     BrowseScope, ContentChange, ContentChangedEvent, ContentDeleteFailedEvent, ContentDetail,
     ContentKind, ContentMutation, ContentOperation, ContentRevision, ContentSearchHit,
-    ContentSummary, DeleteUndoToken, UnifiedContentId, UnifiedQueryPlan,
+    ContentSummary, DeleteUndoToken, MainContentOpen, PlannedUnifiedSearch, UnifiedContentId,
+    UnifiedQueryPlan,
 };
 use crate::storage::error::{StorageError, StorageResult};
 use crate::AppState;
@@ -797,6 +798,53 @@ pub(crate) fn ipc_content_search_local(
     .map_err(ipc_error)
 }
 
+pub(crate) fn adapt_vault_plan(
+    planned: crate::vault::models::PlannedSearch,
+) -> PlannedUnifiedSearch {
+    PlannedUnifiedSearch {
+        plan: UnifiedQueryPlan {
+            kinds: Vec::new(),
+            keywords: planned.plan.keywords,
+            aliases: planned.plan.aliases,
+            date_from: planned.plan.date_from,
+            date_to: planned.plan.date_to,
+        },
+        understood_terms: planned.understood_terms,
+        audit: planned.audit,
+    }
+}
+
+#[tauri::command]
+pub(crate) async fn ipc_content_plan_search(
+    app: tauri::AppHandle,
+    query: String,
+    request_id: String,
+) -> Result<PlannedUnifiedSearch, String> {
+    let planned = crate::vault::ipc::search::plan_search_redacted(&app, query, request_id).await?;
+    Ok(adapt_vault_plan(planned))
+}
+
+#[tauri::command]
+pub(crate) fn ipc_content_cancel_search(
+    app: tauri::AppHandle,
+    request_id: String,
+) -> Result<(), String> {
+    crate::vault::ipc::search::cancel_search(&app.state(), &request_id);
+    Ok(())
+}
+
+#[tauri::command]
+pub(crate) fn ipc_open_main_content(app: tauri::AppHandle, id: String) -> Result<(), String> {
+    let payload = MainContentOpen::new(&id)?;
+    let window = app
+        .get_webview_window("main")
+        .ok_or_else(|| "main window is unavailable".to_string())?;
+    window.show().map_err(|error| error.to_string())?;
+    window.set_focus().map_err(|error| error.to_string())?;
+    app.emit("main-open-content", payload)
+        .map_err(|error| error.to_string())
+}
+
 #[tauri::command]
 pub(crate) fn ipc_content_update_text<R: tauri::Runtime>(
     state: tauri::State<AppState>,
@@ -928,6 +976,42 @@ mod tests {
     use tauri::Listener;
 
     use super::*;
+    use crate::vault::models::{AiQueryPlan, AiRequestAudit, EntryKind, PlannedSearch};
+
+    #[test]
+    fn unified_plan_uses_terms_and_dates_without_narrowing_legacy_kinds() {
+        let legacy = PlannedSearch {
+            plan: AiQueryPlan {
+                kinds: vec![EntryKind::Note],
+                keywords: vec!["部署".into()],
+                aliases: vec!["release".into()],
+                date_from: Some("2026-07-01".into()),
+                date_to: None,
+            },
+            understood_terms: vec!["部署".into(), "release".into()],
+            audit: AiRequestAudit {
+                provider_id: "test".into(),
+                model: "test-model".into(),
+                sent_at: "2026-07-18T00:00:00Z".into(),
+                messages: Vec::new(),
+            },
+        };
+
+        let unified = adapt_vault_plan(legacy);
+        assert!(unified.plan.kinds.is_empty());
+        assert_eq!(unified.plan.keywords, vec!["部署"]);
+        assert_eq!(unified.plan.aliases, vec!["release"]);
+        assert_eq!(unified.plan.date_from.as_deref(), Some("2026-07-01"));
+        assert_eq!(unified.understood_terms, vec!["部署", "release"]);
+        assert_eq!(unified.audit.provider_id, "test");
+    }
+
+    #[test]
+    fn main_content_open_payload_requires_a_valid_unified_id() {
+        assert!(MainContentOpen::new("dock:de-1").is_ok());
+        assert!(MainContentOpen::new("vault:ve-1").is_ok());
+        assert!(MainContentOpen::new("ve-1").is_err());
+    }
     use crate::content::catalog::current_revision;
     use crate::content::models::{ContentChange, ContentMutation, ContentOperation};
     use crate::content::projection::tests::fixture_with_all_kinds;
@@ -1365,6 +1449,9 @@ mod tests {
             "content::ipc::ipc_content_list",
             "content::ipc::ipc_content_detail",
             "content::ipc::ipc_content_search_local",
+            "content::ipc::ipc_content_plan_search",
+            "content::ipc::ipc_content_cancel_search",
+            "content::ipc::ipc_open_main_content",
             "content::ipc::ipc_content_update_text",
             "content::ipc::ipc_content_rename",
             "content::ipc::ipc_content_update_structured",

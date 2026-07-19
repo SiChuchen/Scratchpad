@@ -61,6 +61,14 @@ pub async fn ipc_vault_plan_search(
     query: String,
     request_id: String,
 ) -> Result<PlannedSearch, String> {
+    plan_search_redacted(&app, query, request_id).await
+}
+
+pub(crate) async fn plan_search_redacted(
+    app: &AppHandle,
+    query: String,
+    request_id: String,
+) -> Result<PlannedSearch, String> {
     let vault_state = app.state::<VaultRuntimeState>();
 
     // 1) 注册新 active search，并取出旧 token（如果 ID 不同则取消）
@@ -178,18 +186,22 @@ pub async fn ipc_vault_cancel_search(
     vault: State<'_, VaultRuntimeState>,
     request_id: String,
 ) -> Result<(), String> {
+    cancel_search(&vault, &request_id);
+    Ok(())
+}
+
+pub(crate) fn cancel_search(vault: &VaultRuntimeState, request_id: &str) {
     // 只在 ID 匹配时取消；不匹配（迟到 cleanup）则忽略。
     let token_opt = vault.active_search_token();
     if let Some(token) = token_opt {
         // 读 ID 前先看是否匹配；通过 set/clear 完成原子操作
         // 这里采用：拿当前 token，对比 ID，匹配则 cancel + clear
-        let current_id_matches = vault.active_search_id_matches(&request_id);
+        let current_id_matches = vault.active_search_id_matches(request_id);
         if current_id_matches {
             token.cancel();
-            vault.clear_active_search(&request_id);
+            vault.clear_active_search(request_id);
         }
     }
-    Ok(())
 }
 
 /// 构造降级返回：空 plan + 占位 audit。
@@ -222,6 +234,21 @@ mod tests {
     use super::*;
     use crate::scratchpad::storage::ensure_dock_schema;
     use rusqlite::Connection;
+
+    #[test]
+    fn planning_request_contains_query_but_never_catalog_content() {
+        let messages = query_plan_prompt("找生产数据库", "2026-07-18T00:00:00Z");
+        let audit = build_request_audit("test", "test-model", &messages);
+        let sent = audit
+            .messages
+            .iter()
+            .map(|message| message.content.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(sent.contains("找生产数据库"));
+        assert!(!sent.contains("NeverSendCatalogFixture"));
+    }
 
     fn open_db() -> Connection {
         let mut conn = Connection::open_in_memory().unwrap();
@@ -269,23 +296,16 @@ mod tests {
         let token_clone = token.clone();
         runtime.set_active_search("active-req".into(), token);
 
-        // 模拟 ipc_vault_cancel_search("stale-req")：
-        // 不应取消 active 的 token。
-        let stale_id = "stale-req".to_string();
-        if runtime.active_search_id_matches(&stale_id) {
-            token_clone.cancel();
-        }
+        // 迟到的 cleanup 不应取消当前请求。
+        cancel_search(&runtime, "stale-req");
         assert!(
             !token_clone.is_cancelled(),
             "stale cancel must not affect active"
         );
 
-        // 真正匹配的 cancel 才生效
-        let active_id = "active-req".to_string();
-        if runtime.active_search_id_matches(&active_id) {
-            token_clone.cancel();
-        }
+        cancel_search(&runtime, "active-req");
         assert!(token_clone.is_cancelled());
+        assert!(!runtime.active_search_id_matches("active-req"));
     }
 
     // ---- 降级路径 --------------------------------------------------------

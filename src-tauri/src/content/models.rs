@@ -267,6 +267,27 @@ pub struct UnifiedQueryPlan {
     pub date_to: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlannedUnifiedSearch {
+    pub plan: UnifiedQueryPlan,
+    pub understood_terms: Vec<String>,
+    pub audit: crate::vault::models::AiRequestAudit,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MainContentOpen {
+    pub id: String,
+}
+
+impl MainContentOpen {
+    pub fn new(id: &str) -> Result<Self, String> {
+        UnifiedContentId::parse(id)?;
+        Ok(Self { id: id.to_string() })
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ContentChange {
