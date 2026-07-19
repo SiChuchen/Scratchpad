@@ -94,4 +94,16 @@ describe('unified quick search',()=>{
     if (summary.kind === 'image') expect(m.copyImage).toHaveBeenCalled()
     if (summary.kind === 'file') expect(m.copyFile).toHaveBeenCalled()
   })
+
+  it('delegates management to the unified handoff command', async () => {
+    const summary = allKindSummaries.find((item) => item.kind === 'credential')!
+    m.searchLocal.mockResolvedValue([hit(summary)])
+    m.detail.mockResolvedValue(fixtureDetail(summary))
+    render(SearchMode, { notify: vi.fn(), autoHybridSearch: false })
+    await fireEvent.input(screen.getByRole('searchbox'), { target: { value: 'manage' } })
+    await vi.advanceTimersByTimeAsync(300)
+    await Promise.resolve()
+    await fireEvent.click(screen.getByRole('button', { name: '在主窗口管理' }))
+    expect(m.openInMain).toHaveBeenCalledWith(summary.id)
+  })
 })
