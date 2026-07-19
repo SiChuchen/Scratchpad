@@ -6,6 +6,7 @@ import type {
   ContentDeleteFailedEvent,
   ContentDetail,
   ContentKind,
+  PlannedUnifiedSearch,
   ContentRevision,
   ContentSearchHit,
   ContentSummary,
@@ -63,6 +64,14 @@ export const contentApi = {
       plan,
       limit: limit ?? null,
     });
+  },
+
+  planSearch(query: string, requestId: string): Promise<PlannedUnifiedSearch> {
+    return invoke<PlannedUnifiedSearch>("ipc_content_plan_search", { query, requestId });
+  },
+
+  cancelPlan(requestId: string): Promise<void> {
+    return invoke<void>("ipc_content_cancel_search", { requestId });
   },
 
   save(id: string): Promise<ContentSummary> {

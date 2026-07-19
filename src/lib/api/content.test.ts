@@ -365,6 +365,20 @@ describe("contentApi", () => {
       limit: null,
     });
   });
+
+  it("forwards unified planning and cancellation request ids", async () => {
+    const planned = {
+      plan: { kinds: [], keywords: ["prod"], aliases: [], dateFrom: null, dateTo: null },
+      understoodTerms: ["prod"],
+      audit: { providerId: "dummy", model: "dummy-model", sentAt: "", messages: [] },
+    };
+    mockedInvoke.mockResolvedValueOnce(planned).mockResolvedValueOnce(undefined);
+
+    await expect(contentApi.planSearch("production", "content-search-1")).resolves.toBe(planned);
+    expect(mockedInvoke).toHaveBeenNthCalledWith(1, "ipc_content_plan_search", { query: "production", requestId: "content-search-1" });
+    await contentApi.cancelPlan("content-search-1");
+    expect(mockedInvoke).toHaveBeenNthCalledWith(2, "ipc_content_cancel_search", { requestId: "content-search-1" });
+  });
 });
 
 describe("content events", () => {

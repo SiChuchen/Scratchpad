@@ -126,6 +126,24 @@ export interface UnifiedQueryPlan {
   dateTo: string | null;
 }
 
+export interface ContentAuditMessage {
+  role: string;
+  content: string;
+}
+
+export interface ContentSearchAudit {
+  providerId: string;
+  model: string;
+  sentAt: string;
+  messages: ContentAuditMessage[];
+}
+
+export interface PlannedUnifiedSearch {
+  plan: UnifiedQueryPlan;
+  understoodTerms: string[];
+  audit: ContentSearchAudit;
+}
+
 export interface ContentChange {
   id: string;
   operation: ContentOperation;
