@@ -163,6 +163,27 @@ async function typeRawText(text: string) {
 // ---- Tests ----------------------------------------------------------------
 
 describe('CaptureMode', () => {
+  it('returns a namespaced saved id and clears only after persistence succeeds', async () => {
+    vi.useFakeTimers()
+    configureAISetup(CONFIGURED, AI_SETTINGS_OFF)
+    mockVaultApi.parseCaptureLocal.mockResolvedValue(baseDraft({ title: '生产数据库' }))
+    mockVaultApi.createFromCapture.mockResolvedValue(detail('saved-namespace'))
+    const onSaved = vi.fn()
+    render(CaptureMode, {
+      notify: vi.fn(),
+      aiConfigured: true,
+      autoEnrich: false,
+      onSaved,
+      onOpenSettings: vi.fn(),
+    })
+    await vi.advanceTimersByTimeAsync(0)
+    await typeRawText('database credentials')
+    await vi.advanceTimersByTimeAsync(LOCAL_PARSE_DELAY_MS)
+    await fireEvent.click(screen.getByRole('button', { name: /保存到资料库/ }))
+    await vi.advanceTimersByTimeAsync(0)
+    expect(onSaved).toHaveBeenCalledWith('vault:saved-namespace')
+    expect(screen.getByPlaceholderText('粘贴或输入要保存的内容')).toHaveValue('')
+  })
   beforeEach(() => {
     vi.useFakeTimers()
   })

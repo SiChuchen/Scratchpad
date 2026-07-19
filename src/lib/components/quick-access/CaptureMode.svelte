@@ -26,7 +26,6 @@
     CaptureDraft,
     CaptureEnrichment,
     EntryKind,
-    VaultEntryDetail,
   } from '$lib/types/vault'
 
   interface Props {
@@ -40,7 +39,7 @@
     aiConfigured?: boolean
     /** AI 自动整理开关（来自 QuickAccessApp 重读）。 */
     autoEnrich?: boolean
-    onSaved?: (entry: VaultEntryDetail) => void
+    onSaved?: (id: string) => void
     onOpenSettings?: () => void
   }
 
@@ -329,7 +328,7 @@
     try {
       const entry = await vaultApi.createFromCapture(draft, requestId)
       notify(messages.quickAccess.saved, 'success')
-      onSaved?.(entry)
+      onSaved?.(`vault:${entry.entry.id}`)
       // Rotate session and reset state.
       requestId = controller.startSession()
       rawText = ''

@@ -18,6 +18,11 @@ const mocks = vi.hoisted(() => ({
   cancelSearch: vi.fn(),
   getEntry: vi.fn(),
   copyText: vi.fn(),
+  contentRevision: vi.fn(),
+  contentSearchLocal: vi.fn(),
+  contentDetail: vi.fn(),
+  contentPlanSearch: vi.fn(),
+  contentCancelPlan: vi.fn(),
 }))
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: mocks.invoke }))
@@ -39,6 +44,19 @@ vi.mock('$lib/api/vault', () => ({
     cancelSearch: mocks.cancelSearch,
     getEntry: mocks.getEntry,
     copyText: mocks.copyText,
+  },
+}))
+vi.mock('$lib/api/content', () => ({
+  contentApi: {
+    revision: mocks.contentRevision,
+    searchLocal: mocks.contentSearchLocal,
+    detail: mocks.contentDetail,
+    planSearch: mocks.contentPlanSearch,
+    cancelPlan: mocks.contentCancelPlan,
+  },
+  onContentChanged: async (handler: (event: unknown) => void) => {
+    mocks.listeners.set('content-changed', ({ payload }) => handler(payload))
+    return vi.fn()
   },
 }))
 
@@ -109,6 +127,11 @@ beforeEach(() => {
   mocks.cancelSearch.mockResolvedValue(undefined)
   mocks.getEntry.mockResolvedValue(null)
   mocks.copyText.mockResolvedValue(undefined)
+  mocks.contentRevision.mockResolvedValue({ revision: 0 })
+  mocks.contentSearchLocal.mockResolvedValue([])
+  mocks.contentDetail.mockResolvedValue(null)
+  mocks.contentPlanSearch.mockResolvedValue(null)
+  mocks.contentCancelPlan.mockResolvedValue(undefined)
   mocks.invoke.mockImplementation(async (command: string) => {
     if (command === 'ipc_preferences_get') return preferences()
     return undefined
@@ -121,6 +144,38 @@ afterEach(() => {
 })
 
 describe('QuickAccessApp', () => {
+  it('repairs an active search when a newer revision is observed on show', async () => {
+    vi.useFakeTimers()
+    render(QuickAccessApp)
+    await vi.advanceTimersByTimeAsync(0)
+    await fireEvent.click(screen.getByRole('tab', { name: '搜索' }))
+    await fireEvent.input(screen.getByRole('searchbox'), { target: { value: '数据库' } })
+    await vi.advanceTimersByTimeAsync(300)
+    expect(mocks.contentSearchLocal).toHaveBeenCalledTimes(1)
+
+    mocks.contentRevision.mockResolvedValueOnce({ revision: 8 })
+    mocks.listeners.get('quick-access-focus-input')?.({ payload: undefined })
+    await vi.advanceTimersByTimeAsync(0)
+    await vi.advanceTimersByTimeAsync(300)
+
+    expect(mocks.contentRevision).toHaveBeenCalled()
+    expect(mocks.contentSearchLocal).toHaveBeenCalledTimes(2)
+    vi.useRealTimers()
+  })
+
+  it('keeps record draft and search query independent across show events', async () => {
+    render(QuickAccessApp)
+    const record = await screen.findByPlaceholderText('粘贴或输入要保存的内容')
+    await fireEvent.input(record, { target: { value: 'draft text' } })
+    await fireEvent.click(screen.getByRole('tab', { name: '搜索' }))
+    await fireEvent.input(screen.getByRole('searchbox'), { target: { value: 'query text' } })
+    mocks.listeners.get('quick-access-focus-input')?.({ payload: undefined })
+    await fireEvent.click(screen.getByRole('tab', { name: '记录' }))
+    expect(screen.getByPlaceholderText('粘贴或输入要保存的内容')).toHaveValue('draft text')
+    await fireEvent.click(screen.getByRole('tab', { name: '搜索' }))
+    expect(screen.getByRole('searchbox')).toHaveValue('query text')
+  })
+
   it('reads and toggles the actual Quick Access pin state', async () => {
     render(QuickAccessApp)
     const pin = await screen.findByRole('button', { name: '取消置顶' })

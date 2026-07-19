@@ -13,6 +13,7 @@
   import { listen, type UnlistenFn } from '@tauri-apps/api/event'
   import { getCurrentWindow } from '@tauri-apps/api/window'
   import { invoke } from '@tauri-apps/api/core'
+  import { contentApi, onContentChanged } from '$lib/api/content'
 
   import { computeThemeTokens } from '$lib/themes/engine'
   import { loadLocale, detectLanguage, messages } from '$lib/i18n'
@@ -23,7 +24,6 @@
   import CaptureMode from '$lib/components/quick-access/CaptureMode.svelte'
   import QuickAccessWindowBar from '$lib/components/quick-access/QuickAccessWindowBar.svelte'
   import SearchMode from '$lib/components/quick-access/SearchMode.svelte'
-  import type { VaultEntryDetail } from '$lib/types/vault'
 
   const win = getCurrentWindow()
 
@@ -41,6 +41,8 @@
   let autoEnrich = $state(true)
   let pinned = $state(true)
   let pinPending = $state(false)
+  let contentRevision = $state(0)
+  let searchRefreshToken = $state(0)
 
   // Inline toast notification (simple ephemeral banner).
   let noticeText = $state('')
@@ -61,9 +63,20 @@
     }, kind === 'error' ? 6000 : 3000)
   }
 
-  function onCaptureSaved(_entry: VaultEntryDetail) {
-    // Future Task 17 / 18 could route this to a recent-entries list.
-    // For now we just rely on the success notification.
+  async function repairContentIfStale(): Promise<void> {
+    try {
+      const latest = await contentApi.revision()
+      if (latest.revision <= contentRevision) return
+      contentRevision = latest.revision
+      searchRefreshToken += 1
+    } catch {
+      notify(messages.workspace.notices.refreshFailed, 'error')
+    }
+  }
+
+  function onCaptureSaved(_id: string) {
+    notify(messages.workspace.notices.saved, 'success')
+    void repairContentIfStale()
   }
 
   function applyPreferences(next: DockPreferences) {
@@ -141,6 +154,15 @@
         // 关键：每次呼出都重读 AI 配置 — 用户可能在主窗口刚保存配置，
         // 否则 quick-access 持续使用首次挂载时的 stale 快照（"成功但没整理"）。
         void reloadAiState()
+        void repairContentIfStale()
+      }),
+    )
+
+    unlisteners.push(
+      await onContentChanged((event) => {
+        if (event.revision <= contentRevision) return
+        contentRevision = event.revision
+        searchRefreshToken += 1
       }),
     )
 
@@ -321,6 +343,7 @@
     <SearchMode
       {notify}
       resetToken={sensitiveResetToken}
+      refreshToken={searchRefreshToken}
       autoHybridSearch={autoHybridSearch}
     />
   </div>
