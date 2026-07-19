@@ -236,6 +236,13 @@ describe("contentApi", () => {
   } satisfies VaultEntryInput;
   const methodCases = [
     {
+      label: "open in main",
+      call: () => contentApi.openInMain("vault:credential-1"),
+      command: "ipc_open_main_content",
+      args: { id: "vault:credential-1" },
+      result: undefined,
+    },
+    {
       label: "revision",
       call: () => contentApi.revision(),
       command: "ipc_content_revision",

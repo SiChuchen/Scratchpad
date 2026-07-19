@@ -149,8 +149,8 @@
     window.open(url.href, '_blank', 'noopener,noreferrer')
   }
 
-  async function manageInMain(_id: string): Promise<void> {
-    notify(messages.quickAccess.manageInMain)
+  async function manageInMain(id: string): Promise<void> {
+    await contentApi.openInMain(id)
   }
 
   const statusText = $derived.by(() => {

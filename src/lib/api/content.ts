@@ -16,6 +16,10 @@ import type {
 import type { VaultEntryInput } from "$lib/types/vault";
 
 export const contentApi = {
+  openInMain(id: string): Promise<void> {
+    return invoke<void>("ipc_open_main_content", { id });
+  },
+
   revision(): Promise<ContentRevision> {
     return invoke<ContentRevision>("ipc_content_revision");
   },
@@ -94,6 +98,14 @@ export const contentApi = {
     return invoke<ContentSummary>("ipc_content_restore", { token });
   },
 };
+
+export function onMainContentOpen(
+  callback: (event: { id: string }) => void,
+): Promise<UnlistenFn> {
+  return listen<{ id: string }>("main-open-content", (event) =>
+    callback(event.payload),
+  );
+}
 
 export function onContentChanged(
   callback: (event: ContentChangedEvent) => void,

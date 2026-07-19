@@ -36,6 +36,7 @@ export interface LocaleMessages {
     reveal: string
     hide: string
     notices: { saved:string; unsaved:string; deleted:string; deleteFailedRestored:string; undoExpired:string; copyFailed:string; refreshFailed:string }
+    contentMissing: string
   }
   nav: {
     home: string

@@ -8,6 +8,7 @@
     contentApi,
     onContentChanged,
     onContentDeleteFailed,
+    onMainContentOpen,
   } from "$lib/api/content";
   import { dockApi } from "$lib/api/dock";
   import {
@@ -120,6 +121,9 @@
       await refreshAll();
       notify("删除失败，内容已恢复", "error");
     }).then((fn) => (disposed ? fn() : cleanups.push(fn)));
+    void onMainContentOpen(({ id }) => {
+      void openRequestedContent(id);
+    }).then((fn) => (disposed ? fn() : cleanups.push(fn)));
     const focus = () =>
       void browser.refreshIfStale().then((stale) => {
         if (stale) return refreshSearch();
@@ -177,6 +181,19 @@
     lastScope = scope;
     selectedDetail = null;
     await browser.load(scope);
+  }
+  async function openRequestedContent(id: string): Promise<void> {
+    currentView = "all";
+    lastScope = "all";
+    await search.search("");
+    await browser.load("all", null);
+    if (!browser.snapshot.items.some((item) => item.id === id)) {
+      selectedDetail = null;
+      notify(messages.workspace.contentMissing, "error");
+      return;
+    }
+    browser.select(id);
+    await select(id);
   }
   function toggleSettings() {
     currentView = currentView === "settings" ? lastScope : "settings";
