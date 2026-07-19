@@ -1,6 +1,6 @@
 [package]
 name = "soma-scratchpad"
-version = "0.5.1"
+version = "0.6.0"
 description = "Soma Scratchpad"
 edition = "2021"
 
