@@ -1,0 +1,12 @@
+<script lang="ts">
+  import type { ContentKind } from '$lib/types/content'
+  interface Props { query:string; selectedKind:ContentKind|null; searching?:boolean; onSearch:(q:string)=>void; onClear:()=>void; onSetKind:(kind:ContentKind|null)=>void }
+  let {query,selectedKind,searching=false,onSearch,onClear,onSetKind}:Props=$props()
+  const kinds:[ContentKind|null,string][]=[[null,'全部类型'],['text','文本'],['image','图片'],['file','文件'],['credential','凭据'],['bookmark','书签'],['note','笔记']]
+  function keydown(e:KeyboardEvent){if(e.key==='Escape'&&query){e.preventDefault();onClear()}}
+</script>
+<div class="search-row">
+  <div class="input-wrap"><span aria-hidden="true">⌕</span><input type="search" value={query} aria-label="搜索全部内容" placeholder="搜索全部内容" oninput={(e)=>onSearch(e.currentTarget.value)} onkeydown={keydown}/>{#if query}<button type="button" aria-label="清除搜索" onclick={onClear}>×</button>{/if}{#if searching}<span class="busy" role="status">搜索中</span>{/if}</div>
+  <div class="chips" aria-label="内容类型">{#each kinds as [kind,label]}<button type="button" class:active={selectedKind===kind} aria-pressed={selectedKind===kind} onclick={()=>onSetKind(kind)}>{label}</button>{/each}</div>
+</div>
+<style>.search-row{position:sticky;top:0;z-index:5;display:flex;flex-direction:column;gap:.35rem;padding:.45rem .55rem;border-bottom:1px solid var(--border-subtle);background:var(--surface-0)}.input-wrap{height:2.35rem;display:flex;align-items:center;gap:.35rem;padding:0 .5rem;border:1px solid var(--border-default);border-radius:999px;background:var(--surface-1)}input{min-width:0;flex:1;border:0;outline:0;background:transparent;color:var(--text-primary);font:inherit;font-size:max(var(--font-md,.82rem),.82rem)}.input-wrap button{width:1.8rem;height:1.8rem;border:0;border-radius:50%;background:var(--surface-2);color:var(--text-primary);cursor:pointer}.busy{font-size:var(--font-xs);color:var(--text-muted)}.chips{display:flex;gap:.25rem;overflow-x:auto;scrollbar-width:none}.chips button{flex:0 0 auto;min-height:1.8rem;padding:.2rem .55rem;border:1px solid var(--border-subtle);border-radius:999px;background:var(--surface-1);color:var(--text-muted);font:inherit;font-size:var(--font-xs,.65rem);cursor:pointer}.chips button.active{border-color:var(--color-primary);color:var(--color-primary);background:color-mix(in srgb,var(--color-primary) 10%,var(--surface-1))}button:focus-visible,input:focus-visible{outline:2px solid var(--color-primary);outline-offset:2px}</style>
