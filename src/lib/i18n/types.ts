@@ -9,6 +9,32 @@ export interface LocaleMessages {
     unsave: string
     delete: string
     undo: string
+    allKinds: string
+    copy: string
+    copied: string
+    temporary: string
+    savedLabel: string
+    cleanupUntil: string
+    clearSearch: string
+    searching: string
+    kindFilter: string
+    results: string
+    pasteHint: string
+    noResults: string
+    noContent: string
+    loadingDetail: string
+    back: string
+    edit: string
+    rename: string
+    cancel: string
+    unavailableImage: string
+    unavailableFile: string
+    usefulInformation: string
+    notes: string
+    tags: string
+    openLink: string
+    reveal: string
+    hide: string
   }
   nav: {
     home: string

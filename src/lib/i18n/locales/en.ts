@@ -1,7 +1,7 @@
 import type { LocaleMessages } from '../types'
 
 const en: LocaleMessages = {
-  workspace: { scope: { temporary: 'Inbox', all: 'All', saved: 'Saved' }, kind: { text:'Text',image:'Image',file:'File',credential:'Credential',bookmark:'Bookmark',note:'Note' }, searchPlaceholder:'Search all content',temporaryRetention:'Temporary content is cleaned up according to settings',createText:'New text',save:'Save',unsave:'Remove from saved',delete:'Delete',undo:'Undo' },
+  workspace: { scope: { temporary: 'Inbox', all: 'All', saved: 'Saved' }, kind: { text:'Text',image:'Image',file:'File',credential:'Credential',bookmark:'Bookmark',note:'Note' }, searchPlaceholder:'Search all content',temporaryRetention:'Temporary content is cleaned up according to settings',createText:'New text',save:'Save',unsave:'Remove from saved',delete:'Delete',undo:'Undo',allKinds:'All types',copy:'Copy',copied:'Copied',temporary:'Temporary',savedLabel:'Saved',cleanupUntil:'Keep until',clearSearch:'Clear search',searching:'Searching',kindFilter:'Content type',results:'results',pasteHint:'You can also paste or drop files',noResults:'No matching content',noContent:'No content yet',loadingDetail:'Loading details…',back:'Back',edit:'Edit',rename:'Rename',cancel:'Cancel',unavailableImage:'Image unavailable',unavailableFile:'File unavailable',usefulInformation:'Information to use',notes:'Notes',tags:'Tags',openLink:'Open link',reveal:'Reveal',hide:'Hide' },
   nav: {
     home: 'Dock',
     all: 'All',

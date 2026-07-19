@@ -62,6 +62,14 @@ describe('i18n dictionaries', () => {
     expect(en.library.saved).toBe('Saved')
     expect(en.library.openQuickAccess).toBe('Open quick access')
   })
+
+  it.each([zhCN, en])('contains the unified workspace language', (locale) => {
+    expect(locale.workspace.scope.temporary).toBeTruthy()
+    expect(locale.workspace.scope.all).toBeTruthy()
+    expect(locale.workspace.scope.saved).toBeTruthy()
+    expect(locale.workspace.searchPlaceholder).toBeTruthy()
+    expect(locale.workspace.temporaryRetention).toBeTruthy()
+  })
 })
 
 describe('detectLanguage', () => {
