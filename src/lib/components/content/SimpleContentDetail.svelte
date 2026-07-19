@@ -1,0 +1,17 @@
+<script lang="ts">
+  import { contentApi } from '$lib/api/content'; import { dockApi } from '$lib/api/dock'; import type { ContentDetail } from '$lib/types/content'
+  interface Props { detail:Extract<ContentDetail,{kind:'text'|'image'|'file'}>; onClose:()=>void; onChanged:(id:string)=>Promise<void>; onNotify:(m:string,k?:'success'|'error')=>void; onDelete?:()=>void; onToggleSaved?:()=>void }
+  let {detail,onClose,onChanged,onNotify,onDelete,onToggleSaved}:Props=$props(); let editing=$state(false); let title=$state(''); let body=$state(''); let loadedId=$state('')
+  $effect(()=>{if(loadedId!==detail.summary.id){loadedId=detail.summary.id;title=detail.summary.title;body=detail.kind==='text'?detail.body:'';editing=false}})
+  async function save(){try{if(detail.kind==='text')await contentApi.updateText(detail.summary.id,title||null,body);else await contentApi.rename(detail.summary.id,title||null);editing=false;await onChanged(detail.summary.id);onNotify('已更新')}catch(e){onNotify(String(e),'error')}}
+  async function copy(){try{if(detail.kind==='text')await navigator.clipboard.writeText(detail.body);else if(detail.kind==='image'&&detail.available)await dockApi.copyImage(detail.assetPath);else if(detail.kind==='file'&&detail.available)await dockApi.copyFile(detail.assetPath);onNotify('已复制')}catch(e){onNotify(String(e),'error')}}
+</script>
+<header><button type="button" onclick={onClose}>返回</button><strong>{detail.summary.title}</strong></header>
+<main>
+  {#if editing}<label>标题<input bind:value={title}/></label>{#if detail.kind==='text'}<label>内容<textarea bind:value={body}></textarea></label>{/if}<div class="actions"><button type="button" onclick={save}>保存</button><button type="button" onclick={()=>editing=false}>取消</button></div>
+  {:else}
+    {#if detail.kind==='text'}<pre>{detail.body}</pre>{:else if !detail.available}<p role="status">{detail.kind==='image'?'图片不可用':'文件不可用'}</p>{:else}<p class="path">{detail.fileName}</p>{/if}
+    <div class="actions"><button type="button" onclick={()=>editing=true}>{detail.kind==='text'?'编辑文本':'重命名'}</button><button type="button" onclick={copy} disabled={detail.kind!=='text'&&!detail.available}>{detail.kind==='image'?'复制图片':detail.kind==='file'?'复制文件':'复制'}</button>{#if onToggleSaved}<button type="button" onclick={onToggleSaved}>{detail.summary.retention==='saved'?'取消收藏':'收藏'}</button>{/if}{#if onDelete}<button type="button" onclick={onDelete}>删除</button>{/if}</div>
+  {/if}
+</main>
+<style>header{position:sticky;top:0;display:flex;align-items:center;gap:.5rem;padding:.6rem;border-bottom:1px solid var(--border-subtle);background:var(--surface-0);z-index:1}header strong{font-size:var(--font-md,.85rem)}main{display:flex;flex-direction:column;gap:.7rem;padding:.8rem}label{display:flex;flex-direction:column;gap:.25rem;color:var(--text-muted)}input,textarea{box-sizing:border-box;width:100%;min-height:2.2rem;padding:.5rem;border:1px solid var(--border-default);border-radius:var(--radius-md);background:var(--surface-1);color:var(--text-primary);font:inherit}textarea{min-height:8rem;resize:vertical}pre,.path{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit;font-size:max(var(--font-md,.85rem),.85rem);line-height:1.5}.actions{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:.35rem}.actions button,header button{min-height:2.25rem;padding:.35rem .65rem;border:1px solid var(--border-default);border-radius:var(--radius-md);background:var(--surface-1);color:var(--text-primary);font:inherit;cursor:pointer}</style>

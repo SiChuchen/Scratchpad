@@ -9,6 +9,7 @@
 </script>
 <div class="list" role="listbox" tabindex="0" onkeydown={keydown}>
   {#each items as item (item.id)}
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div draggable={reorderable && item.capabilities.reorder} ondragstart={() => dragging=item.id} ondragover={(e)=>{if(reorderable)e.preventDefault()}} ondrop={() => drop(item.id)}>
       <ContentSummaryCard {item} selected={selectedId===item.id} busy={busyIds.includes(item.id)} draggable={reorderable} {onSelect} {onToggleSaved} {onCopy} {onDelete}/>
     </div>
