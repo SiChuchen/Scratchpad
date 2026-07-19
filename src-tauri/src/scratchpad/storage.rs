@@ -1097,6 +1097,29 @@ pub fn update_entry_text_with_revision(
     Ok(updated_mutation(revision, unified_id))
 }
 
+pub fn update_entry_text_and_title_with_revision(
+    conn: &mut Connection,
+    id: &str,
+    title: Option<&str>,
+    content: &str,
+) -> StorageResult<ContentMutation<()>> {
+    let now = now_rfc3339();
+    let tx = conn.transaction()?;
+    let rows = tx.execute(
+        "UPDATE entries SET title = ?2, content = ?3, updated_at = ?4
+         WHERE id = ?1 AND kind = 'text'",
+        params![id, title, content, now],
+    )?;
+    if rows == 0 {
+        return Err(rusqlite::Error::QueryReturnedNoRows.into());
+    }
+    let cleanup_days = crate::scratchpad::preferences::load_preferences(&tx)?.auto_cleanup_days;
+    let unified_id = upsert_dock_projection_in_transaction(&tx, id, cleanup_days)?;
+    let revision = bump_revision(&tx)?;
+    tx.commit()?;
+    Ok(updated_mutation(revision, unified_id))
+}
+
 fn updated_mutation(revision: i64, unified_id: String) -> ContentMutation<()> {
     ContentMutation {
         value: (),
@@ -1723,7 +1746,8 @@ mod tests {
             .collect::<Vec<_>>();
         active_slots.sort_by(f64::total_cmp);
 
-        let mutation = reorder_entries_with_revision(&mut conn, EntryView::Home, &ordered).unwrap();
+        let mutation =
+            reorder_entries_with_revision(&mut conn, EntryView::Home, &ordered).unwrap();
         assert_eq!(mutation.revision, before_revision + 1);
         assert_eq!(
             mutation
@@ -1798,8 +1822,7 @@ mod tests {
             second.id.clone(),
         ];
 
-        let mutation =
-            reorder_entries_with_revision(&mut conn, EntryView::Home, &ordered).unwrap();
+        let mutation = reorder_entries_with_revision(&mut conn, EntryView::Home, &ordered).unwrap();
 
         assert_eq!(mutation.revision, revision + 1);
         assert_eq!(

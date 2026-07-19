@@ -10,7 +10,8 @@ use crate::content::catalog::{
 };
 use crate::content::models::{
     BrowseScope, ContentChange, ContentDetail, ContentKind, ContentMutation, ContentOperation,
-    ContentSearchHit, ContentSource, ContentTagSource, UnifiedField, UnifiedQueryPlan, UnifiedTag,
+    ContentSearchHit, ContentSource, ContentTagSource, UnifiedContentId, UnifiedField,
+    UnifiedQueryPlan, UnifiedTag,
 };
 use crate::storage::error::{StorageError, StorageResult};
 
@@ -43,6 +44,93 @@ pub fn search(
     limit: usize,
 ) -> StorageResult<Vec<ContentSearchHit>> {
     crate::content::search::search_local(conn, query, plan, limit)
+}
+
+pub fn update_text(
+    conn: &mut Connection,
+    id: &str,
+    title: Option<&str>,
+    body: &str,
+) -> StorageResult<ContentMutation<ContentDetail>> {
+    UnifiedContentId::parse(id).map_err(StorageError::Validation)?;
+    ensure_no_pending_delete(conn, id)?;
+    let identity = catalog_entry_by_id(conn, id)?;
+    if identity.source != ContentSource::Dock || identity.kind != ContentKind::Text {
+        return Err(source_kind_mismatch(id));
+    }
+
+    let mutation = crate::scratchpad::storage::update_entry_text_and_title_with_revision(
+        conn,
+        &identity.source_id,
+        title,
+        body,
+    )?;
+    let value = detail(conn, id)?;
+    Ok(ContentMutation {
+        value,
+        revision: mutation.revision,
+        changes: mutation.changes,
+    })
+}
+
+pub fn rename(
+    conn: &mut Connection,
+    id: &str,
+    title: Option<&str>,
+) -> StorageResult<ContentMutation<ContentDetail>> {
+    UnifiedContentId::parse(id).map_err(StorageError::Validation)?;
+    ensure_no_pending_delete(conn, id)?;
+    let identity = catalog_entry_by_id(conn, id)?;
+    if identity.source != ContentSource::Dock
+        || !matches!(
+            identity.kind,
+            ContentKind::Text | ContentKind::Image | ContentKind::File
+        )
+    {
+        return Err(source_kind_mismatch(id));
+    }
+
+    let mutation =
+        crate::scratchpad::storage::rename_entry_with_revision(conn, &identity.source_id, title)?;
+    let value = detail(conn, id)?;
+    Ok(ContentMutation {
+        value,
+        revision: mutation.revision,
+        changes: mutation.changes,
+    })
+}
+
+pub fn update_structured(
+    conn: &mut Connection,
+    id: &str,
+    input: &crate::vault::models::VaultEntryInput,
+) -> StorageResult<ContentMutation<ContentDetail>> {
+    UnifiedContentId::parse(id).map_err(StorageError::Validation)?;
+    ensure_no_pending_delete(conn, id)?;
+    let identity = catalog_entry_by_id(conn, id)?;
+    let input_kind = match input.kind {
+        crate::vault::models::EntryKind::Credential => ContentKind::Credential,
+        crate::vault::models::EntryKind::Bookmark => ContentKind::Bookmark,
+        crate::vault::models::EntryKind::Note => ContentKind::Note,
+    };
+    if identity.source != ContentSource::Vault
+        || identity.kind != input_kind
+        || !matches!(
+            identity.kind,
+            ContentKind::Credential | ContentKind::Bookmark | ContentKind::Note
+        )
+    {
+        return Err(source_kind_mismatch(id));
+    }
+
+    let mutation =
+        crate::vault::storage::update_entry_with_revision(conn, &identity.source_id, input)?;
+    let value = detail(conn, id)?;
+    Ok(ContentMutation {
+        value,
+        revision: mutation.revision,
+        changes: mutation.changes,
+    })
 }
 
 pub fn save(
@@ -744,7 +832,8 @@ mod tests {
     use rusqlite::{params, Connection};
 
     use super::{
-        cleanup_expired, delete, delete_temporary, detail, list, reorder, save, search, unsave,
+        cleanup_expired, delete, delete_temporary, detail, list, rename, reorder, save, search,
+        unsave, update_structured, update_text,
     };
     use crate::content::models::{
         BrowseScope, ContentDetail, ContentKind, RetentionState, UnifiedQueryPlan,
@@ -754,6 +843,7 @@ mod tests {
     };
     use crate::models::entry::EntryView;
     use crate::storage::error::StorageError;
+    use crate::vault::models::{EntryKind as VaultEntryKind, FieldInput, VaultEntryInput};
 
     fn revision(conn: &Connection) -> i64 {
         conn.query_row(
@@ -780,6 +870,80 @@ mod tests {
             .unwrap()
             .collect::<rusqlite::Result<Vec<_>>>()
             .unwrap()
+    }
+
+    #[test]
+    fn unified_edit_adapters_update_payload_projection_and_return_detail_once() {
+        let mut conn = fixture_with_all_kinds();
+
+        let text = update_text(
+            &mut conn,
+            "dock:text-1",
+            Some("Maintenance"),
+            "Saturday at 02:00",
+        )
+        .unwrap();
+        assert_eq!(text.revision, 1);
+        assert_eq!(text.changes.len(), 1);
+        assert_eq!(text.changes[0].id, "dock:text-1");
+        assert_eq!(
+            text.changes[0].operation,
+            crate::content::models::ContentOperation::Updated
+        );
+        match text.value {
+            ContentDetail::Text { title, body, .. } => {
+                assert_eq!(title, "Maintenance");
+                assert_eq!(body, "Saturday at 02:00");
+            }
+            other => panic!("expected text detail, got {other:?}"),
+        }
+
+        let renamed = rename(&mut conn, "dock:file-1", Some("Runbook")).unwrap();
+        assert_eq!(renamed.revision, 2);
+        assert_eq!(renamed.changes.len(), 1);
+        match renamed.value {
+            ContentDetail::File { summary, .. } => assert_eq!(summary.title, "Runbook"),
+            other => panic!("expected file detail, got {other:?}"),
+        }
+
+        let input = VaultEntryInput {
+            kind: VaultEntryKind::Credential,
+            title: "Updated login".to_string(),
+            fields: vec![FieldInput {
+                key: "username".to_string(),
+                value: "operator".to_string(),
+                is_sensitive: false,
+            }],
+            notes: Some("Rotated".to_string()),
+            manual_tags: vec!["work".to_string()],
+        };
+        let structured = update_structured(&mut conn, "vault:credential-1", &input).unwrap();
+        assert_eq!(structured.revision, 3);
+        assert_eq!(structured.changes.len(), 1);
+        assert_eq!(structured.changes[0].id, "vault:credential-1");
+        assert!(matches!(structured.value, ContentDetail::Credential { .. }));
+    }
+
+    #[test]
+    fn unified_edit_adapters_reject_wrong_namespaces_and_kinds_without_mutation() {
+        let mut conn = fixture_with_all_kinds();
+        let input = VaultEntryInput {
+            kind: VaultEntryKind::Note,
+            title: "Wrong kind".to_string(),
+            fields: vec![],
+            notes: None,
+            manual_tags: vec![],
+        };
+
+        for error in [
+            update_text(&mut conn, "vault:note-1", None, "body").unwrap_err(),
+            rename(&mut conn, "vault:note-1", Some("title")).unwrap_err(),
+            update_structured(&mut conn, "dock:text-1", &input).unwrap_err(),
+            update_structured(&mut conn, "vault:credential-1", &input).unwrap_err(),
+        ] {
+            assert!(error.to_string().contains("source and kind do not match"));
+        }
+        assert_eq!(revision(&conn), 0);
     }
 
     #[test]

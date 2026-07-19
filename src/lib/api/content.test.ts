@@ -35,6 +35,7 @@ import type {
   UnifiedQueryPlan,
   UnifiedTag,
 } from "$lib/types/content";
+import type { VaultEntryInput } from "$lib/types/vault";
 
 const mockedInvoke = vi.mocked(invoke);
 const mockedListen = vi.mocked(listen);
@@ -226,6 +227,13 @@ describe("contentApi", () => {
     token: "undo-1",
     expiresAt: "2026-07-19T00:05:00Z",
   } satisfies DeleteUndoToken;
+  const structuredInput = {
+    kind: "credential",
+    title: "Updated login",
+    fields: [{ key: "username", value: "operator", isSensitive: false }],
+    notes: "Rotated",
+    manualTags: ["work"],
+  } satisfies VaultEntryInput;
   const methodCases = [
     {
       label: "revision",
@@ -282,6 +290,29 @@ describe("contentApi", () => {
       command: "ipc_content_restore",
       args: { token: "undo-1" },
       result: textSummary,
+    },
+    {
+      label: "update text with opaque id",
+      call: () =>
+        contentApi.updateText("dock:text-1", "Updated", "new body"),
+      command: "ipc_content_update_text",
+      args: { id: "dock:text-1", title: "Updated", body: "new body" },
+      result: textDetail,
+    },
+    {
+      label: "rename with opaque id",
+      call: () => contentApi.rename("dock:file-1", null),
+      command: "ipc_content_rename",
+      args: { id: "dock:file-1", title: null },
+      result: textDetail,
+    },
+    {
+      label: "update structured content with opaque id",
+      call: () =>
+        contentApi.updateStructured("vault:credential-1", structuredInput),
+      command: "ipc_content_update_structured",
+      args: { id: "vault:credential-1", input: structuredInput },
+      result: textDetail,
     },
   ];
 

@@ -798,6 +798,53 @@ pub(crate) fn ipc_content_search_local(
 }
 
 #[tauri::command]
+pub(crate) fn ipc_content_update_text<R: tauri::Runtime>(
+    state: tauri::State<AppState>,
+    app: tauri::AppHandle<R>,
+    id: String,
+    title: Option<String>,
+    body: String,
+) -> Result<ContentDetail, String> {
+    let mutation = {
+        let mut conn = state.db.lock().map_err(|error| error.to_string())?;
+        crate::content::service::update_text(&mut conn, &id, title.as_deref(), &body)
+            .map_err(ipc_error)?
+    };
+    emit_content_changed(&app, &mutation);
+    Ok(mutation.value)
+}
+
+#[tauri::command]
+pub(crate) fn ipc_content_rename<R: tauri::Runtime>(
+    state: tauri::State<AppState>,
+    app: tauri::AppHandle<R>,
+    id: String,
+    title: Option<String>,
+) -> Result<ContentDetail, String> {
+    let mutation = {
+        let mut conn = state.db.lock().map_err(|error| error.to_string())?;
+        crate::content::service::rename(&mut conn, &id, title.as_deref()).map_err(ipc_error)?
+    };
+    emit_content_changed(&app, &mutation);
+    Ok(mutation.value)
+}
+
+#[tauri::command]
+pub(crate) fn ipc_content_update_structured<R: tauri::Runtime>(
+    state: tauri::State<AppState>,
+    app: tauri::AppHandle<R>,
+    id: String,
+    input: crate::vault::models::VaultEntryInput,
+) -> Result<ContentDetail, String> {
+    let mutation = {
+        let mut conn = state.db.lock().map_err(|error| error.to_string())?;
+        crate::content::service::update_structured(&mut conn, &id, &input).map_err(ipc_error)?
+    };
+    emit_content_changed(&app, &mutation);
+    Ok(mutation.value)
+}
+
+#[tauri::command]
 pub(crate) fn ipc_content_save<R: tauri::Runtime>(
     state: tauri::State<AppState>,
     app: tauri::AppHandle<R>,
@@ -1318,6 +1365,9 @@ mod tests {
             "content::ipc::ipc_content_list",
             "content::ipc::ipc_content_detail",
             "content::ipc::ipc_content_search_local",
+            "content::ipc::ipc_content_update_text",
+            "content::ipc::ipc_content_rename",
+            "content::ipc::ipc_content_update_structured",
             "content::ipc::ipc_content_save",
             "content::ipc::ipc_content_unsave",
             "content::ipc::ipc_content_reorder",
@@ -1920,6 +1970,9 @@ mod tests {
                 ipc_content_list,
                 ipc_content_detail,
                 ipc_content_search_local,
+                ipc_content_update_text,
+                ipc_content_rename,
+                ipc_content_update_structured,
                 ipc_content_save,
                 ipc_content_unsave,
                 ipc_content_reorder,
@@ -1976,6 +2029,62 @@ mod tests {
         app.listen("content-changed", move |event| {
             captured.lock().unwrap().push(event.payload().to_string())
         });
+        let updated_text = invoke_mock(
+            &webview,
+            "ipc_content_update_text",
+            serde_json::json!({
+                "id":"dock:text-1",
+                "title":"Maintenance",
+                "body":"Saturday at 02:00"
+            }),
+        )
+        .unwrap();
+        assert_eq!(updated_text["kind"], serde_json::json!("text"));
+        assert_eq!(updated_text["title"], serde_json::json!("Maintenance"));
+        assert_eq!(updated_text["body"], serde_json::json!("Saturday at 02:00"));
+
+        let renamed = invoke_mock(
+            &webview,
+            "ipc_content_rename",
+            serde_json::json!({"id":"dock:file-1", "title":"Runbook"}),
+        )
+        .unwrap();
+        assert_eq!(renamed["summary"]["title"], serde_json::json!("Runbook"));
+
+        let structured = invoke_mock(
+            &webview,
+            "ipc_content_update_structured",
+            serde_json::json!({
+                "id":"vault:credential-1",
+                "input":{
+                    "kind":"credential",
+                    "title":"Updated login",
+                    "fields":[{"key":"username", "value":"operator", "isSensitive":false}],
+                    "notes":"Rotated",
+                    "manualTags":["work"]
+                }
+            }),
+        )
+        .unwrap();
+        assert_eq!(structured["kind"], serde_json::json!("credential"));
+        assert_eq!(
+            structured["fields"][0]["value"],
+            serde_json::json!("operator")
+        );
+        assert_eq!(events.lock().unwrap().len(), 3);
+
+        let wrong_kind = invoke_mock(
+            &webview,
+            "ipc_content_update_text",
+            serde_json::json!({"id":"dock:image-1", "title":null, "body":"wrong"}),
+        )
+        .unwrap_err();
+        assert!(wrong_kind
+            .as_str()
+            .unwrap()
+            .contains("source and kind do not match"));
+        assert_eq!(events.lock().unwrap().len(), 3);
+
         let saved = invoke_mock(
             &webview,
             "ipc_content_save",
@@ -1983,7 +2092,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(saved["retention"], serde_json::json!("saved"));
-        assert!(events.lock().unwrap()[0].contains("dock:text-1"));
+        assert!(events.lock().unwrap()[3].contains("dock:text-1"));
 
         let deleted = invoke_mock(
             &webview,
@@ -1995,7 +2104,7 @@ mod tests {
         assert!(deleted.get("expiresAt").is_some());
         assert_eq!(
             invoke_mock(&webview, "ipc_content_revision", serde_json::json!({})).unwrap(),
-            serde_json::json!({"revision":1})
+            serde_json::json!({"revision":4})
         );
         let restored = invoke_mock(
             &webview,
@@ -2006,7 +2115,7 @@ mod tests {
         assert_eq!(restored["id"], serde_json::json!("dock:image-1"));
         assert_eq!(
             invoke_mock(&webview, "ipc_content_revision", serde_json::json!({})).unwrap(),
-            serde_json::json!({"revision":1})
+            serde_json::json!({"revision":4})
         );
         let idle_deadline = Instant::now() + StdDuration::from_secs(2);
         while app

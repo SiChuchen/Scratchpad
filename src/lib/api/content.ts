@@ -12,6 +12,7 @@ import type {
   DeleteUndoToken,
   UnifiedQueryPlan,
 } from "$lib/types/content";
+import type { VaultEntryInput } from "$lib/types/vault";
 
 export const contentApi = {
   revision(): Promise<ContentRevision> {
@@ -27,6 +28,29 @@ export const contentApi = {
 
   detail(id: string): Promise<ContentDetail> {
     return invoke<ContentDetail>("ipc_content_detail", { id });
+  },
+
+  updateText(
+    id: string,
+    title: string | null,
+    body: string,
+  ): Promise<ContentDetail> {
+    return invoke<ContentDetail>("ipc_content_update_text", {
+      id,
+      title,
+      body,
+    });
+  },
+
+  rename(id: string, title: string | null): Promise<ContentDetail> {
+    return invoke<ContentDetail>("ipc_content_rename", { id, title });
+  },
+
+  updateStructured(
+    id: string,
+    input: VaultEntryInput,
+  ): Promise<ContentDetail> {
+    return invoke<ContentDetail>("ipc_content_update_structured", { id, input });
   },
 
   searchLocal(
