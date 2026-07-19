@@ -7,9 +7,10 @@
     entry: DockEntry
     onCopy: (content: string) => void
     onCopyPath: (path: string) => void
+    onError?: (message: string) => void
   }
 
-  let { entry, onCopy, onCopyPath }: Props = $props()
+  let { entry, onCopy, onCopyPath, onError }: Props = $props()
 
   let imageUrl = $derived.by(() => {
     if (entry.filePath) return dockApi.previewUrl(entry.filePath)
@@ -42,7 +43,7 @@
       setTimeout(() => { copyStatus = 'idle' }, 1500)
     } catch (e) {
       console.error('[ImageEntryBody] copyImage IPC error:', e)
-      alert(messages.toast.copyImageFailed + ': ' + String(e))
+      onError?.(`${messages.toast.copyImageFailed}: ${String(e)}`)
       copyStatus = 'idle'
     }
   }

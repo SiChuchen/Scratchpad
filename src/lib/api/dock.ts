@@ -1,5 +1,5 @@
 import { convertFileSrc, invoke } from '@tauri-apps/api/core'
-import type { DataDirInfo, DockEntry, DockPreferences, EntryKind, EntryMembershipView, ShortcutStatus } from '$lib/types/dock'
+import type { DataDirInfo, DockEntry, DockPreferences, EntryKind, EntryMembershipView, ShortcutStatus, ShortcutTarget } from '$lib/types/dock'
 
 export const dockApi = {
   createText(view: EntryMembershipView, content: string, source = 'manual') {
@@ -96,12 +96,12 @@ export const dockApi = {
     return invoke<DataDirInfo>('ipc_data_dir_set', { path })
   },
 
-  getShortcutStatus() {
-    return invoke<ShortcutStatus>('ipc_shortcut_status')
+  getShortcutStatus(target: ShortcutTarget) {
+    return invoke<ShortcutStatus>('ipc_shortcut_status', { target })
   },
 
-  updateShortcut(modifiers: string, key: string) {
-    return invoke<ShortcutStatus>('ipc_shortcut_update', { modifiers, key })
+  updateShortcut(target: ShortcutTarget, modifiers: string, key: string) {
+    return invoke<ShortcutStatus>('ipc_shortcut_update', { target, modifiers, key })
   },
 
   async toggleAlwaysOnTop(): Promise<boolean> {

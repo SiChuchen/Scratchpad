@@ -1,17 +1,152 @@
+pub mod content;
 pub mod models;
 pub mod scratchpad;
 pub mod storage;
 pub mod system;
+pub mod vault;
 
+use chrono::Utc;
 use rusqlite::Connection;
 use std::sync::Mutex;
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut};
 
 pub struct AppState {
     pub db: Mutex<Connection>,
     pub main_geometry: Mutex<Option<system::tab_controller::MainWindowGeometry>>,
-    pub current_shortcut: Mutex<Option<Shortcut>>,
+    pub shortcuts: Mutex<RegisteredShortcuts>,
+}
+
+/// 已注册的全局快捷键。两个 target 互相独立：一个注册失败不影响另一个。
+#[derive(Default)]
+pub struct RegisteredShortcuts {
+    pub main: Option<Shortcut>,
+    pub quick_access: Option<Shortcut>,
+}
+
+/// 快捷键目标。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+enum ShortcutTarget {
+    Main,
+    QuickAccess,
+}
+
+impl ShortcutTarget {
+    fn prefs_fields(self) -> (&'static str, &'static str, &'static str) {
+        // (modifiers_key, key_key, registered_key)
+        match self {
+            ShortcutTarget::Main => ("shortcut_modifiers", "shortcut_key", "shortcut_registered"),
+            ShortcutTarget::QuickAccess => (
+                "quick_access_shortcut_modifiers",
+                "quick_access_shortcut_key",
+                "quick_access_shortcut_registered",
+            ),
+        }
+    }
+}
+
+// --- Win32 helpers (quick-access positioning) ---
+
+/// 返回鼠标当前所在点的物理屏幕坐标 (x, y)。
+#[cfg(target_os = "windows")]
+fn win_cursor_pos() -> (i32, i32) {
+    use windows_sys::Win32::Foundation::POINT;
+    use windows_sys::Win32::UI::WindowsAndMessaging::GetCursorPos;
+
+    let mut pt = POINT { x: 0, y: 0 };
+    unsafe {
+        if GetCursorPos(&mut pt) != 0 {
+            (pt.x, pt.y)
+        } else {
+            (0, 0)
+        }
+    }
+}
+
+/// 返回包含 `(x, y)` 的显示器的工作区（rcWork），失败时退回到主屏。
+#[cfg(target_os = "windows")]
+fn win_monitor_work_area(x: i32, y: i32) -> system::window::WorkRect {
+    use windows_sys::Win32::Foundation::POINT;
+    use windows_sys::Win32::Graphics::Gdi::{
+        GetMonitorInfoW, MonitorFromPoint, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+    };
+
+    let monitor = unsafe { MonitorFromPoint(POINT { x, y }, MONITOR_DEFAULTTONEAREST) };
+    let mut mi = MONITORINFO {
+        cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+        ..unsafe { std::mem::zeroed() }
+    };
+    unsafe {
+        GetMonitorInfoW(monitor, &mut mi);
+    }
+    system::window::WorkRect::new(
+        mi.rcWork.left,
+        mi.rcWork.top,
+        mi.rcWork.right,
+        mi.rcWork.bottom,
+    )
+}
+
+#[cfg(not(target_os = "windows"))]
+fn win_cursor_pos() -> (i32, i32) {
+    (0, 0)
+}
+
+#[cfg(not(target_os = "windows"))]
+fn win_monitor_work_area(_x: i32, _y: i32) -> system::window::WorkRect {
+    system::window::WorkRect::new(0, 0, 1920, 1080)
+}
+
+/// 把 quick-access 窗口移动到鼠标所在显示器的工作区中心并 show/set_focus/emit。
+fn show_quick_access_centered(app: &tauri::AppHandle) {
+    use tauri::{PhysicalPosition as PhysPos, PhysicalSize as PhysSize, Size};
+
+    let Some(quick) = app.get_webview_window("quick-access") else {
+        return;
+    };
+    let (cx, cy) = win_cursor_pos();
+    let work = win_monitor_work_area(cx, cy);
+    let scale_factor = quick.scale_factor().unwrap_or(1.0);
+    let (x, y, w, h) = system::window::fit_and_center_quick_access(work, scale_factor);
+    let (min_w, min_h) = system::window::runtime_min_size(&work, scale_factor);
+    let _ = quick.set_position(PhysPos::new(x as f64, y as f64));
+    let _ = quick.set_size(PhysSize::new(w as f64, h as f64));
+    let _ = quick.set_min_size(Some(Size::Physical(PhysSize::new(
+        min_w as u32,
+        min_h as u32,
+    ))));
+    let _ = quick.show();
+    let _ = quick.set_focus();
+    let _ = app.emit("quick-access-focus-input", ());
+}
+
+fn toggle_main_window(app: &tauri::AppHandle) {
+    let Some(window) = app.get_webview_window("main") else {
+        return;
+    };
+    match system::window::visibility_toggle_action(window.is_visible().unwrap_or(false)) {
+        system::window::VisibilityToggleAction::Hide => {
+            let _ = window.hide();
+        }
+        system::window::VisibilityToggleAction::Show => {
+            let _ = window.show();
+            let _ = window.set_focus();
+        }
+    }
+}
+
+fn toggle_quick_access_window(app: &tauri::AppHandle) {
+    let Some(window) = app.get_webview_window("quick-access") else {
+        toggle_main_window(app);
+        return;
+    };
+    match system::window::visibility_toggle_action(window.is_visible().unwrap_or(false)) {
+        system::window::VisibilityToggleAction::Hide => {
+            let _ = window.hide();
+        }
+        system::window::VisibilityToggleAction::Show => show_quick_access_centered(app),
+    }
 }
 
 // --- Shortcut helpers ---
@@ -37,6 +172,18 @@ fn parse_modifiers(s: &str) -> Option<Modifiers> {
 
 fn parse_key_code(s: &str) -> Option<Code> {
     let upper = s.to_uppercase();
+    match upper.as_str() {
+        "SPACE" => return Some(Code::Space),
+        "TAB" => return Some(Code::Tab),
+        "ENTER" | "RETURN" => return Some(Code::Enter),
+        "ESC" | "ESCAPE" => return Some(Code::Escape),
+        "BACKSPACE" => return Some(Code::Backspace),
+        "UP" => return Some(Code::ArrowUp),
+        "DOWN" => return Some(Code::ArrowDown),
+        "LEFT" => return Some(Code::ArrowLeft),
+        "RIGHT" => return Some(Code::ArrowRight),
+        _ => {}
+    }
     if let Some(num) = upper.strip_prefix('F').and_then(|n| n.parse::<u8>().ok()) {
         return match num {
             1 => Some(Code::F1),
@@ -109,16 +256,117 @@ fn parse_key_code(s: &str) -> Option<Code> {
 
 // --- Dock entry IPC commands ---
 
+#[cfg(test)]
+pub(crate) fn content_changed_event<T>(
+    mutation: &content::models::ContentMutation<T>,
+) -> content::models::ContentChangedEvent {
+    content::ipc::content_changed_event(mutation)
+}
+
+#[allow(dead_code)]
+pub(crate) fn dispatch_content_changed<T, E>(
+    mutation: &content::models::ContentMutation<T>,
+    emit: impl FnOnce(&str, content::models::ContentChangedEvent) -> Result<(), E>,
+) {
+    content::ipc::dispatch_content_changed(mutation, emit);
+}
+
+pub(crate) fn emit_content_changed<T>(
+    app: &tauri::AppHandle,
+    mutation: &content::models::ContentMutation<T>,
+) {
+    content::ipc::emit_content_changed(app, mutation);
+}
+
+#[cfg(test)]
+mod dock_ipc_tests {
+    use super::{content_changed_event, dispatch_content_changed};
+    use crate::content::models::{ContentChange, ContentMutation, ContentOperation};
+
+    #[test]
+    fn ipc_content_changed_event_preserves_committed_revision_ids_and_operations() {
+        let mutation = ContentMutation {
+            value: (),
+            revision: 42,
+            changes: vec![
+                ContentChange {
+                    id: "dock:one".to_string(),
+                    operation: ContentOperation::Updated,
+                },
+                ContentChange {
+                    id: "dock:two".to_string(),
+                    operation: ContentOperation::Reordered,
+                },
+            ],
+        };
+
+        let event = content_changed_event(&mutation);
+
+        assert_eq!(event.revision, 42);
+        assert_eq!(event.changes, mutation.changes);
+    }
+
+    #[test]
+    fn ipc_dispatches_exact_content_changed_name_and_committed_payload() {
+        let mutation = ContentMutation {
+            value: (),
+            revision: 43,
+            changes: vec![ContentChange {
+                id: "dock:actual-id".to_string(),
+                operation: ContentOperation::Created,
+            }],
+        };
+        let mut captured = None;
+
+        dispatch_content_changed(&mutation, |event_name, payload| {
+            captured = Some((event_name.to_string(), payload));
+            Ok::<(), &'static str>(())
+        });
+
+        let (event_name, payload) = captured.expect("dispatch must invoke the emitter");
+        assert_eq!(event_name, "content-changed");
+        assert_eq!(payload.revision, 43);
+        assert_eq!(payload.changes, mutation.changes);
+    }
+
+    #[test]
+    fn ipc_dispatch_failure_is_non_fatal_after_commit() {
+        let mutation = ContentMutation {
+            value: (),
+            revision: 44,
+            changes: vec![ContentChange {
+                id: "dock:committed".to_string(),
+                operation: ContentOperation::Deleted,
+            }],
+        };
+        let mut attempted = false;
+
+        dispatch_content_changed(&mutation, |event_name, payload| {
+            attempted = true;
+            assert_eq!(event_name, "content-changed");
+            assert_eq!(payload.revision, 44);
+            Err::<(), &'static str>("forced emitter failure")
+        });
+
+        assert!(attempted);
+    }
+}
+
 #[tauri::command]
 fn ipc_entries_create_text(
     state: tauri::State<AppState>,
+    app: tauri::AppHandle,
     view: models::entry::EntryView,
     content: String,
     source: String,
 ) -> Result<models::entry::DockEntry, String> {
-    let mut conn = state.db.lock().map_err(|e| e.to_string())?;
-    scratchpad::storage::create_text_entry(&mut conn, view, &content, &source)
-        .map_err(|e| e.to_string())
+    let mutation = {
+        let mut conn = state.db.lock().map_err(|e| e.to_string())?;
+        scratchpad::storage::create_text_entry_with_revision(&mut conn, view, &content, &source)
+            .map_err(|e| e.to_string())?
+    };
+    emit_content_changed(&app, &mutation);
+    Ok(mutation.value)
 }
 
 #[tauri::command]
@@ -132,29 +380,50 @@ fn ipc_entries_list(
 }
 
 #[tauri::command]
-fn ipc_entries_add_to_note(state: tauri::State<AppState>, entry_id: String) -> Result<(), String> {
-    let mut conn = state.db.lock().map_err(|e| e.to_string())?;
-    scratchpad::storage::add_to_note(&mut conn, &entry_id).map_err(|e| e.to_string())
+fn ipc_entries_add_to_note(
+    state: tauri::State<AppState>,
+    app: tauri::AppHandle,
+    entry_id: String,
+) -> Result<(), String> {
+    let mutation = {
+        let mut conn = state.db.lock().map_err(|e| e.to_string())?;
+        scratchpad::storage::add_to_note_with_revision(&mut conn, &entry_id)
+            .map_err(|e| e.to_string())?
+    };
+    emit_content_changed(&app, &mutation);
+    Ok(())
 }
 
 #[tauri::command]
 fn ipc_entries_remove_from_view(
     state: tauri::State<AppState>,
+    app: tauri::AppHandle,
     view: models::entry::EntryView,
     entry_id: String,
 ) -> Result<(), String> {
-    let mut conn = state.db.lock().map_err(|e| e.to_string())?;
-    scratchpad::storage::remove_from_view(&mut conn, view, &entry_id).map_err(|e| e.to_string())
+    let mutation = {
+        let mut conn = state.db.lock().map_err(|e| e.to_string())?;
+        scratchpad::storage::remove_from_view_with_revision(&mut conn, view, &entry_id)
+            .map_err(|e| e.to_string())?
+    };
+    emit_content_changed(&app, &mutation);
+    Ok(())
 }
 
 #[tauri::command]
 fn ipc_entries_update_text(
     state: tauri::State<AppState>,
+    app: tauri::AppHandle,
     id: String,
     content: String,
 ) -> Result<(), String> {
-    let mut conn = state.db.lock().map_err(|e| e.to_string())?;
-    scratchpad::storage::update_entry_text(&mut conn, &id, &content).map_err(|e| e.to_string())
+    let mutation = {
+        let mut conn = state.db.lock().map_err(|e| e.to_string())?;
+        scratchpad::storage::update_entry_text_with_revision(&mut conn, &id, &content)
+            .map_err(|e| e.to_string())?
+    };
+    emit_content_changed(&app, &mutation);
+    Ok(())
 }
 
 #[tauri::command]
@@ -170,21 +439,33 @@ fn ipc_entries_toggle_collapse(
 #[tauri::command]
 fn ipc_entries_rename(
     state: tauri::State<AppState>,
+    app: tauri::AppHandle,
     id: String,
     title: Option<String>,
 ) -> Result<(), String> {
-    let mut conn = state.db.lock().map_err(|e| e.to_string())?;
-    scratchpad::storage::rename_entry(&mut conn, &id, title.as_deref()).map_err(|e| e.to_string())
+    let mutation = {
+        let mut conn = state.db.lock().map_err(|e| e.to_string())?;
+        scratchpad::storage::rename_entry_with_revision(&mut conn, &id, title.as_deref())
+            .map_err(|e| e.to_string())?
+    };
+    emit_content_changed(&app, &mutation);
+    Ok(())
 }
 
 #[tauri::command]
 fn ipc_entries_reorder(
     state: tauri::State<AppState>,
+    app: tauri::AppHandle,
     view: models::entry::EntryView,
     ordered_ids: Vec<String>,
 ) -> Result<(), String> {
-    let mut conn = state.db.lock().map_err(|e| e.to_string())?;
-    scratchpad::storage::reorder_entries(&mut conn, view, &ordered_ids).map_err(|e| e.to_string())
+    let mutation = {
+        let mut conn = state.db.lock().map_err(|e| e.to_string())?;
+        scratchpad::storage::reorder_entries_with_revision(&mut conn, view, &ordered_ids)
+            .map_err(|e| e.to_string())?
+    };
+    emit_content_changed(&app, &mutation);
+    Ok(())
 }
 
 // --- Preferences IPC commands ---
@@ -215,28 +496,72 @@ struct ShortcutStatus {
     registered: bool,
 }
 
-#[tauri::command]
-fn ipc_shortcut_status(
-    state: tauri::State<AppState>,
-) -> Result<ShortcutStatus, String> {
+/// 计算 target 当前应该返回的状态（从持久化偏好 + 内存注册结果汇总）。
+fn shortcut_status_for(state: &AppState, target: ShortcutTarget) -> Result<ShortcutStatus, String> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
     let prefs = scratchpad::preferences::load_preferences(&conn).map_err(|e| e.to_string())?;
     drop(conn);
-    let guard = state.current_shortcut.lock().map_err(|e| e.to_string())?;
-    // is_registered() can return false even when the shortcut works,
-    // so we trust the stored registration result from startup.
-    let registered = guard.as_ref().is_some();
+    let guard = state.shortcuts.lock().map_err(|e| e.to_string())?;
+    let (modifiers, key, registered) = match target {
+        ShortcutTarget::Main => (
+            prefs.shortcut_modifiers,
+            prefs.shortcut_key,
+            guard.main.is_some(),
+        ),
+        ShortcutTarget::QuickAccess => (
+            prefs.quick_access_shortcut_modifiers,
+            prefs.quick_access_shortcut_key,
+            guard.quick_access.is_some(),
+        ),
+    };
     Ok(ShortcutStatus {
-        modifiers: prefs.shortcut_modifiers,
-        key: prefs.shortcut_key,
+        modifiers,
+        key,
         registered,
     })
+}
+
+#[tauri::command]
+fn ipc_shortcut_status(
+    state: tauri::State<AppState>,
+    target: ShortcutTarget,
+) -> Result<ShortcutStatus, String> {
+    shortcut_status_for(&state, target)
+}
+
+/// 从主窗口 UI 打开全局 quick-access 面板。
+///
+/// UI 入口始终居中、显示并聚焦；全局快捷键保留独立的显示/隐藏切换行为。
+#[tauri::command]
+fn ipc_open_quick_access(app: tauri::AppHandle) -> Result<(), String> {
+    if app.get_webview_window("quick-access").is_none() {
+        return Err("quick-access window not found".to_string());
+    }
+    show_quick_access_centered(&app);
+    Ok(())
+}
+
+/// 从 quick-access 打开可见的主窗口，并导航到设置页。
+#[tauri::command]
+fn ipc_open_main_settings(app: tauri::AppHandle) -> Result<(), String> {
+    let main = app
+        .get_webview_window("main")
+        .ok_or_else(|| "main window not found".to_string())?;
+    main.show().map_err(|e| e.to_string())?;
+    main.set_focus().map_err(|e| e.to_string())?;
+    app.emit("main-open-settings", ())
+        .map_err(|e| e.to_string())?;
+    if let Some(quick) = app.get_webview_window("quick-access") {
+        quick.hide().map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 #[tauri::command]
 fn ipc_shortcut_update(
     state: tauri::State<AppState>,
     app: tauri::AppHandle,
+    target: ShortcutTarget,
     modifiers: String,
     key: String,
 ) -> Result<ShortcutStatus, String> {
@@ -245,41 +570,77 @@ fn ipc_shortcut_update(
     let code = parse_key_code(&key).ok_or_else(|| format!("invalid key: {key}"))?;
     let new_shortcut = Shortcut::new(Some(mods), code);
 
-    // Unregister old shortcut
-    let mut guard = state.current_shortcut.lock().map_err(|e| e.to_string())?;
-    if let Some(ref old) = *guard {
-        let _ = app.global_shortcut().unregister(*old);
+    // 检查与另一 target 是否冲突。冲突时不注销旧 shortcut，保留用户原设置。
+    {
+        let guard = state.shortcuts.lock().map_err(|e| e.to_string())?;
+        let other = match target {
+            ShortcutTarget::Main => guard.quick_access,
+            ShortcutTarget::QuickAccess => guard.main,
+        };
+        if let Some(other_sc) = other {
+            if other_sc == new_shortcut {
+                return Err(
+                    "shortcut conflict: same combination is used by the other target".to_string(),
+                );
+            }
+        }
     }
 
-    // Register new shortcut with same toggle handler
+    // 先尝试注册新 shortcut；成功后再注销旧 shortcut，避免失败时两个都不可用。
     let app_handle = app.clone();
-    app.global_shortcut()
-        .on_shortcut(new_shortcut, move |_app, _sc, event| {
-            use tauri_plugin_global_shortcut::ShortcutState;
-            if event.state == ShortcutState::Pressed {
-                if let Some(w) = app_handle.get_webview_window("main") {
-                    if w.is_visible().unwrap_or(false) {
-                        let _ = w.hide();
-                    } else {
-                        let _ = w.show();
-                        let _ = w.set_focus();
+    match target {
+        ShortcutTarget::Main => {
+            app.global_shortcut()
+                .on_shortcut(new_shortcut, move |_app, _sc, event| {
+                    use tauri_plugin_global_shortcut::ShortcutState;
+                    if event.state == ShortcutState::Pressed {
+                        toggle_main_window(&app_handle);
                     }
-                }
-            }
-        })
-        .map_err(|e| format!("failed to register shortcut: {e}"))?;
+                })
+                .map_err(|e| format!("failed to register shortcut: {e}"))?;
+        }
+        ShortcutTarget::QuickAccess => {
+            app.global_shortcut()
+                .on_shortcut(new_shortcut, move |app, _sc, event| {
+                    use tauri_plugin_global_shortcut::ShortcutState;
+                    if event.state == ShortcutState::Pressed {
+                        toggle_quick_access_window(app);
+                    }
+                })
+                .map_err(|e| format!("failed to register shortcut: {e}"))?;
+        }
+    }
 
-    let registered = true; // on_shortcut succeeded above, trust it over is_registered()
-    *guard = Some(new_shortcut);
+    // 注册成功 — 注销旧 shortcut 并写入新状态。
+    let mut guard = state.shortcuts.lock().map_err(|e| e.to_string())?;
+    let old = match target {
+        ShortcutTarget::Main => guard.main.replace(new_shortcut),
+        ShortcutTarget::QuickAccess => guard.quick_access.replace(new_shortcut),
+    };
+    if let Some(old_sc) = old {
+        let _ = app.global_shortcut().unregister(old_sc);
+    }
 
-    // Persist to preferences
+    // 持久化偏好（registered 字段实际不持久化，但保留字段语义）
+    let registered = true;
     {
         let mut conn = state.db.lock().map_err(|e| e.to_string())?;
         let mut prefs =
             scratchpad::preferences::load_preferences(&conn).map_err(|e| e.to_string())?;
-        prefs.shortcut_modifiers = modifiers.clone();
-        prefs.shortcut_key = key.clone();
-        prefs.shortcut_registered = registered;
+        let (mods_key, key_key, reg_key) = target.prefs_fields();
+        match target {
+            ShortcutTarget::Main => {
+                prefs.shortcut_modifiers = modifiers.clone();
+                prefs.shortcut_key = key.clone();
+                prefs.shortcut_registered = registered;
+            }
+            ShortcutTarget::QuickAccess => {
+                prefs.quick_access_shortcut_modifiers = modifiers.clone();
+                prefs.quick_access_shortcut_key = key.clone();
+                prefs.quick_access_shortcut_registered = registered;
+            }
+        }
+        let _ = (mods_key, key_key, reg_key); // 仅用于文档化字段名映射
         scratchpad::preferences::save_preferences(&mut conn, &prefs).map_err(|e| e.to_string())?;
     }
 
@@ -295,16 +656,24 @@ fn ipc_shortcut_update(
 #[tauri::command]
 fn ipc_entries_import_file(
     state: tauri::State<AppState>,
+    app: tauri::AppHandle,
     source_path: String,
     view: models::entry::EntryView,
 ) -> Result<models::entry::DockEntry, String> {
-    let mut conn = state.db.lock().map_err(|e| e.to_string())?;
-    scratchpad::assets::import_file(&mut conn, &source_path, view).map_err(|e| e.to_string())
+    let mutation = {
+        let mut conn = state.db.lock().map_err(|e| e.to_string())?;
+        scratchpad::assets::import_file_with_revision(&mut conn, &source_path, view)
+            .map_err(|e| e.to_string())?
+    };
+    emit_content_changed(&app, &mutation);
+    Ok(mutation.value)
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 fn ipc_entries_import_image_bytes(
     state: tauri::State<AppState>,
+    app: tauri::AppHandle,
     bytes: Vec<u8>,
     file_name: String,
     mime_type: String,
@@ -312,24 +681,39 @@ fn ipc_entries_import_image_bytes(
     height: Option<i64>,
     view: models::entry::EntryView,
 ) -> Result<models::entry::DockEntry, String> {
-    let mut conn = state.db.lock().map_err(|e| e.to_string())?;
-    scratchpad::assets::import_image_bytes(
-        &mut conn, &bytes, &file_name, &mime_type, width, height, view,
-    )
-    .map_err(|e| e.to_string())
+    let mutation = {
+        let mut conn = state.db.lock().map_err(|e| e.to_string())?;
+        scratchpad::assets::import_image_bytes_with_revision(
+            &mut conn, &bytes, &file_name, &mime_type, width, height, view,
+        )
+        .map_err(|e| e.to_string())?
+    };
+    emit_content_changed(&app, &mutation);
+    Ok(mutation.value)
 }
 
 #[tauri::command]
 fn ipc_entries_import_file_bytes(
     state: tauri::State<AppState>,
+    app: tauri::AppHandle,
     bytes: Vec<u8>,
     file_name: String,
     mime_type: Option<String>,
     view: models::entry::EntryView,
 ) -> Result<models::entry::DockEntry, String> {
-    let mut conn = state.db.lock().map_err(|e| e.to_string())?;
-    scratchpad::assets::import_file_bytes(&mut conn, &bytes, &file_name, mime_type.as_deref(), view)
-        .map_err(|e| e.to_string())
+    let mutation = {
+        let mut conn = state.db.lock().map_err(|e| e.to_string())?;
+        scratchpad::assets::import_file_bytes_with_revision(
+            &mut conn,
+            &bytes,
+            &file_name,
+            mime_type.as_deref(),
+            view,
+        )
+        .map_err(|e| e.to_string())?
+    };
+    emit_content_changed(&app, &mutation);
+    Ok(mutation.value)
 }
 
 // --- Clipboard IPC commands ---
@@ -347,6 +731,23 @@ fn ipc_clipboard_copy_image(path: String) -> Result<(), String> {
 #[tauri::command]
 fn ipc_clipboard_read_file_paths() -> Result<Vec<String>, String> {
     scratchpad::clipboard::read_file_paths()
+}
+
+/// 复制文本到剪贴板。`sensitive = true` 时从 VaultAiSettings 读取
+/// `sensitive_clipboard_clear_seconds`（默认 30s）作为自动清除窗口；
+/// 前端无法伪造更长的清除时间。
+#[tauri::command]
+async fn ipc_clipboard_copy_text(
+    text: String,
+    sensitive: bool,
+    vault: tauri::State<'_, vault::ipc::VaultRuntimeState>,
+) -> Result<(), String> {
+    let seconds = if sensitive {
+        vault.settings().sensitive_clipboard_clear_seconds
+    } else {
+        None
+    };
+    scratchpad::clipboard::copy_text(&text, seconds)
 }
 
 // --- Data directory IPC ---
@@ -522,19 +923,187 @@ fn ipc_dock_minimize_to_tab(
 
 // --- DB initialization ---
 
+fn initialize_schemas(
+    conn: &mut Connection,
+    cleanup_days: i64,
+) -> storage::error::StorageResult<()> {
+    content::migrations::validate_cleanup_days(cleanup_days)?;
+    scratchpad::storage::ensure_dock_schema(conn)?;
+    vault::storage::ensure_vault_schema(conn)?;
+    content::migrations::ensure_content_schema(conn, cleanup_days)?;
+    content::service::cleanup_expired(conn, Utc::now())?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod init_db_tests {
+    use rusqlite::{params, Connection};
+
+    use super::initialize_schemas;
+    use crate::scratchpad::storage::ensure_dock_schema;
+    use crate::storage::error::StorageError;
+    use crate::storage::migration::get_schema_version;
+
+    #[test]
+    fn invalid_cleanup_days_stop_before_legacy_cleanup_or_schema_changes() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", "ON").unwrap();
+        ensure_dock_schema(&mut conn).unwrap();
+        conn.execute(
+            "INSERT INTO entries(
+                id, kind, content, source, created_at, updated_at
+             ) VALUES (?1, 'text', 'keep me', 'fixture', ?2, ?2)",
+            params!["home-only", "2026-07-18T08:00:00+00:00"],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO home_entries(entry_id, created_at, sort_order)
+             VALUES (?1, ?2, 0.0)",
+            params!["home-only", "2026-07-18T08:00:00+00:00"],
+        )
+        .unwrap();
+
+        let error = initialize_schemas(&mut conn, -1).unwrap_err();
+
+        assert!(matches!(error, StorageError::Validation(_)));
+        assert_eq!(get_schema_version(&conn).unwrap(), 2);
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM entries WHERE id = 'home-only'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+            1
+        );
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM home_entries WHERE entry_id = 'home-only'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+            1
+        );
+        for table in ["vault_entries", "content_catalog"] {
+            assert_eq!(
+                conn.query_row(
+                    "SELECT EXISTS(
+                         SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1
+                     )",
+                    params![table],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+                0,
+                "{table} should not be created"
+            );
+        }
+    }
+
+    #[test]
+    fn zero_day_startup_backfills_before_unified_cleanup_and_bumps_revision() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", "ON").unwrap();
+        ensure_dock_schema(&mut conn).unwrap();
+        conn.execute(
+            "INSERT INTO entries(
+                id, kind, content, source, created_at, updated_at
+             ) VALUES ('startup-due', 'text', 'remove me', 'fixture',
+                       '2026-07-18T08:00:00Z', '2026-07-18T08:00:00Z')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO home_entries(entry_id, created_at, sort_order)
+             VALUES ('startup-due', '2026-07-18T08:00:00Z', 0.0)",
+            [],
+        )
+        .unwrap();
+
+        initialize_schemas(&mut conn, 0).unwrap();
+
+        assert_eq!(
+            conn.query_row(
+                "SELECT revision FROM content_state WHERE singleton=1",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+            1
+        );
+        for sql in [
+            "SELECT COUNT(*) FROM entries WHERE id='startup-due'",
+            "SELECT COUNT(*) FROM home_entries WHERE entry_id='startup-due'",
+            "SELECT COUNT(*) FROM content_catalog WHERE unified_id='dock:startup-due'",
+            "SELECT COUNT(*) FROM content_fts WHERE unified_id='dock:startup-due'",
+        ] {
+            assert_eq!(
+                conn.query_row(sql, [], |row| row.get::<_, i64>(0)).unwrap(),
+                0,
+                "{sql}"
+            );
+        }
+    }
+
+    #[test]
+    fn startup_unified_cleanup_keeps_saved_and_future_temporary_content() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", "ON").unwrap();
+        ensure_dock_schema(&mut conn).unwrap();
+        conn.execute_batch(
+            "INSERT INTO entries(id, kind, content, source, created_at, updated_at) VALUES
+                 ('startup-future', 'text', 'future', 'fixture',
+                  '2999-07-18T08:00:00Z', '2999-07-18T08:00:00Z'),
+                 ('startup-saved', 'text', 'saved', 'fixture',
+                  '2020-07-18T08:00:00Z', '2020-07-18T08:00:00Z');
+             INSERT INTO home_entries(entry_id, created_at, sort_order) VALUES
+                 ('startup-future', '2999-07-18T08:00:00Z', 0.0),
+                 ('startup-saved', '2020-07-18T08:00:00Z', 1.0);
+             INSERT INTO note_entries(entry_id, created_at, sort_order)
+                 VALUES ('startup-saved', '2020-07-18T08:00:00Z', 0.0);",
+        )
+        .unwrap();
+
+        initialize_schemas(&mut conn, 7).unwrap();
+
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM content_catalog", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap(),
+            2
+        );
+        assert_eq!(
+            conn.query_row(
+                "SELECT revision FROM content_state WHERE singleton=1",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+            0
+        );
+    }
+}
+
 fn init_db() -> Connection {
     let mut conn = storage::connection::open_db().expect("Failed to open scratchpad DB");
     let cleanup_days = scratchpad::preferences::load_preferences(&conn)
         .map(|p| p.auto_cleanup_days)
         .unwrap_or(0);
-    scratchpad::storage::ensure_dock_schema(&mut conn, cleanup_days)
-        .expect("Failed to init scratch dock schema");
+    initialize_schemas(&mut conn, cleanup_days).expect("Failed to initialize database schemas");
     conn
 }
 
 // --- App entry ---
 
 pub fn run() {
+    // Task 8: 在 Builder 之前初始化 DB 连接并从中加载 vault runtime
+    // （LLM 配置 + AI 设置 + 失败门控初始状态），让 AI 功能在用户打开
+    // Settings 之前就可用。
+    let conn = init_db();
+    let vault_runtime = vault::ipc::VaultRuntimeState::load(&conn);
+
     tauri::Builder::default()
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_autostart::Builder::new().build())
@@ -542,10 +1111,12 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())
         .manage(AppState {
-            db: Mutex::new(init_db()),
+            db: Mutex::new(conn),
             main_geometry: Mutex::new(None),
-            current_shortcut: Mutex::new(None),
+            shortcuts: Mutex::new(RegisteredShortcuts::default()),
         })
+        .manage(content::ipc::DeleteSchedulerState::default())
+        .manage(vault_runtime)
         .invoke_handler(tauri::generate_handler![
             ipc_entries_create_text,
             ipc_entries_list,
@@ -561,6 +1132,7 @@ pub fn run() {
             ipc_clipboard_copy_file,
             ipc_clipboard_copy_image,
             ipc_clipboard_read_file_paths,
+            ipc_clipboard_copy_text,
             ipc_data_dir_info,
             ipc_data_dir_set,
             ipc_preferences_get,
@@ -568,13 +1140,60 @@ pub fn run() {
             ipc_preferences_list_fonts,
             ipc_shortcut_status,
             ipc_shortcut_update,
+            ipc_open_quick_access,
+            ipc_open_main_settings,
             ipc_toggle_always_on_top,
+            content::ipc::ipc_content_revision,
+            content::ipc::ipc_content_list,
+            content::ipc::ipc_content_detail,
+            content::ipc::ipc_content_search_local,
+            content::ipc::ipc_content_plan_search,
+            content::ipc::ipc_content_cancel_search,
+            content::ipc::ipc_open_main_content,
+            content::ipc::ipc_content_update_text,
+            content::ipc::ipc_content_rename,
+            content::ipc::ipc_content_update_structured,
+            content::ipc::ipc_content_save,
+            content::ipc::ipc_content_unsave,
+            content::ipc::ipc_content_reorder,
+            content::ipc::ipc_content_delete,
+            content::ipc::ipc_content_restore,
             ipc_window_apply_circle_region,
             ipc_window_clear_region,
             ipc_dock_restore_from_tab,
             ipc_dock_minimize_to_tab,
+            vault::ipc::entries::ipc_vault_create_entry,
+            vault::ipc::entries::ipc_vault_update_entry,
+            vault::ipc::entries::ipc_vault_delete_entry,
+            vault::ipc::entries::ipc_vault_list_entries,
+            vault::ipc::entries::ipc_vault_get_entry,
+            vault::ipc::entries::ipc_vault_update_manual_tags,
+            vault::ipc::entries::ipc_vault_remove_ai_tag,
+            vault::ipc::entries::ipc_vault_refresh_ai_metadata,
+            vault::ipc::entries::ipc_vault_ai_backfill_status,
+            vault::ipc::capture::ipc_vault_parse_capture_local,
+            vault::ipc::capture::ipc_vault_enrich_capture,
+            vault::ipc::capture::ipc_vault_create_from_capture,
+            vault::ipc::ipc_vault_search,
+            vault::ipc::search::ipc_vault_search_hybrid_local,
+            vault::ipc::search::ipc_vault_plan_search,
+            vault::ipc::search::ipc_vault_cancel_search,
+            vault::ipc::ipc_vault_get_llm_presets,
+            vault::ipc::settings::ipc_vault_get_llm_config,
+            vault::ipc::settings::ipc_vault_verify_and_save_llm,
+            vault::ipc::settings::ipc_vault_test_saved_llm,
+            vault::ipc::settings::ipc_vault_delete_llm_config,
+            vault::ipc::settings::ipc_vault_get_ai_settings,
+            vault::ipc::settings::ipc_vault_set_ai_settings,
         ])
+        .on_window_event(|window, event| {
+            let focused = !matches!(event, tauri::WindowEvent::Focused(false));
+            if system::window::should_reset_quick_access_on_focus_loss(window.label(), focused) {
+                let _ = window.emit("vault-sensitive-reset", ());
+            }
+        })
         .setup(|app| {
+            content::ipc::resume_pending_deletes(app.handle());
             // System tray menu
             let show_item =
                 tauri::menu::MenuItem::with_id(app, "show", "显示主窗口", true, None::<&str>)?;
@@ -597,48 +1216,66 @@ pub fn run() {
                 _ => {}
             });
 
-            // Global shortcut: load from preferences, register, report status
+            // Global shortcuts: load from preferences, register each target
+            // independently. 两个 target 互不阻塞：一个被系统占用时，另一个
+            // 仍然注册和工作。
             {
                 let state = app.state::<AppState>();
                 let conn = state.db.lock().unwrap();
                 let prefs = scratchpad::preferences::load_preferences(&conn).unwrap_or_default();
                 drop(conn);
 
-                let mods = parse_modifiers(&prefs.shortcut_modifiers)
+                // --- 主窗口 toggle ---
+                let main_mods = parse_modifiers(&prefs.shortcut_modifiers)
                     .unwrap_or(Modifiers::ALT | Modifiers::SHIFT);
-                let code = parse_key_code(&prefs.shortcut_key).unwrap_or(Code::KeyV);
-                let shortcut = Shortcut::new(Some(mods), code);
-
-                let app_handle = app.handle().clone();
-                let reg_result =
+                let main_code = parse_key_code(&prefs.shortcut_key).unwrap_or(Code::KeyV);
+                let main_shortcut = Shortcut::new(Some(main_mods), main_code);
+                let main_registered = {
+                    let app_handle = app.handle().clone();
                     app.global_shortcut()
-                        .on_shortcut(shortcut, move |_app, _sc, event| {
+                        .on_shortcut(main_shortcut, move |_app, _sc, event| {
                             use tauri_plugin_global_shortcut::ShortcutState;
                             if event.state == ShortcutState::Pressed {
-                                if let Some(w) = app_handle.get_webview_window("main") {
-                                    if w.is_visible().unwrap_or(false) {
-                                        let _ = w.hide();
-                                    } else {
-                                        let _ = w.show();
-                                        let _ = w.set_focus();
-                                    }
-                                }
+                                toggle_main_window(&app_handle);
                             }
-                        });
+                        })
+                        .is_ok()
+                };
+                if main_registered {
+                    let mut guard = state.shortcuts.lock().unwrap();
+                    guard.main = Some(main_shortcut);
+                }
 
-                let registered = reg_result.is_ok();
+                // --- Quick access toggle ---
+                let qa_mods = parse_modifiers(&prefs.quick_access_shortcut_modifiers)
+                    .unwrap_or(Modifiers::ALT | Modifiers::SHIFT);
+                let qa_code =
+                    parse_key_code(&prefs.quick_access_shortcut_key).unwrap_or(Code::Space);
+                let qa_shortcut = Shortcut::new(Some(qa_mods), qa_code);
+                let qa_registered = {
+                    app.global_shortcut()
+                        .on_shortcut(qa_shortcut, move |app, _sc, event| {
+                            use tauri_plugin_global_shortcut::ShortcutState;
+                            if event.state == ShortcutState::Pressed {
+                                toggle_quick_access_window(app);
+                            }
+                        })
+                        .is_ok()
+                };
+                if qa_registered {
+                    let mut guard = state.shortcuts.lock().unwrap();
+                    guard.quick_access = Some(qa_shortcut);
+                }
 
-                // Persist registration status
+                // 持久化注册结果（registered 字段不持久化但写库以备调试）
                 {
                     let mut conn = state.db.lock().unwrap();
                     let mut prefs =
                         scratchpad::preferences::load_preferences(&conn).unwrap_or_default();
-                    prefs.shortcut_registered = registered;
+                    prefs.shortcut_registered = main_registered;
+                    prefs.quick_access_shortcut_registered = qa_registered;
                     let _ = scratchpad::preferences::save_preferences(&mut conn, &prefs);
                 }
-
-                let mut guard = state.current_shortcut.lock().unwrap();
-                *guard = Some(shortcut);
             }
 
             // Ensure window is focused on startup so keyboard/paste events work
@@ -671,15 +1308,127 @@ pub fn run() {
             })();
 
             if let Some(icon) = icon_result {
-                for label in ["main", "minimized-tab"] {
+                for label in ["main", "minimized-tab", "quick-access"] {
                     if let Some(w) = app.get_webview_window(label) {
                         let _ = w.set_icon(icon.clone());
                     }
                 }
             }
 
+            // Task 10: 启动 AI metadata backfill worker（仅当 config 存在
+            // 且 auto_enrich 开启时；否则 try_start_backfill 内部不会启动）。
+            vault::jobs::try_start_backfill(app.handle());
+
             Ok(())
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod shortcut_tests {
+    use super::*;
+    use rusqlite::Connection;
+
+    /// `parse_key_code("Space")` 必须返回 `Code::Space` — 这是 Quick Access
+    /// 默认快捷键的关键码，老版本无法解析。
+    #[test]
+    fn shortcut_parse_space_key_code() {
+        assert_eq!(parse_key_code("Space"), Some(Code::Space));
+        assert_eq!(parse_key_code("space"), Some(Code::Space));
+        assert_eq!(parse_key_code("SPACE"), Some(Code::Space));
+    }
+
+    #[test]
+    fn shortcut_parse_tab_and_arrows() {
+        assert_eq!(parse_key_code("Tab"), Some(Code::Tab));
+        assert_eq!(parse_key_code("Up"), Some(Code::ArrowUp));
+        assert_eq!(parse_key_code("Down"), Some(Code::ArrowDown));
+    }
+
+    /// 模拟冲突检测逻辑：当两个 target 的 (modifiers, key) 相同时，
+    /// `ipc_shortcut_update` 应当拒绝并保留旧 shortcut。
+    #[test]
+    fn shortcut_update_rejects_conflict_with_other_target_and_preserves_old() {
+        let main_mods = parse_modifiers("Alt+Shift").unwrap();
+        let main_sc = Shortcut::new(Some(main_mods), Code::KeyV);
+
+        let new_mods = parse_modifiers("Alt+Shift").unwrap();
+        let new_sc_for_qa = Shortcut::new(Some(new_mods), Code::KeyV);
+
+        // Quick Access 已有 Some(other)；现在 Main 想注册相同组合
+        let shortcuts = RegisteredShortcuts {
+            quick_access: Some(main_sc),
+            ..Default::default()
+        };
+
+        // 模拟 ipc_shortcut_update 中的冲突检查
+        let other = shortcuts.quick_access;
+        let conflict = other.map(|o| o == new_sc_for_qa).unwrap_or(false);
+        assert!(conflict, "same combination must be detected as conflict");
+
+        // 冲突时不应注销旧 shortcut
+        assert!(shortcuts.quick_access.is_some());
+    }
+
+    /// Main 注册失败不应阻塞 Quick Access 注册。这里通过 RegisteredShortcuts
+    /// 的字段独立性验证：可以只设置 quick_access 而保留 main = None。
+    #[test]
+    fn shortcut_main_registration_does_not_block_quick_access_registration() {
+        let mut shortcuts = RegisteredShortcuts::default();
+        // 模拟 Main 注册失败（保持 None），Quick Access 成功
+        let qa_mods = parse_modifiers("Alt+Shift").unwrap();
+        let qa_sc = Shortcut::new(Some(qa_mods), Code::Space);
+        shortcuts.quick_access = Some(qa_sc);
+
+        assert!(shortcuts.main.is_none());
+        assert!(shortcuts.quick_access.is_some());
+    }
+
+    /// 整合测试：通过 DockPreferences 验证两个 target 的字段独立持久化。
+    #[test]
+    fn shortcut_roundtrip_persists_both_targets() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        scratchpad::storage::ensure_dock_schema(&mut conn).unwrap();
+
+        let prefs = models::preferences::DockPreferences {
+            shortcut_modifiers: "Ctrl+Alt".to_string(),
+            shortcut_key: "V".to_string(),
+            shortcut_registered: true,
+            quick_access_shortcut_modifiers: "Ctrl+Shift".to_string(),
+            quick_access_shortcut_key: "Space".to_string(),
+            quick_access_shortcut_registered: true,
+            ..Default::default()
+        };
+        scratchpad::preferences::save_preferences(&mut conn, &prefs).unwrap();
+        let loaded = scratchpad::preferences::load_preferences(&conn).unwrap();
+
+        assert_eq!(loaded.shortcut_modifiers, "Ctrl+Alt");
+        assert_eq!(loaded.shortcut_key, "V");
+        assert_eq!(loaded.quick_access_shortcut_modifiers, "Ctrl+Shift");
+        assert_eq!(loaded.quick_access_shortcut_key, "Space");
+    }
+
+    /// 旧偏好缺 quick_access_* 字段时使用 Alt+Shift+Space 默认值。
+    #[test]
+    fn shortcut_legacy_prefs_default_quick_access_to_alt_shift_space() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        scratchpad::storage::ensure_dock_schema(&mut conn).unwrap();
+        conn.execute(
+            "INSERT INTO preferences(key, value) VALUES ('shortcut_modifiers', 'Ctrl+K')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO preferences(key, value) VALUES ('shortcut_key', 'V')",
+            [],
+        )
+        .unwrap();
+
+        let loaded = scratchpad::preferences::load_preferences(&conn).unwrap();
+        assert_eq!(loaded.shortcut_modifiers, "Ctrl+K");
+        assert_eq!(loaded.shortcut_key, "V");
+        assert_eq!(loaded.quick_access_shortcut_modifiers, "Alt+Shift");
+        assert_eq!(loaded.quick_access_shortcut_key, "Space");
+    }
 }

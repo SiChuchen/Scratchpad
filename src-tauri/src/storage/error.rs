@@ -11,6 +11,10 @@ pub enum StorageError {
     Serialization(#[from] serde_json::Error),
     #[error("migration error: {0}")]
     Migration(String),
+    #[error("validation error: {0}")]
+    Validation(String),
+    #[error("{0}")]
+    Other(String),
 }
 
 pub type StorageResult<T> = Result<T, StorageError>;

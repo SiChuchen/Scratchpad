@@ -116,3 +116,146 @@ pub fn restore_from_tab(app: &tauri::AppHandle) -> Result<(), String> {
     crate::system::tab_controller::restore_main_window(app);
     Ok(())
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VisibilityToggleAction {
+    Show,
+    Hide,
+}
+
+pub fn visibility_toggle_action(is_visible: bool) -> VisibilityToggleAction {
+    if is_visible {
+        VisibilityToggleAction::Hide
+    } else {
+        VisibilityToggleAction::Show
+    }
+}
+
+pub fn should_reset_quick_access_on_focus_loss(label: &str, focused: bool) -> bool {
+    label == "quick-access" && !focused
+}
+
+const QUICK_ACCESS_WIDTH_LOGICAL: f64 = 680.0;
+const QUICK_ACCESS_HEIGHT_LOGICAL: f64 = 480.0;
+const QUICK_ACCESS_MIN_WIDTH_LOGICAL: f64 = 480.0;
+const QUICK_ACCESS_MIN_HEIGHT_LOGICAL: f64 = 340.0;
+
+fn logical_pixels(value: f64, scale_factor: f64) -> i32 {
+    (value * scale_factor).round() as i32
+}
+
+/// Compute the centered, clamped Quick Access geometry in physical pixels.
+/// Target dimensions are logical pixels converted through `scale_factor`.
+pub fn fit_and_center_quick_access(work_area: WorkRect, scale_factor: f64) -> (i32, i32, i32, i32) {
+    let work_width = work_area.right - work_area.left;
+    let work_height = work_area.bottom - work_area.top;
+    let width = logical_pixels(QUICK_ACCESS_WIDTH_LOGICAL, scale_factor).min(work_width * 9 / 10);
+    let height =
+        logical_pixels(QUICK_ACCESS_HEIGHT_LOGICAL, scale_factor).min(work_height * 9 / 10);
+    let x = work_area.left + (work_width - width) / 2;
+    let y = work_area.top + (work_height - height) / 2;
+    (x, y, width, height)
+}
+
+/// Compute the scale-aware runtime minimum in physical pixels, clamped to 90%
+/// of the current monitor work area.
+pub fn runtime_min_size(work_area: &WorkRect, scale_factor: f64) -> (i32, i32) {
+    let work_width = work_area.right - work_area.left;
+    let work_height = work_area.bottom - work_area.top;
+    let min_width =
+        logical_pixels(QUICK_ACCESS_MIN_WIDTH_LOGICAL, scale_factor).min(work_width * 9 / 10);
+    let min_height =
+        logical_pixels(QUICK_ACCESS_MIN_HEIGHT_LOGICAL, scale_factor).min(work_height * 9 / 10);
+    (min_width, min_height)
+}
+
+/// Work-area rectangle in physical pixels. Mirrors `windows_sys::Win32::Foundation::RECT`
+/// but kept as a plain struct so the pure helper is testable without depending on Win32.
+#[derive(Debug, Clone, Copy)]
+pub struct WorkRect {
+    pub left: i32,
+    pub top: i32,
+    pub right: i32,
+    pub bottom: i32,
+}
+
+impl WorkRect {
+    pub fn new(left: i32, top: i32, right: i32, bottom: i32) -> Self {
+        Self {
+            left,
+            top,
+            right,
+            bottom,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fit_and_center_quick_access_uses_logical_target_at_100_percent() {
+        let work = WorkRect::new(0, 0, 1920, 1080);
+        let (x, y, w, h) = fit_and_center_quick_access(work, 1.0);
+        assert_eq!((w, h), (680, 480));
+        assert_eq!((x, y), ((1920 - 680) / 2, (1080 - 480) / 2));
+    }
+
+    #[test]
+    fn fit_and_center_quick_access_scales_logical_target() {
+        let work = WorkRect::new(0, 0, 2560, 1440);
+        assert_eq!(fit_and_center_quick_access(work, 1.25).2, 850);
+        assert_eq!(fit_and_center_quick_access(work, 1.25).3, 600);
+        assert_eq!(fit_and_center_quick_access(work, 1.5).2, 1020);
+        assert_eq!(fit_and_center_quick_access(work, 1.5).3, 720);
+    }
+
+    #[test]
+    fn fit_and_center_quick_access_clamps_small_work_area() {
+        let work = WorkRect::new(0, 0, 800, 500);
+        let (x, y, w, h) = fit_and_center_quick_access(work, 1.0);
+        assert_eq!((w, h), (680, 450));
+        assert_eq!((x, y), ((800 - 680) / 2, (500 - 450) / 2));
+    }
+
+    #[test]
+    fn fit_and_center_quick_access_handles_negative_monitor_coordinates() {
+        let work = WorkRect::new(-1920, 0, 0, 1080);
+        let (x, y, w, h) = fit_and_center_quick_access(work, 1.0);
+        assert_eq!((w, h), (680, 480));
+        assert_eq!((x, y), (-1920 + (1920 - 680) / 2, (1080 - 480) / 2));
+    }
+
+    #[test]
+    fn runtime_min_size_is_scale_aware_and_clamped() {
+        let large = WorkRect::new(0, 0, 2560, 1440);
+        assert_eq!(runtime_min_size(&large, 1.0), (480, 340));
+        assert_eq!(runtime_min_size(&large, 1.5), (720, 510));
+
+        let small = WorkRect::new(0, 0, 400, 300);
+        assert_eq!(runtime_min_size(&small, 1.5), (360, 270));
+    }
+
+    #[test]
+    fn quick_access_focus_loss_resets_sensitive_values_only() {
+        assert!(should_reset_quick_access_on_focus_loss(
+            "quick-access",
+            false
+        ));
+        assert!(!should_reset_quick_access_on_focus_loss(
+            "quick-access",
+            true
+        ));
+        assert!(!should_reset_quick_access_on_focus_loss("main", false));
+    }
+
+    #[test]
+    fn visible_windows_hide_and_hidden_windows_show() {
+        assert_eq!(visibility_toggle_action(true), VisibilityToggleAction::Hide);
+        assert_eq!(
+            visibility_toggle_action(false),
+            VisibilityToggleAction::Show
+        );
+    }
+}

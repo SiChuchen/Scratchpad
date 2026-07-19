@@ -7,14 +7,17 @@
   import { messages } from '$lib/i18n'
   import { open } from '@tauri-apps/plugin-dialog'
   import { relaunch } from '@tauri-apps/plugin-process'
+  import VaultLlmConfig from '$lib/components/vault/VaultLlmConfig.svelte'
+  import { captureShortcutFromEvent } from '$lib/utils/shortcut-capture'
 
   interface Props {
     preferences: DockPreferences
     onChange: (next: DockPreferences) => void
     onBack: () => void
+    notify?: (text: string, kind?: 'success' | 'error') => void
   }
 
-  let { preferences, onChange, onBack }: Props = $props()
+  let { preferences, onChange, onBack, notify }: Props = $props()
 
   let installedFonts = $state<string[]>([])
   let zhFontQuery = $state('')
@@ -48,59 +51,81 @@
 
   async function changeDataDir() {
     try {
-      const path = await open({ directory: true, title: '选择数据目录' })
+      const path = await open({ directory: true, title: messages.settings.selectDataDirTitle })
       if (!path) return
       const info = await dockApi.setDataDir(path)
       dataDirInfo = info
       dataDirInput = path
       dataDirChanged = true
     } catch (e) {
-      alert(String(e))
+      const msg = String(e)
+      if (notify) {
+        notify(`${messages.settings.changeDataDirFailed}: ${msg}`, 'error')
+      }
     }
   }
 
-  // Shortcut state
+  // Shortcut state — dual shortcuts
   let shortcutOpen = $state(true)
-  let recording = $state(false)
-  let shortcutStatus = $state<'idle' | 'ok' | 'failed'>('idle')
+  let recordingTarget = $state<'main' | 'quickAccess' | null>(null)
+  let mainShortcutStatus = $state<'idle' | 'ok' | 'failed'>('idle')
+  let quickAccessShortcutStatus = $state<'idle' | 'ok' | 'failed'>('idle')
+  let shortcutConflictMsg = $state('')
 
-  function modifiersToString(mods: { alt: boolean; ctrl: boolean; shift: boolean; meta: boolean }): string {
-    const parts: string[] = []
-    if (mods.ctrl) parts.push('Ctrl')
-    if (mods.alt) parts.push('Alt')
-    if (mods.shift) parts.push('Shift')
-    if (mods.meta) parts.push('Meta')
-    return parts.join('+')
+  function startRecordingMain() {
+    recordingTarget = 'main'
+    shortcutConflictMsg = ''
   }
-
-  function startRecording() {
-    recording = true
+  function startRecordingQuickAccess() {
+    recordingTarget = 'quickAccess'
+    shortcutConflictMsg = ''
   }
 
   function handleKeyCapture(e: KeyboardEvent) {
-    if (!recording) return
+    if (!recordingTarget) return
     e.preventDefault()
     e.stopPropagation()
 
-    const mods = { alt: e.altKey, ctrl: e.ctrlKey, shift: e.shiftKey, meta: e.metaKey }
-    const hasMod = mods.alt || mods.ctrl || mods.shift || mods.meta
-    // Ignore standalone modifiers or unknown keys
-    if (!hasMod || e.key === 'Alt' || e.key === 'Control' || e.key === 'Shift' || e.key === 'Meta' || e.key.length > 1 && !e.key.startsWith('F')) {
-      return
-    }
-    recording = false
+    // 使用结构化的 {modifiers, key}，避免多修饰键下字符串拆分错误。
+    // 详见 src/lib/utils/shortcut-capture.ts。
+    const captured = captureShortcutFromEvent(e)
+    if (!captured) return
 
-    const key = e.key.length === 1 ? e.key.toUpperCase() : e.key
-    const modifiers = modifiersToString(mods)
-    dockApi.updateShortcut(modifiers, key).then((status) => {
-      shortcutStatus = status.registered ? 'ok' : 'failed'
-      onChange({ ...preferences, shortcutModifiers: status.modifiers, shortcutKey: status.key, shortcutRegistered: status.registered })
-    }).catch(() => {
-      shortcutStatus = 'failed'
+    const target = recordingTarget
+    recordingTarget = null
+    const { modifiers, key } = captured
+    dockApi.updateShortcut(target, modifiers, key).then((status) => {
+      shortcutConflictMsg = ''
+      if (target === 'main') {
+        mainShortcutStatus = status.registered ? 'ok' : 'failed'
+        onChange({
+          ...preferences,
+          shortcutModifiers: status.modifiers,
+          shortcutKey: status.key,
+          shortcutRegistered: status.registered,
+        })
+      } else {
+        quickAccessShortcutStatus = status.registered ? 'ok' : 'failed'
+        onChange({
+          ...preferences,
+          quickAccessShortcutModifiers: status.modifiers,
+          quickAccessShortcutKey: status.key,
+          quickAccessShortcutRegistered: status.registered,
+        })
+      }
+    }).catch((err) => {
+      // 冲突或注册失败 — 保留用户原设置，显示内联提示
+      shortcutConflictMsg = String(err)
+      if (target === 'main') {
+        mainShortcutStatus = 'failed'
+      } else {
+        quickAccessShortcutStatus = 'failed'
+      }
     })
   }
 
-  const shortcutLabel = $derived(`${preferences.shortcutModifiers}+${preferences.shortcutKey}`)
+  const mainShortcutLabel = $derived(`${preferences.shortcutModifiers}+${preferences.shortcutKey}`)
+  const quickAccessShortcutLabel = $derived(`${preferences.quickAccessShortcutModifiers}+${preferences.quickAccessShortcutKey}`)
 
   // Section open/close state
   let themeOpen = $state(true)
@@ -154,7 +179,8 @@
     // Parse proxy into IP + port
     parseProxy(preferences.updateProxy)
     // Sync shortcut status
-    shortcutStatus = preferences.shortcutRegistered ? 'ok' : 'failed'
+    mainShortcutStatus = preferences.shortcutRegistered ? 'ok' : 'failed'
+    quickAccessShortcutStatus = preferences.quickAccessShortcutRegistered ? 'ok' : 'failed'
     loadDataDirInfo()
   })
 
@@ -269,6 +295,7 @@
     const defaultZh = installedFonts.find(f => f === 'Microsoft YaHei') || 'Microsoft YaHei'
     const defaultEn = installedFonts.find(f => f === 'Segoe UI') || 'Segoe UI'
     onChange({
+      ...preferences,
       themeMode: 'system',
       themePresetId: 'dark-glass',
       customBasePresetId: '',
@@ -277,10 +304,6 @@
       contentTextSizePx: 14,
       spacingPreset: 'normal',
       radiusPreset: 'normal',
-      dockPositionX: preferences.dockPositionX,
-      dockPositionY: preferences.dockPositionY,
-      dockWidth: preferences.dockWidth,
-      dockHeight: preferences.dockHeight,
       dockEdgeAnchor: 'right',
       dockMinimized: false,
       fontFamilyZh: defaultZh,
@@ -289,14 +312,20 @@
       shortcutModifiers: 'Alt+Shift',
       shortcutKey: 'V',
       shortcutRegistered: false,
+      quickAccessShortcutModifiers: 'Alt+Shift',
+      quickAccessShortcutKey: 'Space',
+      quickAccessShortcutRegistered: false,
       updateProxy: '',
-      language: preferences.language,
       autoCleanupDays: 0,
+      // 注意：handleReset 不删除 LLM 配置；AI 配置只能通过该区域的显式"删除配置"操作移除
     })
     proxyType = 'http'
     proxyIp = ''
     proxyPort = ''
     proxyErrors = []
+    // 尝试恢复两个快捷键到默认
+    dockApi.updateShortcut('main', 'Alt+Shift', 'V').catch(() => {})
+    dockApi.updateShortcut('quickAccess', 'Alt+Shift', 'Space').catch(() => {})
   }
 
   async function handleCheckUpdate() {
@@ -341,10 +370,15 @@
   <div class="settings-body">
     <!-- Data directory section -->
     <div class="section">
-      <div class="section-header" onclick={() => dataDirOpen = !dataDirOpen}>
+      <button
+        type="button"
+        class="section-header"
+        aria-expanded={dataDirOpen}
+        onclick={() => dataDirOpen = !dataDirOpen}
+      >
         <span class="section-label">{messages.settings.dataDir}</span>
-        <span class="chevron" class:open={dataDirOpen}>▾</span>
-      </div>
+        <span class="chevron" class:open={dataDirOpen} aria-hidden="true">▾</span>
+      </button>
       {#if dataDirOpen}
         <div class="section-body">
           {#if dataDirInfo}
@@ -362,7 +396,7 @@
               <button class="record-btn" onclick={() => relaunch()}>{messages.settings.dataDirRestartBtn}</button>
             {/if}
           {:else}
-            <p class="section-subtitle">加载中...</p>
+            <p class="section-subtitle">{messages.settings.loading}</p>
           {/if}
         </div>
       {/if}
@@ -392,17 +426,30 @@
 
     <!-- Theme section -->
     <div class="section">
-      <div class="section-header" onclick={() => themeOpen = !themeOpen}>
+      <button
+        type="button"
+        class="section-header"
+        aria-expanded={themeOpen}
+        onclick={() => themeOpen = !themeOpen}
+      >
         <span class="section-label">{messages.settings.theme}</span>
-        <span class="chevron" class:open={themeOpen}>▾</span>
-      </div>
+        <span class="chevron" class:open={themeOpen} aria-hidden="true">▾</span>
+      </button>
       {#if themeOpen}
         <div class="section-body">
           <div class="row">
             <span class="label">{messages.settings.followSystem}</span>
-            <div class="toggle" class:active={themeAuto} onclick={toggleThemeAuto}>
+            <button
+              type="button"
+              class="toggle"
+              class:active={themeAuto}
+              role="switch"
+              aria-checked={themeAuto}
+              aria-label={messages.settings.followSystem}
+              onclick={toggleThemeAuto}
+            >
               <div class="toggle-knob"></div>
-            </div>
+            </button>
           </div>
           {#if !themeAuto}
             <div class="theme-cards">
@@ -424,10 +471,15 @@
 
     <!-- Font section -->
     <div class="section">
-      <div class="section-header" onclick={() => fontOpen = !fontOpen}>
+      <button
+        type="button"
+        class="section-header"
+        aria-expanded={fontOpen}
+        onclick={() => fontOpen = !fontOpen}
+      >
         <span class="section-label">{messages.settings.font}</span>
-        <span class="chevron" class:open={fontOpen}>▾</span>
-      </div>
+        <span class="chevron" class:open={fontOpen} aria-hidden="true">▾</span>
+      </button>
       {#if fontOpen}
         <div class="section-body">
           <div class="row">
@@ -486,10 +538,15 @@
 
     <!-- Update section -->
     <div class="section">
-      <div class="section-header" onclick={() => updateOpen = !updateOpen}>
+      <button
+        type="button"
+        class="section-header"
+        aria-expanded={updateOpen}
+        onclick={() => updateOpen = !updateOpen}
+      >
         <span class="section-label">{messages.settings.update}</span>
-        <span class="chevron" class:open={updateOpen}>▾</span>
-      </div>
+        <span class="chevron" class:open={updateOpen} aria-hidden="true">▾</span>
+      </button>
       {#if updateOpen}
         <div class="section-body">
           <p class="section-subtitle">{messages.settings.proxyNote}</p>
@@ -564,27 +621,50 @@
 
     <!-- Shortcut section -->
     <div class="section">
-      <div class="section-header" onclick={() => shortcutOpen = !shortcutOpen}>
+      <button
+        type="button"
+        class="section-header"
+        aria-expanded={shortcutOpen}
+        onclick={() => shortcutOpen = !shortcutOpen}
+      >
         <span class="section-label">{messages.settings.shortcut}</span>
-        <span class="chevron" class:open={shortcutOpen}>▾</span>
-      </div>
+        <span class="chevron" class:open={shortcutOpen} aria-hidden="true">▾</span>
+      </button>
       {#if shortcutOpen}
         <div class="section-body">
+          <!-- 主窗口 -->
           <div class="row">
-            <span class="label">{messages.settings.shortcutStatus}</span>
-            <span class="shortcut-status" class:ok={preferences.shortcutRegistered} class:failed={!preferences.shortcutRegistered}>
+            <span class="label">{messages.settings.shortcutMainLabel}</span>
+            <span class="shortcut-status" class:ok={preferences.shortcutRegistered} class:failed={!preferences.shortcutRegistered} aria-live="polite">
               {preferences.shortcutRegistered ? messages.settings.shortcutRegistered : messages.settings.shortcutFailed}
             </span>
           </div>
           <div class="row">
-            <span class="label">快捷键</span>
-            <span class="shortcut-key">{shortcutLabel}</span>
-          </div>
-          <div class="row">
-            <button class="record-btn" onclick={startRecording} disabled={recording}>
-              {recording ? messages.settings.shortcutRecording : messages.settings.shortcutRecord}
+            <span class="label">{messages.settings.shortcut}</span>
+            <span class="shortcut-key">{mainShortcutLabel}</span>
+            <button class="record-btn" onclick={startRecordingMain} disabled={recordingTarget !== null}>
+              {recordingTarget === 'main' ? messages.settings.shortcutRecording : messages.settings.shortcutRecord}
             </button>
           </div>
+
+          <!-- Quick access -->
+          <div class="row" style="margin-top:0.3rem">
+            <span class="label">{messages.settings.shortcutQuickLabel}</span>
+            <span class="shortcut-status" class:ok={preferences.quickAccessShortcutRegistered} class:failed={!preferences.quickAccessShortcutRegistered} aria-live="polite">
+              {preferences.quickAccessShortcutRegistered ? messages.settings.shortcutRegistered : messages.settings.shortcutFailed}
+            </span>
+          </div>
+          <div class="row">
+            <span class="label">{messages.settings.shortcut}</span>
+            <span class="shortcut-key">{quickAccessShortcutLabel}</span>
+            <button class="record-btn" onclick={startRecordingQuickAccess} disabled={recordingTarget !== null}>
+              {recordingTarget === 'quickAccess' ? messages.settings.shortcutRecording : messages.settings.shortcutRecord}
+            </button>
+          </div>
+
+          {#if shortcutConflictMsg}
+            <p class="proxy-error" role="alert">{messages.settings.shortcutConflict}: {shortcutConflictMsg}</p>
+          {/if}
           <p class="section-subtitle">{messages.settings.shortcutHint}</p>
         </div>
       {/if}
@@ -592,18 +672,30 @@
 
     <!-- System section -->
     <div class="section">
-      <div class="section-header" onclick={() => systemOpen = !systemOpen}>
+      <button
+        type="button"
+        class="section-header"
+        aria-expanded={systemOpen}
+        onclick={() => systemOpen = !systemOpen}
+      >
         <span class="section-label">{messages.settings.system}</span>
-        <span class="chevron" class:open={systemOpen}>▾</span>
-      </div>
+        <span class="chevron" class:open={systemOpen} aria-hidden="true">▾</span>
+      </button>
       {#if systemOpen}
         <div class="section-body">
           <div class="row">
             <span class="label">{messages.settings.launchOnStartup}</span>
-            <div class="toggle" class:active={preferences.launchOnStartup}
-                 onclick={() => update({ launchOnStartup: !preferences.launchOnStartup })}>
+            <button
+              type="button"
+              class="toggle"
+              class:active={preferences.launchOnStartup}
+              role="switch"
+              aria-checked={preferences.launchOnStartup}
+              aria-label={messages.settings.launchOnStartup}
+              onclick={() => update({ launchOnStartup: !preferences.launchOnStartup })}
+            >
               <div class="toggle-knob"></div>
-            </div>
+            </button>
           </div>
           <div class="row">
             <span class="label">{messages.settings.autoCleanup}</span>
@@ -625,17 +717,30 @@
 
     <!-- Advanced section -->
     <div class="section">
-      <div class="section-header" onclick={() => advancedOpen = !advancedOpen}>
+      <button
+        type="button"
+        class="section-header"
+        aria-expanded={advancedOpen}
+        onclick={() => advancedOpen = !advancedOpen}
+      >
         <span class="section-label">{messages.settings.advanced}</span>
-        <span class="chevron" class:open={advancedOpen}>▾</span>
-      </div>
+        <span class="chevron" class:open={advancedOpen} aria-hidden="true">▾</span>
+      </button>
       {#if advancedOpen}
         <div class="section-body">
           <div class="row">
             <span class="label">{messages.settings.expertMode}</span>
-            <div class="toggle" class:active={expertMode} onclick={() => expertMode = !expertMode}>
+            <button
+              type="button"
+              class="toggle"
+              class:active={expertMode}
+              role="switch"
+              aria-checked={expertMode}
+              aria-label={messages.settings.expertMode}
+              onclick={() => expertMode = !expertMode}
+            >
               <div class="toggle-knob"></div>
-            </div>
+            </button>
           </div>
           {#if expertMode}
             <div class="expert-list">
@@ -661,6 +766,13 @@
           {/if}
         </div>
       {/if}
+    </div>
+
+    <!-- Vault LLM config -->
+    <div class="section">
+      <div class="section-body">
+        <VaultLlmConfig />
+      </div>
     </div>
 
     <!-- Danger zone -->
@@ -776,6 +888,12 @@
     padding: 0.3rem 0;
     cursor: pointer;
     user-select: none;
+    width: 100%;
+    background: none;
+    border: none;
+    font-family: inherit;
+    color: inherit;
+    text-align: left;
   }
 
   .section-label {
@@ -821,11 +939,13 @@
     width: 2rem;
     height: 1.1rem;
     background: var(--border-default);
+    border: none;
     border-radius: 0.55rem;
     position: relative;
     cursor: pointer;
     transition: background 0.2s;
     flex-shrink: 0;
+    padding: 0;
   }
 
   .toggle.active {

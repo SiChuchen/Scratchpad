@@ -1,4 +1,43 @@
 export interface LocaleMessages {
+  workspace: {
+    scope: { temporary: string; all: string; saved: string }
+    kind: { text: string; image: string; file: string; credential: string; bookmark: string; note: string }
+    searchPlaceholder: string
+    temporaryRetention: string
+    createText: string
+    save: string
+    unsave: string
+    delete: string
+    undo: string
+    allKinds: string
+    copy: string
+    copied: string
+    temporary: string
+    savedLabel: string
+    cleanupUntil: string
+    clearSearch: string
+    searching: string
+    kindFilter: string
+    results: string
+    pasteHint: string
+    noResults: string
+    noContent: string
+    loadingDetail: string
+    back: string
+    edit: string
+    rename: string
+    cancel: string
+    unavailableImage: string
+    unavailableFile: string
+    usefulInformation: string
+    notes: string
+    tags: string
+    openLink: string
+    reveal: string
+    hide: string
+    notices: { saved:string; unsaved:string; deleted:string; deleteFailedRestored:string; undoExpired:string; copyFailed:string; refreshFailed:string }
+    contentMissing: string
+  }
   nav: {
     home: string
     all: string
@@ -7,6 +46,108 @@ export interface LocaleMessages {
     pin: string
     unpin: string
     minimize: string
+  }
+  library: {
+    title: string
+    searchPlaceholder: string
+    all: string
+    credential: string
+    bookmark: string
+    note: string
+    create: string
+    edit: string
+    delete: string
+    empty: string
+    noMatch: string
+    aiUnderstanding: string
+    localOnly: string
+    copyLabel: string
+    copiedLabel: string
+    showLabel: string
+    hideLabel: string
+    manualTag: string
+    aiTag: string
+    // Capture / editor form labels (Task 19 regression fixes).
+    kind: string
+    titleLabel: string
+    notesLabel: string
+    fieldsLabel: string
+    addField: string
+    fieldKeyPlaceholder: string
+    fieldValuePlaceholder: string
+    titlePlaceholder: string
+    tagsPlaceholder: string
+    created: string
+    saved: string
+    removeTagFailed: string
+    aiError: string
+    openQuickAccess: string
+    quickAccess: string
+  }
+  quickAccess: {
+    record: string
+    search: string
+    inputPlaceholder: string
+    markSensitive: string
+    removeSensitiveMark: string
+    localReady: string
+    aiEnhancing: string
+    aiMerged: string
+    aiFallback: string
+    outboundAudit: string
+    save: string
+    saved: string
+    searchPlaceholder: string
+    noSelection: string
+    noResults: string
+    // Audit dialog and AI tag chip labels (Task 19 regression fixes).
+    saving: string
+    close: string
+    auditProvider: string
+    auditModel: string
+    auditSentAt: string
+    convertToManualPrefix: string
+    removeAiTagPrefix: string
+    sensitiveMetadataRejected: string
+    aiNotConfigured: string
+    autoEnrichDisabled: string
+    configureNow: string
+    openSettingsFailed: string
+    openFailed: string
+    usefulInformation: string
+    modeLabel: string
+    copyText: string
+    copyImage: string
+    copyFile: string
+    copyPassword: string
+    copyNote: string
+    manageInMain: string
+    openedInMain: string
+  }
+  aiSettings: {
+    title: string
+    status: string
+    autoEnrich: string
+    autoSearch: string
+    provider: string
+    apiKey: string
+    savedKeyPlaceholder: string
+    saveAndVerify: string
+    retest: string
+    deleteConfig: string
+    advanced: string
+    model: string
+    baseUrl: string
+    sendCapture: string
+    sendSearch: string
+    noCatalog: string
+    noSensitiveOriginal: string
+    localKey: string
+    noEncryption: string
+    clipboardClear: string
+    authBlocked: string
+    cooldown: string
+    dataNotice: string
   }
   home: {
     search: string
@@ -105,6 +246,9 @@ export interface LocaleMessages {
     shortcutRecord: string
     shortcutRecording: string
     shortcutHint: string
+    shortcutMainLabel: string
+    shortcutQuickLabel: string
+    shortcutConflict: string
     language: string
     restartHint: string
     restartNow: string
@@ -115,6 +259,9 @@ export interface LocaleMessages {
     proxyErrPortRange: string
     proxyErrNoProtocol: string
     proxyErrNoPort: string
+    loading: string
+    selectDataDirTitle: string
+    changeDataDirFailed: string
   }
   toast: {
     loadFailed: string
