@@ -250,14 +250,6 @@ export interface ProviderPreset {
 // ---- 事件 ----------------------------------------------------------------
 
 /**
- * Tag 更新事件 payload（保留向后兼容；后续 Task 13 会重构）。
- */
-export interface TagUpdateEvent {
-  id: string
-  tags: string[]
-}
-
-/**
  * LLM 错误事件 payload。
  */
 export interface LlmErrorEvent {

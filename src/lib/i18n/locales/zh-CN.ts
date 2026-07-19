@@ -10,7 +10,6 @@ const zhCN: LocaleMessages = {
     pin: '置顶',
     unpin: '取消置顶',
     minimize: '最小化',
-    library: '资料库',
   },
   library: {
     title: '资料库',

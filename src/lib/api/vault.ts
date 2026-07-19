@@ -1,12 +1,9 @@
 // src/lib/api/vault.ts
 //
-// Vault (资料库) IPC 封装。每个方法对应一个在 `src-tauri/src/lib.rs`
+// Structured-content IPC adapter. Each method maps to a command registered in
+// `src-tauri/src/lib.rs`.
 // 注册的 `ipc_vault_*` 命令；参数顺序、命名都与 Rust 端 `#[tauri::command]`
 // 一致（snake_case 在 Tauri 边界自动转 camelCase 调用参数）。
-//
-// 新的主 API 与 Task 8-10 的命令一一对齐。下方 `@deprecated` 别名只为
-// 让 Task 12-14 之前仍引用旧接口的 Svelte 组件继续 typecheck；后续
-// 重构会逐一替换并删除这些别名。
 
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
@@ -26,7 +23,6 @@ import type {
   VaultEntryInput,
   VaultEntrySummary,
   VaultSearchHit,
-  TagUpdateEvent,
   LlmErrorEvent,
 } from '$lib/types/vault'
 
@@ -216,78 +212,9 @@ export const vaultApi = {
     return invoke<void>('ipc_clipboard_copy_text', { text, sensitive })
   },
 
-  // ---- 兼容别名（保留以便外部调用；新代码请使用上面的 typed API） ------
-  //
-  // 早期迭代中由旧 Svelte 组件（CredentialForm / BookmarkForm / NoteForm /
-  // SmartImportDialog / LlmSearchPanel / SearchBar / TagEditor）使用的方法
-  // 别名。Task 19 已删除这些组件，但 API 别名本身仍然保留，外部如有引用
-  // 不至于 broken。
-
-  /** @deprecated 用 searchLocal() 替代。 */
-  search(query: string, limit = 20): Promise<VaultSearchHit[]> {
-    return invoke<VaultSearchHit[]>('ipc_vault_search', { query, limit })
-  },
-
-  /** @deprecated 改用 planSearch + searchLocal 组合。 */
-  llmSearch(query: string, limit = 20): Promise<VaultSearchHit[]> {
-    // 旧行为：等价于"原查询 + 无 plan"的本地检索；保留以避免运行时报错。
-    return invoke<VaultSearchHit[]>('ipc_vault_search_hybrid_local', {
-      query,
-      plan: null,
-      limit,
-    })
-  },
-
-  /** @deprecated 用 updateManualTags() 替代。 */
-  updateTags(id: string, tags: string[]): Promise<VaultEntryDetail> {
-    return invoke<VaultEntryDetail>('ipc_vault_update_manual_tags', { id, tags })
-  },
-
-  /** @deprecated 用 refreshAiMetadata() 替代。 */
-  retag(id: string): Promise<void> {
-    return invoke<void>('ipc_vault_refresh_ai_metadata', { id })
-  },
-
-  /** @deprecated 用 verifyAndSaveLlm() 替代；此处保留以避免组件类型错误。 */
-  setLlmConfig(config: {
-    providerId: string
-    baseUrl: string
-    apiKey: string
-    model: string
-  }): Promise<void> {
-    return invoke<void>('ipc_vault_verify_and_save_llm', {
-      config: {
-        providerId: config.providerId,
-        baseUrl: config.baseUrl,
-        apiKey: config.apiKey,
-        model: config.model,
-      },
-    }).then(() => undefined)
-  },
-
-  /** @deprecated 用 verifyAndSaveLlm() 替代。 */
-  testLlm(config: {
-    providerId: string
-    baseUrl: string
-    apiKey: string
-    model: string
-  }): Promise<LlmTestResult> {
-    return invoke<LlmTestResult>('ipc_vault_verify_and_save_llm', {
-      config: {
-        providerId: config.providerId,
-        baseUrl: config.baseUrl,
-        apiKey: config.apiKey,
-        model: config.model,
-      },
-    })
-  },
 }
 
 // ---- 事件订阅 ------------------------------------------------------------
-
-export function onTagsUpdated(cb: (e: TagUpdateEvent) => void): Promise<UnlistenFn> {
-  return listen<TagUpdateEvent>('vault-tags-updated', (e) => cb(e.payload))
-}
 
 export function onLlmError(cb: (e: LlmErrorEvent) => void): Promise<UnlistenFn> {
   return listen<LlmErrorEvent>('vault-llm-error', (e) => cb(e.payload))

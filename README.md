@@ -60,6 +60,14 @@ Images never land in your project directory and won't end up in Git commits.
 | **Favorites** | Click the star button to keep entries permanently, even across restarts |
 | **All** | Browse all entries by time, with filters for text / images / files |
 
+## Content lifecycle
+
+- Main-window paste, drag, and new text enter **Dock** temporarily.
+- Favoriting any item keeps it permanently; unfavoriting returns it to temporary retention.
+- Organized Quick Access capture is saved permanently, with or without AI.
+- Search covers every item that still exists: temporary and saved text, images, files, credentials, bookmarks, and notes.
+- Quick Access is for immediate capture/use; the main window is for ongoing management.
+
 ### Desktop Presence
 
 - **Pin mode** — toggle always-on-top with one click; unpin when you don't need it

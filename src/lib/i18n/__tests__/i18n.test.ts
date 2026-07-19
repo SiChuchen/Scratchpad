@@ -63,6 +63,14 @@ describe('i18n dictionaries', () => {
     expect(en.library.openQuickAccess).toBe('Open quick access')
   })
 
+  it('does not expose library as a separate destination', () => {
+    for (const locale of [zhCN, en]) {
+      expect('library' in locale.nav).toBe(false)
+      expect(JSON.stringify(locale.nav)).not.toContain('资料库')
+      expect(JSON.stringify(locale.nav)).not.toContain('Library')
+    }
+  })
+
   it.each([zhCN, en])('contains the unified workspace language', (locale) => {
     expect(locale.workspace.scope.temporary).toBeTruthy()
     expect(locale.workspace.scope.all).toBeTruthy()

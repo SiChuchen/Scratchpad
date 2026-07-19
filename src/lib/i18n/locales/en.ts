@@ -10,7 +10,6 @@ const en: LocaleMessages = {
     pin: 'Pin on top',
     unpin: 'Unpin',
     minimize: 'Minimize',
-    library: 'Library',
   },
   library: {
     title: 'Library',

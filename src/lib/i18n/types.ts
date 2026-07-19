@@ -46,7 +46,6 @@ export interface LocaleMessages {
     pin: string
     unpin: string
     minimize: string
-    library: string
   }
   library: {
     title: string
