@@ -620,6 +620,19 @@ mod tests {
             0
         );
         assert!(object_exists(&conn, "table", "content_pending_deletes"));
+        assert_eq!(
+            rows_snapshot(
+                &conn,
+                "SELECT name FROM pragma_table_info('content_pending_deletes') ORDER BY cid",
+            ),
+            vec![
+                vec![Value::Text("token".into())],
+                vec![Value::Text("unified_id".into())],
+                vec![Value::Text("created_at".into())],
+                vec![Value::Text("expires_at".into())],
+                vec![Value::Text("status".into())],
+            ]
+        );
         assert!(object_exists(
             &conn,
             "index",
@@ -915,6 +928,8 @@ mod tests {
             rows_snapshot(&conn, "SELECT * FROM content_catalog ORDER BY unified_id");
         let content_fts_before_second_ensure =
             rows_snapshot(&conn, "SELECT * FROM content_fts ORDER BY unified_id");
+        let vault_fts_before_second_ensure =
+            rows_snapshot(&conn, "SELECT * FROM vault_fts ORDER BY entry_id");
         ensure_content_schema(&mut conn, 30).unwrap();
         assert_eq!(
             rows_snapshot(&conn, "SELECT * FROM content_catalog ORDER BY unified_id"),
@@ -923,6 +938,10 @@ mod tests {
         assert_eq!(
             rows_snapshot(&conn, "SELECT * FROM content_fts ORDER BY unified_id"),
             content_fts_before_second_ensure
+        );
+        assert_eq!(
+            rows_snapshot(&conn, "SELECT * FROM vault_fts ORDER BY entry_id"),
+            vault_fts_before_second_ensure
         );
     }
 

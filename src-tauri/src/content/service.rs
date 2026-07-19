@@ -740,6 +740,7 @@ fn source_kind_mismatch(id: &str) -> StorageError {
 #[cfg(test)]
 mod tests {
     use chrono::{DateTime, Utc};
+    use rusqlite::types::Value;
     use rusqlite::{params, Connection};
 
     use super::{
@@ -767,18 +768,24 @@ mod tests {
         conn.query_row(sql, [], |row| row.get(0)).unwrap()
     }
 
+    fn rows_snapshot(conn: &Connection, sql: &str) -> Vec<Vec<Value>> {
+        let mut statement = conn.prepare(sql).unwrap();
+        let columns = statement.column_count();
+        statement
+            .query_map([], |row| {
+                (0..columns)
+                    .map(|column| row.get(column))
+                    .collect::<rusqlite::Result<Vec<Value>>>()
+            })
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap()
+    }
+
     #[test]
     fn failed_projection_write_rolls_back_payload_and_revision() {
         let mut conn = fixture_with_all_kinds();
         let start_revision = revision(&conn);
-        let before = [
-            scalar_i64(&conn, "SELECT COUNT(*) FROM entries"),
-            scalar_i64(&conn, "SELECT COUNT(*) FROM home_entries"),
-            scalar_i64(&conn, "SELECT COUNT(*) FROM note_entries"),
-            scalar_i64(&conn, "SELECT COUNT(*) FROM content_catalog"),
-            scalar_i64(&conn, "SELECT COUNT(*) FROM content_fts"),
-            scalar_i64(&conn, "SELECT COUNT(*) FROM vault_fts"),
-        ];
         conn.execute_batch(
             "CREATE TEMP TABLE content_fts_original AS SELECT * FROM content_fts;
              DROP TABLE content_fts;
@@ -792,6 +799,20 @@ mod tests {
              INSERT INTO content_fts SELECT * FROM content_fts_original;",
         )
         .unwrap();
+        let snapshots = [
+            "SELECT * FROM entries ORDER BY id",
+            "SELECT * FROM home_entries ORDER BY entry_id",
+            "SELECT * FROM note_entries ORDER BY entry_id",
+            "SELECT * FROM vault_entries ORDER BY id",
+            "SELECT * FROM vault_fields ORDER BY entry_id, sort_order, id",
+            "SELECT * FROM vault_tags ORDER BY entry_id, normalized_tag, source",
+            "SELECT * FROM vault_ai_metadata ORDER BY entry_id",
+            "SELECT * FROM content_catalog ORDER BY unified_id",
+            "SELECT * FROM content_fts ORDER BY unified_id",
+            "SELECT * FROM vault_fts ORDER BY entry_id",
+            "SELECT * FROM content_state ORDER BY singleton",
+        ]
+        .map(|sql| (sql, rows_snapshot(&conn, sql)));
 
         let error = crate::scratchpad::storage::create_text_entry_with_revision(
             &mut conn,
@@ -803,17 +824,9 @@ mod tests {
 
         assert!(matches!(error, StorageError::Sqlite(_)));
         assert_eq!(revision(&conn), start_revision);
-        assert_eq!(
-            [
-                scalar_i64(&conn, "SELECT COUNT(*) FROM entries"),
-                scalar_i64(&conn, "SELECT COUNT(*) FROM home_entries"),
-                scalar_i64(&conn, "SELECT COUNT(*) FROM note_entries"),
-                scalar_i64(&conn, "SELECT COUNT(*) FROM content_catalog"),
-                scalar_i64(&conn, "SELECT COUNT(*) FROM content_fts"),
-                scalar_i64(&conn, "SELECT COUNT(*) FROM vault_fts"),
-            ],
-            before
-        );
+        for (sql, before) in snapshots {
+            assert_eq!(rows_snapshot(&conn, sql), before, "changed snapshot: {sql}");
+        }
         assert_eq!(
             scalar_i64(
                 &conn,

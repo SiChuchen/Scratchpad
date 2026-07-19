@@ -1090,40 +1090,127 @@ mod tests {
     #[test]
     fn pending_delete_rows_and_events_contain_only_safe_metadata() {
         let mut conn = fixture_with_all_kinds();
-        conn.execute(
-            "UPDATE vault_fields
-             SET key=' PaSsWoRd ', value='NeverIndexMePassword', is_sensitive=1
-             WHERE id='field-password'",
-            [],
+        let created = crate::vault::storage::create_entry_with_revision(
+            &mut conn,
+            &crate::vault::models::VaultEntryInput {
+                kind: crate::vault::models::EntryKind::Credential,
+                title: "Production console".into(),
+                fields: vec![crate::vault::models::FieldInput {
+                    key: "username".into(),
+                    value: "alice".into(),
+                    is_sensitive: false,
+                }],
+                notes: Some("initial notes".into()),
+                manual_tags: vec!["Initial".into()],
+            },
         )
         .unwrap();
-        conn.execute(
-            "INSERT INTO vault_fields(id, entry_id, key, value, is_sensitive, sort_order)
-             VALUES ('field-token-exact', 'credential-1', ' ToKeN ',
-                     'NeverIndexMeToken', 1, 2)",
-            [],
+        let entry_id = created.value.entry.id;
+        let input = crate::vault::models::VaultEntryInput {
+            kind: crate::vault::models::EntryKind::Credential,
+            title: "NEVERINDEXMEPASSWORD console".into(),
+            fields: vec![
+                crate::vault::models::FieldInput {
+                    key: "username".into(),
+                    value: "alice".into(),
+                    is_sensitive: false,
+                },
+                crate::vault::models::FieldInput {
+                    key: " PaSsWoRd ".into(),
+                    value: "NeverIndexMePassword".into(),
+                    is_sensitive: false,
+                },
+                crate::vault::models::FieldInput {
+                    key: " ToKeN ".into(),
+                    value: "NeverIndexMeToken".into(),
+                    is_sensitive: false,
+                },
+            ],
+            notes: Some("lowercase neverindexmetoken notes".into()),
+            manual_tags: vec!["Access".into(), "NEVERINDEXMETOKEN".into()],
+        };
+        crate::vault::storage::update_entry_with_revision(&mut conn, &entry_id, &input).unwrap();
+        crate::vault::storage::replace_ai_tags_with_revision(
+            &mut conn,
+            &entry_id,
+            &["Useful AI".into(), "neverindexmepassword-ai".into()],
         )
         .unwrap();
-        crate::content::projection::tests::refresh_all_projections(&conn);
-        conn.execute("DELETE FROM vault_fts WHERE entry_id='credential-1'", [])
+        let pending = crate::vault::storage::get_ai_metadata(&conn, &entry_id)
+            .unwrap()
             .unwrap();
-        conn.execute(
-            "INSERT INTO vault_fts(entry_id, title, notes, searchable)
-             VALUES ('credential-1', 'Production login', 'Rotate monthly',
-                     'username alice Access')",
-            [],
+        crate::vault::storage::set_ai_metadata_with_revision(
+            &mut conn,
+            &crate::vault::models::VaultAiMetadata {
+                entry_id: entry_id.clone(),
+                summary: Some("metadata NEVERINDEXMEPASSWORD".into()),
+                search_aliases: vec!["neverindexmetoken alias".into()],
+                content_hash: pending.content_hash,
+                provider_id: Some("validation-provider".into()),
+                model: Some("validation-model".into()),
+                generated_at: Some("2026-07-18T12:00:00+00:00".into()),
+                status: crate::vault::models::AiMetadataStatus::Ready,
+            },
         )
         .unwrap();
+        for table in ["vault_fts", "content_fts"] {
+            let searchable: String = if table == "vault_fts" {
+                conn.query_row(
+                    "SELECT title || ' ' || notes || ' ' || searchable
+                     FROM vault_fts WHERE entry_id=?1",
+                    params![entry_id],
+                    |row| row.get(0),
+                )
+                .unwrap()
+            } else {
+                conn.query_row(
+                    "SELECT title || ' ' || body || ' ' || tags || ' ' || aliases
+                     FROM content_fts WHERE unified_id=?1",
+                    params![format!("vault:{entry_id}")],
+                    |row| row.get(0),
+                )
+                .unwrap()
+            };
+            assert!(searchable.contains("alice"), "{table} lost useful username");
+            assert!(searchable.contains("Access"), "{table} lost useful tag");
+            assert!(
+                searchable.contains("Useful AI"),
+                "{table} lost useful AI tag"
+            );
+            assert!(!searchable.to_lowercase().contains("neverindexme"));
+        }
+        let username_hits = crate::content::service::search(&conn, "alice", None, 10).unwrap();
+        assert!(username_hits
+            .iter()
+            .any(|hit| hit.summary.id == format!("vault:{entry_id}")));
+        for secret_query in ["NeverIndexMePassword", "neverindexmetoken"] {
+            assert!(
+                crate::content::service::search(&conn, secret_query, None, 10)
+                    .unwrap()
+                    .is_empty()
+            );
+        }
         let prepared = prepare_delete(
             &mut conn,
-            "vault:credential-1",
+            &format!("vault:{entry_id}"),
             now(),
             Duration::seconds(10),
         )
         .unwrap();
         let row: (String, String, String, String, String) = conn.query_row("SELECT token, unified_id, created_at, expires_at, status FROM content_pending_deletes", [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))).unwrap();
         assert_eq!(row.0, prepared.token);
-        assert_eq!(row.1, "vault:credential-1");
+        assert_eq!(row.1, format!("vault:{entry_id}"));
+        let pending_columns = conn
+            .prepare("SELECT name FROM pragma_table_info('content_pending_deletes') ORDER BY cid")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(
+            pending_columns,
+            ["token", "unified_id", "created_at", "expires_at", "status"]
+        );
         let serialized = serde_json::to_string(&row).unwrap();
         for forbidden in ["password", "body", "file_path", "fields", "secret-value"] {
             assert!(!serialized.contains(forbidden));
@@ -1149,7 +1236,7 @@ mod tests {
             value: (),
             revision: 12,
             changes: vec![ContentChange {
-                id: "vault:credential-1".into(),
+                id: format!("vault:{entry_id}"),
                 operation: ContentOperation::Retention,
             }],
         }))
@@ -1157,7 +1244,7 @@ mod tests {
         let undo_json = serde_json::to_value(&prepared).unwrap();
         let failure_log_json = serde_json::to_value(ContentDeleteFailedEvent {
             token: prepared.token.clone(),
-            id: "vault:credential-1".into(),
+            id: format!("vault:{entry_id}"),
             code: "content_delete_commit_failed".into(),
         })
         .unwrap();

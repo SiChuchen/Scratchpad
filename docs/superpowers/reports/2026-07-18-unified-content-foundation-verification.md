@@ -33,8 +33,8 @@ The resulting catalog has seven unique rows. Mapping and order are:
   source timestamps and IDs without changing payload order.
 
 Every catalog item has exactly one content_fts row and every Vault payload has
-exactly one vault_fts row. A second ensure call preserves the complete catalog
-and projection snapshots, proving idempotence.
+exactly one vault_fts row. A second ensure call preserves the complete catalog,
+content_fts, and vault_fts snapshots, proving idempotence.
 
 The two requested test filters initially selected zero tests at
 efcbefbd3d9a7391068389d52e35dcf81306c71a. After the upgrade test was added,
@@ -49,20 +49,23 @@ rejects the new Dock text. SQLite does not permit triggers directly on a
 virtual FTS5 table. It then invokes the real create_text_entry_with_revision
 Home mutation.
 
-The forced projection write fails and the transaction leaves all of these
-unchanged: entries, home_entries, note_entries, content_catalog, content_fts,
-vault_fts, and content_state.revision. No production atomicity change was
-necessary. Existing full-suite Vault create/capture tests also verify that
-unified projection failures leave no payload, capture request, catalog, FTS, or
-revision residue.
+The forced projection write fails and ordered, value-level snapshots remain
+identical for entries, both memberships, all Vault payload/field/tag/metadata
+tables, content_catalog, content_fts, vault_fts, and content_state. The existing
+sentinel rows remain unchanged, the rejected payload is absent, and revision is
+unchanged. No production atomicity change was necessary.
 
 ## Sensitive boundary
 
 The exact test-only literals are NeverIndexMePassword and NeverIndexMeToken;
-they are not real credentials. Tests use the case/whitespace variants
- PaSsWoRd  and  ToKeN  with sensitive flags.
+they are not real credentials. The regression uses the production Vault
+create, update, AI-tag, and AI-metadata write paths. Callers submit false
+sensitive flags with the whitespace/case variants ` PaSsWoRd ` and ` ToKeN `;
+the storage boundary recognizes and persists them as sensitive.
 
-- both exact values are absent from every column of vault_fts and content_fts;
+- both exact and case-varied literals are absent from every column of vault_fts
+  and content_fts, including title, notes, manual/AI tags, summary, and aliases;
+- the non-sensitive username and useful manual/AI tags remain searchable;
 - content-changed JSON is restricted to revision and changes, with each change
   restricted to id and operation;
 - undo JSON is restricted to token and expiresAt;
@@ -97,12 +100,16 @@ Reproducible command, run from src-tauri:
 
     cargo run --example create_validation_fixtures -- ..\test-data\unified-validation
 
-The example checks both target names and every SQLite sidecar (-wal, -shm, and
--journal) before creating anything, rejects symlink targets/output directories,
-never opens the application data directory, uses fixed IDs/timestamps/positions,
-cleans all newly created database and sidecar files after any failure, and
-validates the completed databases through read-only Rust connections. SQLite
-file-byte determinism is not promised; logical fixture content is deterministic.
+The example requires the final output path not to exist. It creates a CSPRNG-
+named staging directory with exclusive `create_dir`, records an ownership token,
+opens both databases READ_WRITE|CREATE|EXCLUSIVE|NOFOLLOW, writes and validates
+only inside staging, then publishes with one directory rename. The failure guard
+acts only on a staging directory whose path, type, and ownership token still
+match. Cleanup removes only the known database/sidecar files and
+then performs a non-recursive directory removal, so an attacker-added link or
+sentinel is never traversed. Existing output directories and symlinks are
+rejected without touching their sentinels. SQLite file-byte determinism is not
+promised; logical fixture content is deterministic.
 
 Read-only validation output:
 
@@ -122,18 +129,27 @@ Generated file evidence:
 | fresh-validation.sqlite3 | 217,088 bytes | F6A3B9AEB15BF57FD25E29B657C28E0E57B4DEFC9A249F4F6CE7E6E144E071A6 |
 
 A second invocation exited 1; both existing database hashes and mtimes were
-unchanged (CHANGED=0). The databases were generated and then removed; the
-command above reproduces them. The available Android SDK sqlite3 binary could
-not load FTS5, so FTS/count/privacy validation used the example's bundled
-rusqlite read-only verifier instead.
+unchanged. Two real CLI processes were then started against the same absent
+output path: their exit codes were 0 and 1, the winner published exactly the two
+verified databases, and zero staging directories remained. The generated and
+race databases were removed after verification; the command above reproduces
+them.
 
-Journal safety was exercised independently for both target names. A pre-existing
-fresh-validation.sqlite3-journal caused the real CLI to exit 1 before creating
-either database, and hashes/mtimes for the journal and an unrelated sentinel
-were unchanged (CHANGED=0). Two example regressions also verify legacy and fresh
-journal preflight plus simulated mid-creation failure cleanup: DB, wal, shm, and
-journal files created by the run are removed, while a pre-existing unrelated
-file and its mtime/hash are preserved.
+The example tests also inject a staging failure with a SQLite journal present;
+the owned staging tree is removed while an unrelated file and its hash/mtime are
+preserved. Separate regressions cover a competing output appearing immediately
+before publish, a pre-existing output directory, and a pre-existing output
+symlink/junction.
+
+## Final quality RED/GREEN
+
+The final audit found that the earlier verifier was primarily count-based, the
+pending-delete schema check accepted extra columns, idempotence omitted the
+vault_fts snapshot, and fixture publication wrote directly into the final
+directory. The new negative tests reject an added sixth pending-delete column
+and count-preserving catalog/membership swaps. Ownership, publish-race, output
+sentinel, full-snapshot atomicity, production-path privacy, and complete
+idempotence regressions are GREEN.
 
 ## Commands
 
@@ -143,10 +159,10 @@ file and its mtime/hash are preserved.
 | cargo test upgrade_preserves_all_legacy_payload_counts_and_membership | exit 0, 1 passed |
 | cargo test failed_projection_write_rolls_back_payload_and_revision | exit 0, 1 passed |
 | privacy boundary regression filter | exit 0, 1 passed |
-| cargo test --example create_validation_fixtures | exit 0; 2 passed |
+| cargo test --example create_validation_fixtures | exit 0; 7 passed |
 | fixture generation | exit 0; counts shown above |
-| fixture preflight with a pre-existing fresh -journal | inner exit 1; wrapper exit 0, CHANGED=0 |
-| fixture generation into the same directory | inner exit 1; wrapper exit 0 after unchanged hash/mtime check |
+| fixture generation into the same directory | inner exit 1; hashes and mtimes unchanged |
+| two real fixture CLIs racing an absent output | exits 0/1; 2 output files; 0 staging leftovers |
 | pnpm test:unit | exit 0; 19 files, 138 tests passed |
 | pnpm check | exit 0; 0 errors, 7 pre-existing UI accessibility warnings |
 | pnpm build | exit 0; 186 modules transformed |
