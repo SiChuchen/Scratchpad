@@ -200,8 +200,9 @@
   }
   async function minimize() {
     try {
-      const { getCurrentWindow } = await import("@tauri-apps/api/window");
-      await getCurrentWindow().hide();
+      await import("@tauri-apps/api/core").then(({ invoke }) =>
+        invoke("ipc_dock_minimize_to_tab"),
+      );
     } catch (e) {
       notify(format(e), "error");
     }
