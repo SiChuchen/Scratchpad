@@ -31,8 +31,8 @@ describe("UnifiedSearchController", () => {
     const searchApi=api(vi.fn().mockResolvedValueOnce([hit("dock:local")]).mockResolvedValueOnce([hit("dock:local"),hit("vault:expanded")]),vi.fn(()=>planner.promise));
     const states:any[]=[]; const c=new UnifiedSearchController(searchApi,s=>states.push(s),{debounceMs:0,aiDelayMs:0,usePlanner:true});
     const pending=c.search("生产");
-    await vi.waitFor(()=>expect(states.at(-1)?.phase).toBe("planning"));
-    expect(states.at(-1)?.hits[0].summary.id).toBe("dock:local");
+    await vi.waitFor(()=>expect(states[states.length - 1]?.phase).toBe("planning"));
+    expect(states[states.length - 1]?.hits[0].summary.id).toBe("dock:local");
     planner.resolve(planned(["prod"])); await pending;
     expect(c.snapshot.phase).toBe("expanded"); expect(c.snapshot.hits.map(h=>h.summary.id)).toEqual(["dock:local","vault:expanded"]);
   });

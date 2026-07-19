@@ -1,7 +1,7 @@
 import type { LocaleMessages } from '../types'
 
 const en: LocaleMessages = {
-  workspace: { scope: { temporary: 'Inbox', all: 'All', saved: 'Saved' }, kind: { text:'Text',image:'Image',file:'File',credential:'Credential',bookmark:'Bookmark',note:'Note' }, searchPlaceholder:'Search all content',temporaryRetention:'Temporary content is cleaned up according to settings',createText:'New text',save:'Save',unsave:'Remove from saved',delete:'Delete',undo:'Undo',allKinds:'All types',copy:'Copy',copied:'Copied',temporary:'Temporary',savedLabel:'Saved',cleanupUntil:'Keep until',clearSearch:'Clear search',searching:'Searching',kindFilter:'Content type',results:'results',pasteHint:'You can also paste or drop files',noResults:'No matching content',noContent:'No content yet',loadingDetail:'Loading details…',back:'Back',edit:'Edit',rename:'Rename',cancel:'Cancel',unavailableImage:'Image unavailable',unavailableFile:'File unavailable',usefulInformation:'Information to use',notes:'Notes',tags:'Tags',openLink:'Open link',reveal:'Reveal',hide:'Hide' },
+  workspace: { scope: { temporary: 'Inbox', all: 'All', saved: 'Saved' }, kind: { text:'Text',image:'Image',file:'File',credential:'Credential',bookmark:'Bookmark',note:'Note' }, searchPlaceholder:'Search all content',temporaryRetention:'Temporary content is cleaned up according to settings',createText:'New text',save:'Save',unsave:'Remove from saved',delete:'Delete',undo:'Undo',allKinds:'All types',copy:'Copy',copied:'Copied',temporary:'Temporary',savedLabel:'Saved',cleanupUntil:'Keep until',clearSearch:'Clear search',searching:'Searching',kindFilter:'Content type',results:'results',pasteHint:'You can also paste or drop files',noResults:'No matching content',noContent:'No content yet',loadingDetail:'Loading details…',back:'Back',edit:'Edit',rename:'Rename',cancel:'Cancel',unavailableImage:'Image unavailable',unavailableFile:'File unavailable',usefulInformation:'Information to use',notes:'Notes',tags:'Tags',openLink:'Open link',reveal:'Reveal',hide:'Hide',notices:{saved:'Saved',unsaved:'Moved to Inbox',deleted:'Deleted',deleteFailedRestored:'Delete failed; content restored',undoExpired:'Undo expired',copyFailed:'Copy failed',refreshFailed:'Refresh failed'} },
   nav: {
     home: 'Dock',
     all: 'All',
@@ -79,6 +79,7 @@ const en: LocaleMessages = {
     openFailed: 'Could not open quick access',
     usefulInformation: 'Information to use',
     modeLabel: 'Quick access mode',
+    copyText:'Copy text',copyImage:'Copy image',copyFile:'Copy file',copyPassword:'Copy password',copyNote:'Copy note',manageInMain:'Manage in main window',openedInMain:'Opened in main window',
   },
   aiSettings: {
     title: 'AI Organization & Search',

@@ -35,6 +35,7 @@ export interface LocaleMessages {
     openLink: string
     reveal: string
     hide: string
+    notices: { saved:string; unsaved:string; deleted:string; deleteFailedRestored:string; undoExpired:string; copyFailed:string; refreshFailed:string }
   }
   nav: {
     home: string
@@ -115,6 +116,13 @@ export interface LocaleMessages {
     openFailed: string
     usefulInformation: string
     modeLabel: string
+    copyText: string
+    copyImage: string
+    copyFile: string
+    copyPassword: string
+    copyNote: string
+    manageInMain: string
+    openedInMain: string
   }
   aiSettings: {
     title: string

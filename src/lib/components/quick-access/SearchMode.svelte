@@ -1,31 +1,15 @@
 <script lang="ts">
-  // src/lib/components/quick-access/SearchMode.svelte
-  //
-  // 全局"搜索"双栏模式：左栏列表 + 右栏详情。
-  //
-  // 时序（与 Task 17 spec 对齐）：
-  //   * query 输入 → 300ms 防抖 → HybridSearchController.search() 或
-  //     searchLocalOnly()（依据 autoHybridSearch）。
-  //   * HybridSearchController 通过 onState 回调驱动 hits / selectedId / phase /
-  //     understoodTerms / error。
-  //   * selectedId 变化时通过 revision guard 调 getEntry() 加载右栏 detail。
-  //   * ArrowDown/ArrowUp 在搜索框聚焦时改变 selectedId；Tab 仍能进入右栏
-  //     复制按钮；Enter 不做特殊处理（保持简单）。
-  //   * resetToken（来自 QuickAccessApp blur handler）变化时递增 localResetToken，
-  //     传递给 VaultEntryDetail → CopyableValue 强制重新掩码。
-  //
-  // 复制：调用 notify(字段名) 不关闭面板；面板始终显示。
-
-  import { onMount, onDestroy } from 'svelte'
+  import { onDestroy, onMount } from 'svelte'
+  import { contentApi } from '$lib/api/content'
+  import { dockApi } from '$lib/api/dock'
   import { vaultApi } from '$lib/api/vault'
+  import QuickContentDetail from '$lib/components/content/QuickContentDetail.svelte'
   import { messages } from '$lib/i18n'
   import {
-    HybridSearchController,
-    type HybridSearchApi,
-    type HybridSearchState,
-  } from '$lib/state/vault-search'
-  import type { VaultEntryDetail as VaultEntryDetailType } from '$lib/types/vault'
-  import VaultEntryDetail from '$lib/components/vault/VaultEntryDetail.svelte'
+    UnifiedSearchController,
+    type ContentSearchState,
+  } from '$lib/state/content-search'
+  import type { ContentDetail } from '$lib/types/content'
   import SearchResultList from './SearchResultList.svelte'
 
   interface Props {
@@ -36,214 +20,142 @@
       actionLabel?: string,
     ) => void
     resetToken?: number | string
+    refreshToken?: number | string
     autoHybridSearch?: boolean
   }
 
   let {
     notify,
     resetToken = 0,
+    refreshToken = 0,
     autoHybridSearch = false,
   }: Props = $props()
 
-  const SEARCH_DEBOUNCE_MS = 300
-
-  // ---- State --------------------------------------------------------------
-
   let query = $state('')
-  let hits = $state<HybridSearchState['hits']>([])
+  let hits = $state<ContentSearchState['hits']>([])
   let selectedId = $state<string | null>(null)
   let understoodTerms = $state<string[]>([])
-  let phase = $state<HybridSearchState['phase']>('idle')
+  let phase = $state<ContentSearchState['phase']>('idle')
   let errorMessage = $state<string | null>(null)
-
-  let selectedDetail = $state<VaultEntryDetailType | null>(null)
+  let selectedDetail = $state<ContentDetail | null>(null)
   let detailLoading = $state(false)
   let detailError = $state<string | null>(null)
-  let detailRevision = $state(0)
+  let detailRevision = 0
+  let controller: UnifiedSearchController | null = null
 
-  // Local resetToken mirrors parent prop changes; bumps when parent resets.
   let localResetToken = $state(0)
-  let lastReset: number | string = 0
-  let initializedReset = false
+  let previousReset: number | string | undefined
   $effect(() => {
-    // Read resetToken inside the effect so we detect every change.
     const next = resetToken
-    // Skip the very first run; only bump on subsequent changes.
-    if (initializedReset) {
-      if (next !== lastReset) {
-        lastReset = next
-        localResetToken += 1
-      }
-    } else {
-      lastReset = next
-      initializedReset = true
+    if (previousReset !== undefined && next !== previousReset) {
+      localResetToken += 1
     }
+    previousReset = next
+  })
+  const detailReset = $derived(`${localResetToken}:${selectedId ?? ''}`)
+
+  let previousRefresh: number | string | undefined
+  $effect(() => {
+    const next = refreshToken
+    if (previousRefresh !== undefined && next !== previousRefresh) {
+      if (query.trim()) void controller?.search(query)
+    }
+    previousRefresh = next
   })
 
-  // Combined reset for VaultEntryDetail (also bumps on selectedId change so the
-  // newly loaded detail re-masks).
-  const detailReset = $derived(`${localResetToken}:${selectedId}`)
-
-  // ---- Controller ---------------------------------------------------------
-
-  let controller: HybridSearchController | null = null
-  let debounceTimer: ReturnType<typeof setTimeout> | null = null
-  let lastQuery = ''
+  $effect(() => {
+    controller?.setPlannerEnabled(autoHybridSearch)
+  })
 
   onMount(() => {
-    const api: HybridSearchApi = {
-      searchLocal: (q, plan, limit) => vaultApi.searchLocal(q, plan, limit),
-      planSearch: (q, rid) => vaultApi.planSearch(q, rid),
-      cancelSearch: (rid) => vaultApi.cancelSearch(rid),
-    }
-    controller = new HybridSearchController({
-      api,
-      onState: onSearchState,
+    controller = new UnifiedSearchController(contentApi, onSearchState, {
+      debounceMs: 300,
+      aiDelayMs: 700,
+      usePlanner: autoHybridSearch,
+      limit: 50,
     })
   })
 
   onDestroy(() => {
-    if (debounceTimer) {
-      clearTimeout(debounceTimer)
-      debounceTimer = null
-    }
     controller?.dispose()
     controller = null
   })
 
-  function onSearchState(state: HybridSearchState) {
+  function onSearchState(state: ContentSearchState): void {
     hits = state.hits
-    // Preserve user-clicked selection if controller's selectedId differs.
-    // The controller already implements "preserve or fall back to first".
     selectedId = state.selectedId
     understoodTerms = state.understoodTerms
     phase = state.phase
     errorMessage = state.error
   }
 
-  // ---- Input handling -----------------------------------------------------
-
-  function onQueryInput(e: Event) {
-    const v = (e.currentTarget as HTMLInputElement).value
-    query = v
-    if (debounceTimer) {
-      clearTimeout(debounceTimer)
-      debounceTimer = null
-    }
-    if (!v.trim()) {
-      // Clear results when input is emptied.
-      hits = []
-      selectedId = null
-      understoodTerms = []
-      phase = 'idle'
-      errorMessage = null
-      lastQuery = ''
-      return
-    }
-    debounceTimer = setTimeout(() => {
-      debounceTimer = null
-      void runSearch(v)
-    }, SEARCH_DEBOUNCE_MS)
+  function onQueryInput(event: Event): void {
+    query = (event.currentTarget as HTMLInputElement).value
+    void controller?.search(query)
   }
-
-  function runSearch(q: string) {
-    if (!controller) return
-    lastQuery = q
-    if (autoHybridSearch) {
-      void controller.search(q)
-    } else {
-      void controller.searchLocalOnly(q)
-    }
-  }
-
-  // ---- Detail loading (revision guard) ------------------------------------
-
-  let loadedDetailId = $state<string | null>(null)
-  let inflightDetailId = $state<string | null>(null)
 
   $effect(() => {
     const id = selectedId
-    if (id === null) {
+    const revision = ++detailRevision
+    if (!id) {
       selectedDetail = null
+      detailLoading = false
       detailError = null
-      loadedDetailId = null
-      inflightDetailId = null
       return
     }
-    // Already loaded for this id.
-    if (id === loadedDetailId && selectedDetail) return
-    // Already in-flight for this id (don't double-fire).
-    if (id === inflightDetailId) return
-    inflightDetailId = id
-    const myRevision = ++detailRevision
     detailLoading = true
     detailError = null
-    // Wrap in Promise.resolve so we tolerate `getEntry` returning undefined
-    // (e.g. during tests where the mock hasn't been configured).
-    Promise.resolve(vaultApi.getEntry(id))
-      .then((d) => {
-        if (myRevision !== detailRevision) return
-        selectedDetail = d
-        loadedDetailId = id
+    void contentApi.detail(id)
+      .then((detail) => {
+        if (revision === detailRevision) selectedDetail = detail
       })
-      .catch((e: unknown) => {
-        if (myRevision !== detailRevision) return
-        detailError = e instanceof Error ? e.message : String(e)
+      .catch((error: unknown) => {
+        if (revision !== detailRevision) return
         selectedDetail = null
+        detailError = error instanceof Error ? error.message : String(error)
       })
       .finally(() => {
-        if (myRevision !== detailRevision) return
-        detailLoading = false
+        if (revision === detailRevision) detailLoading = false
       })
   })
 
-  // ---- Keyboard -----------------------------------------------------------
-
-  function onKeydown(e: KeyboardEvent) {
-    if (hits.length === 0) return
-    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-      e.preventDefault()
-      const idx = hits.findIndex((h) => h.summary.entry.id === selectedId)
-      let nextIdx: number
-      if (e.key === 'ArrowDown') {
-        nextIdx = idx < 0 ? 0 : Math.min(idx + 1, hits.length - 1)
-      } else {
-        nextIdx = idx <= 0 ? 0 : idx - 1
-      }
-      const nextId = hits[nextIdx]?.summary.entry.id ?? null
-      if (nextId && nextId !== selectedId) {
-        selectedId = nextId
-        controller?.setSelectedId(nextId)
-      }
-    }
+  function onKeydown(event: KeyboardEvent): void {
+    if (!hits.length || (event.key !== 'ArrowDown' && event.key !== 'ArrowUp')) return
+    event.preventDefault()
+    const current = hits.findIndex((hit) => hit.summary.id === selectedId)
+    const next = event.key === 'ArrowDown'
+      ? (current < 0 ? 0 : Math.min(current + 1, hits.length - 1))
+      : (current <= 0 ? 0 : current - 1)
+    onSelect(hits[next]!.summary.id)
   }
 
-  // ---- Selection / copy ---------------------------------------------------
-
-  function onSelect(id: string) {
+  function onSelect(id: string): void {
     selectedId = id
-    controller?.setSelectedId(id)
+    controller?.select(id)
   }
 
-  async function handleCopy(payload: {
-    label: string
-    value: string
-    sensitive: boolean
-  }) {
-    try {
-      // Task 18: 敏感值由后端按设置自动清除。
-      await vaultApi.copyText(payload.value, payload.sensitive)
-      notify(messages.library.copiedLabel.replace('{label}', payload.label), 'success')
-    } catch {
-      notify(messages.toast.copyFailed, 'error')
-    }
+  async function copyText(text: string, sensitive: boolean): Promise<void> {
+    await vaultApi.copyText(text, sensitive)
   }
 
-  // ---- Derived view -------------------------------------------------------
+  async function copyFile(path: string, kind: 'image' | 'file'): Promise<void> {
+    if (kind === 'image') await dockApi.copyImage(path)
+    else await dockApi.copyFile(path)
+  }
+
+  async function openUrl(target: string): Promise<void> {
+    const url = new URL(target)
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new Error('unsupported URL')
+    window.open(url.href, '_blank', 'noopener,noreferrer')
+  }
+
+  async function manageInMain(_id: string): Promise<void> {
+    notify(messages.quickAccess.manageInMain)
+  }
 
   const statusText = $derived.by(() => {
     if (phase === 'planning') return messages.quickAccess.aiEnhancing
-    if (phase === 'expanded' && understoodTerms.length > 0) {
+    if (phase === 'expanded' && understoodTerms.length) {
       return messages.library.aiUnderstanding.replace('{terms}', understoodTerms.join('、'))
     }
     if (phase === 'error') return errorMessage ?? messages.toast.operationFailed
@@ -273,16 +185,10 @@
 
   <div class="dual-pane">
     <div class="left-pane">
-      {#if hits.length === 0}
-        <div class="empty-list">
-          {#if query}
-            <p class="muted">{messages.quickAccess.noResults}</p>
-          {:else}
-            <p class="muted">{messages.quickAccess.searchPlaceholder}</p>
-          {/if}
-        </div>
-      {:else}
+      {#if hits.length}
         <SearchResultList {hits} {selectedId} onSelect={onSelect} />
+      {:else}
+        <div class="empty-list"><p class="muted">{query ? messages.quickAccess.noResults : messages.quickAccess.searchPlaceholder}</p></div>
       {/if}
     </div>
 
@@ -292,11 +198,14 @@
       {:else if detailError}
         <div class="detail-state error" aria-live="polite">{messages.toast.loadFailed}: {detailError}</div>
       {:else if selectedDetail}
-        <VaultEntryDetail
+        <QuickContentDetail
           detail={selectedDetail}
           resetToken={detailReset}
-          onCopy={handleCopy}
-          prominent
+          onCopyText={copyText}
+          onCopyFile={copyFile}
+          onOpen={openUrl}
+          onManage={manageInMain}
+          onNotify={notify}
         />
       {:else}
         <div class="detail-state">{messages.quickAccess.noSelection}</div>
@@ -306,106 +215,5 @@
 </section>
 
 <style>
-  .mode-search {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-    padding: 0.75rem;
-    min-height: 0;
-  }
-
-  .mode-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-  }
-  .mode-header h2 {
-    margin: 0;
-    font-size: var(--font-md, 15px);
-    font-weight: 600;
-    color: var(--text-primary);
-  }
-  .hint {
-    font-size: var(--font-xs, 11px);
-    color: var(--text-muted);
-  }
-
-  .search-input {
-    width: 100%;
-    border: 1px solid var(--border-default);
-    border-radius: var(--radius-md, 6px);
-    padding: 0.5rem 0.65rem;
-    background: var(--surface-1);
-    color: var(--text-primary);
-    font-family: var(--font-family-en, 'Segoe UI'),
-      var(--font-family-zh, 'Microsoft YaHei'), sans-serif;
-    font-size: var(--font-md, 15px);
-    outline: none;
-  }
-  .search-input:focus {
-    border-color: var(--color-primary);
-  }
-
-  .status {
-    font-size: var(--font-xs, 11px);
-    color: var(--color-primary, #4f46e5);
-    padding: 0.25rem 0.4rem;
-    border-radius: var(--radius-md, 6px);
-    background: color-mix(in srgb, var(--color-primary, #4f46e5) 8%, transparent);
-  }
-  .status.error {
-    color: var(--color-danger, #ef4444);
-    background: color-mix(in srgb, var(--color-danger, #ef4444) 8%, transparent);
-  }
-
-  .dual-pane {
-    flex: 1;
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    gap: 0.5rem;
-    min-height: 0;
-  }
-
-  .left-pane,
-  .right-pane {
-    display: flex;
-    flex-direction: column;
-    min-height: 0;
-    border: 1px solid var(--border-default);
-    border-radius: var(--radius-md, 6px);
-    background: var(--surface-1);
-    padding: 0.35rem;
-  }
-
-  .left-pane {
-    overflow: hidden;
-  }
-
-  .right-pane {
-    overflow-x: hidden;
-    overflow-y: auto;
-  }
-
-  .empty-list {
-    flex: 1;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-
-  .muted {
-    color: var(--text-muted);
-    font-size: var(--font-sm, 13px);
-    margin: 0;
-  }
-
-  .detail-state {
-    color: var(--text-muted);
-    font-size: var(--font-sm, 13px);
-    padding: 0.5rem;
-  }
-  .detail-state.error {
-    color: var(--color-danger, #ef4444);
-  }
+  .mode-search{flex:1;display:flex;flex-direction:column;gap:.5rem;padding:.75rem;min-height:0}.mode-header{display:flex;align-items:center;justify-content:space-between}.mode-header h2{margin:0;font-size:var(--font-md,15px);font-weight:600;color:var(--text-primary)}.hint{font-size:var(--font-xs,11px);color:var(--text-muted)}.search-input{width:100%;border:1px solid var(--border-default);border-radius:var(--radius-md,6px);padding:.55rem .7rem;background:var(--surface-1);color:var(--text-primary);font:inherit;font-size:var(--font-md,15px);outline:none}.search-input:focus{border-color:var(--color-primary)}.status{font-size:var(--font-xs,11px);color:var(--color-primary);padding:.25rem .4rem;border-radius:var(--radius-md,6px);background:color-mix(in srgb,var(--color-primary) 8%,transparent)}.status.error,.detail-state.error{color:var(--color-danger)}.dual-pane{flex:1;display:grid;grid-template-columns:minmax(0,.92fr) minmax(0,1.08fr);gap:.5rem;min-height:0}.left-pane,.right-pane{display:flex;flex-direction:column;min-height:0;border:1px solid var(--border-default);border-radius:var(--radius-md,6px);background:var(--surface-1);padding:.35rem}.left-pane{overflow:hidden}.right-pane{overflow:auto}.empty-list{flex:1;display:flex;align-items:center;justify-content:center}.muted,.detail-state{color:var(--text-muted);font-size:var(--font-sm,13px);margin:0;padding:.5rem}@media(max-width:540px){.dual-pane{grid-template-columns:minmax(0,1fr) minmax(0,1.15fr)}}
 </style>
