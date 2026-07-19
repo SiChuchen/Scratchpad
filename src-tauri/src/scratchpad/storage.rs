@@ -826,10 +826,7 @@ fn validate_active_position_scope(
         ))?;
         let rows = stmt
             .query_map(params![state], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, Option<f64>>(1)?,
-                ))
+                Ok((row.get::<_, String>(0)?, row.get::<_, Option<f64>>(1)?))
             })?
             .collect::<Result<Vec<_>, _>>()?;
         rows
@@ -916,9 +913,7 @@ pub fn reorder_entries_with_revision(
         }
         if catalog.retention == active_retention {
             let position = tx.query_row(
-                &format!(
-                    "SELECT {position_column} FROM content_catalog WHERE unified_id=?1"
-                ),
+                &format!("SELECT {position_column} FROM content_catalog WHERE unified_id=?1"),
                 params![unified_id],
                 |row| row.get::<_, Option<f64>>(0),
             )?;
@@ -1746,8 +1741,7 @@ mod tests {
             .collect::<Vec<_>>();
         active_slots.sort_by(f64::total_cmp);
 
-        let mutation =
-            reorder_entries_with_revision(&mut conn, EntryView::Home, &ordered).unwrap();
+        let mutation = reorder_entries_with_revision(&mut conn, EntryView::Home, &ordered).unwrap();
         assert_eq!(mutation.revision, before_revision + 1);
         assert_eq!(
             mutation

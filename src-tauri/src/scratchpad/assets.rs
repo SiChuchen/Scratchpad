@@ -556,7 +556,8 @@ mod tests {
         .unwrap();
 
         assert_eq!(
-            conn.query_row("SELECT COUNT(*) FROM entries", [], |row| row.get::<_, i64>(0))
+            conn.query_row("SELECT COUNT(*) FROM entries", [], |row| row
+                .get::<_, i64>(0))
                 .unwrap(),
             3
         );
@@ -571,12 +572,8 @@ mod tests {
         );
         for entry in [&copied, &image, &file] {
             assert!(Path::new(entry.file_path.as_deref().unwrap()).is_file());
-            crate::scratchpad::storage::remove_from_view(
-                &mut conn,
-                EntryView::Home,
-                &entry.id,
-            )
-            .unwrap();
+            crate::scratchpad::storage::remove_from_view(&mut conn, EntryView::Home, &entry.id)
+                .unwrap();
         }
         assert!(import_file_with_revision(
             &mut conn,
@@ -603,7 +600,8 @@ mod tests {
         )
         .is_err());
         assert_eq!(
-            conn.query_row("SELECT COUNT(*) FROM entries", [], |row| row.get::<_, i64>(0))
+            conn.query_row("SELECT COUNT(*) FROM entries", [], |row| row
+                .get::<_, i64>(0))
                 .unwrap(),
             0
         );

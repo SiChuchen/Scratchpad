@@ -146,16 +146,12 @@ fn logical_pixels(value: f64, scale_factor: f64) -> i32 {
 
 /// Compute the centered, clamped Quick Access geometry in physical pixels.
 /// Target dimensions are logical pixels converted through `scale_factor`.
-pub fn fit_and_center_quick_access(
-    work_area: WorkRect,
-    scale_factor: f64,
-) -> (i32, i32, i32, i32) {
+pub fn fit_and_center_quick_access(work_area: WorkRect, scale_factor: f64) -> (i32, i32, i32, i32) {
     let work_width = work_area.right - work_area.left;
     let work_height = work_area.bottom - work_area.top;
-    let width = logical_pixels(QUICK_ACCESS_WIDTH_LOGICAL, scale_factor)
-        .min(work_width * 9 / 10);
-    let height = logical_pixels(QUICK_ACCESS_HEIGHT_LOGICAL, scale_factor)
-        .min(work_height * 9 / 10);
+    let width = logical_pixels(QUICK_ACCESS_WIDTH_LOGICAL, scale_factor).min(work_width * 9 / 10);
+    let height =
+        logical_pixels(QUICK_ACCESS_HEIGHT_LOGICAL, scale_factor).min(work_height * 9 / 10);
     let x = work_area.left + (work_width - width) / 2;
     let y = work_area.top + (work_height - height) / 2;
     (x, y, width, height)
@@ -166,10 +162,10 @@ pub fn fit_and_center_quick_access(
 pub fn runtime_min_size(work_area: &WorkRect, scale_factor: f64) -> (i32, i32) {
     let work_width = work_area.right - work_area.left;
     let work_height = work_area.bottom - work_area.top;
-    let min_width = logical_pixels(QUICK_ACCESS_MIN_WIDTH_LOGICAL, scale_factor)
-        .min(work_width * 9 / 10);
-    let min_height = logical_pixels(QUICK_ACCESS_MIN_HEIGHT_LOGICAL, scale_factor)
-        .min(work_height * 9 / 10);
+    let min_width =
+        logical_pixels(QUICK_ACCESS_MIN_WIDTH_LOGICAL, scale_factor).min(work_width * 9 / 10);
+    let min_height =
+        logical_pixels(QUICK_ACCESS_MIN_HEIGHT_LOGICAL, scale_factor).min(work_height * 9 / 10);
     (min_width, min_height)
 }
 
@@ -256,10 +252,7 @@ mod tests {
 
     #[test]
     fn visible_windows_hide_and_hidden_windows_show() {
-        assert_eq!(
-            visibility_toggle_action(true),
-            VisibilityToggleAction::Hide
-        );
+        assert_eq!(visibility_toggle_action(true), VisibilityToggleAction::Hide);
         assert_eq!(
             visibility_toggle_action(false),
             VisibilityToggleAction::Show

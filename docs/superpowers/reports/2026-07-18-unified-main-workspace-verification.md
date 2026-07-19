@@ -1,6 +1,6 @@
 # Unified Main Workspace Verification
 
-**Date:** 2026-07-19  
+**Date:** 2026-07-19
 **Fixture:** `src/test/fixtures/content.ts` (6 summaries and 6 details; one of each content kind; 3 temporary and 3 saved). All credential values are deterministic dummy data.
 
 ## Automated journey evidence
