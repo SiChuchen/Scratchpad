@@ -1,39 +1,240 @@
 <script lang="ts">
   import ContentKindIcon from './ContentKindIcon.svelte'
+  import Icon from '$lib/components/Icon.svelte'
+  import { messages } from '$lib/i18n'
   import type { ContentSummary } from '$lib/types/content'
-  interface Props { item: ContentSummary; selected: boolean; busy: boolean; draggable?: boolean; onSelect: (id:string)=>void; onToggleSaved:(item:ContentSummary)=>void; onCopy:(item:ContentSummary)=>void; onDelete:(item:ContentSummary)=>void }
+
+  interface Props {
+    item: ContentSummary
+    selected: boolean
+    busy: boolean
+    draggable?: boolean
+    onSelect: (id: string) => void
+    onToggleSaved: (item: ContentSummary) => void
+    onCopy: (item: ContentSummary) => void
+    onDelete: (item: ContentSummary) => void
+  }
+
   let { item, selected, busy, draggable = false, onSelect, onToggleSaved, onCopy, onDelete }: Props = $props()
-  const kindLabel = $derived(({text:'文本',image:'图片',file:'文件',credential:'凭据',bookmark:'书签',note:'笔记'} as const)[item.kind])
-  const copyable = $derived(item.capabilities.copyText || item.capabilities.copyImage || item.capabilities.copyFile || item.capabilities.copyPath)
-  function stop(action:()=>void) { return (event: MouseEvent) => { event.stopPropagation(); action() } }
+
+  const kindLabel = $derived(messages.workspace.kind[item.kind])
+  const copyable = $derived(
+    item.capabilities.copyText ||
+      item.capabilities.copyImage ||
+      item.capabilities.copyFile ||
+      item.capabilities.copyPath,
+  )
+  const retentionLabel = $derived(
+    item.retention === 'saved'
+      ? messages.workspace.savedLabel
+      : item.cleanupAt
+        ? `${messages.workspace.cleanupUntil} ${new Date(item.cleanupAt).toLocaleDateString()}`
+        : messages.workspace.temporary,
+  )
+  const selectLabel = $derived(
+    messages.workspace.openItem.replace('{title}', item.title || messages.workspace.untitled),
+  )
+
+  function stop(action: () => void) {
+    return (event: MouseEvent) => {
+      event.stopPropagation()
+      action()
+    }
+  }
 </script>
 
 <article class="card" class:selected aria-current={selected ? 'true' : undefined}>
-  <button class="select" type="button" onclick={() => onSelect(item.id)} aria-label={`打开 ${item.title}`}>
+  <button class="select" type="button" onclick={() => onSelect(item.id)} aria-label={selectLabel}>
     <ContentKindIcon kind={item.kind} />
-    <span class="main"><strong>{item.title || '未命名'}</strong>{#if item.preview}<span class="preview">{item.preview}</span>{/if}</span>
+    <span class="main">
+      <strong>{item.title || messages.workspace.untitled}</strong>
+      {#if item.preview}<span class="preview">{item.preview}</span>{/if}
+    </span>
   </button>
-  <div class="meta"><span>{kindLabel}</span><span>{item.retention === 'saved' ? '已收藏' : item.cleanupAt ? `临时保留至 ${new Date(item.cleanupAt).toLocaleDateString()}` : '临时'}</span></div>
+  <div class="meta"><span>{kindLabel}</span><span>{retentionLabel}</span></div>
   <div class="actions">
-    {#if draggable && item.capabilities.reorder}<button type="button" class="drag" aria-label="拖动排序" disabled={busy}>⋮⋮</button>{/if}
-    {#if copyable}<button type="button" onclick={stop(() => onCopy(item))} disabled={busy}>复制</button>{/if}
-    {#if item.capabilities.save}<button type="button" aria-pressed="false" onclick={stop(() => onToggleSaved(item))} disabled={busy}>收藏</button>{/if}
-    {#if item.capabilities.unsave}<button type="button" aria-pressed="true" onclick={stop(() => onToggleSaved(item))} disabled={busy}>取消收藏</button>{/if}
-    {#if item.capabilities.delete}<button type="button" class="danger" onclick={stop(() => onDelete(item))} disabled={busy}>删除</button>{/if}
+    {#if draggable && item.capabilities.reorder}
+      <button type="button" class="icon-btn drag" aria-label={messages.workspace.dragToReorder} title={messages.workspace.dragToReorder} disabled={busy}>
+        <Icon name="grip" size={12} />
+      </button>
+    {/if}
+    {#if copyable}
+      <button type="button" class="icon-btn" aria-label={messages.workspace.copy} title={messages.workspace.copy} onclick={stop(() => onCopy(item))} disabled={busy}>
+        <Icon name="copy" size={13} />
+      </button>
+    {/if}
+    {#if item.capabilities.save}
+      <button type="button" class="icon-btn star" aria-pressed="false" aria-label={messages.workspace.save} title={messages.workspace.save} onclick={stop(() => onToggleSaved(item))} disabled={busy}>
+        <Icon name="star" size={13} />
+      </button>
+    {/if}
+    {#if item.capabilities.unsave}
+      <button type="button" class="icon-btn star active" aria-pressed="true" aria-label={messages.workspace.unsave} title={messages.workspace.unsave} onclick={stop(() => onToggleSaved(item))} disabled={busy}>
+        <Icon name="star" size={13} filled />
+      </button>
+    {/if}
+    {#if item.capabilities.delete}
+      <button type="button" class="icon-btn danger" aria-label={messages.workspace.delete} title={messages.workspace.delete} onclick={stop(() => onDelete(item))} disabled={busy}>
+        <Icon name="trash" size={13} />
+      </button>
+    {/if}
   </div>
 </article>
 
 <style>
-  .card { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:.25rem .5rem; padding:.55rem; border:1px solid var(--border-subtle); border-radius:var(--radius-lg,.5rem); background:var(--surface-1); cursor:pointer; }
-  .card:hover,.card.selected { border-color:var(--color-primary); background:color-mix(in srgb,var(--color-primary) 7%,var(--surface-1)); }
-  .select { min-width:0; display:flex; align-items:flex-start; gap:.45rem; padding:0; border:0; color:inherit; background:none; text-align:start; font:inherit; cursor:pointer; }
-  .main { min-width:0; display:flex; flex-direction:column; gap:.12rem; }
-  strong { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:max(var(--font-md,.82rem),.82rem); }
-  .preview { display:-webkit-box; overflow:hidden; line-clamp:2; -webkit-line-clamp:2; -webkit-box-orient:vertical; color:var(--text-muted); font-size:max(var(--font-sm,.72rem),.72rem); line-height:1.4; }
-  .meta { grid-column:1; display:flex; gap:.5rem; padding-inline-start:1.85rem; color:var(--text-faint); font-size:var(--font-xs,.62rem); }
-  .actions { grid-column:2; grid-row:1 / span 2; display:flex; align-items:center; justify-content:flex-end; gap:.18rem; }
-  .actions button { min-width:2rem; min-height:2rem; padding:.2rem .38rem; border:1px solid var(--border-subtle); border-radius:var(--radius-md,.3rem); background:var(--surface-2); color:var(--text-primary); font:inherit; font-size:var(--font-xs,.65rem); cursor:pointer; }
-  .actions .danger:hover { color:var(--color-danger); }
-  button:focus-visible,.card:focus-within { outline:2px solid var(--color-primary); outline-offset:2px; }
-  @media (max-width:360px) { .card { grid-template-columns:minmax(0,1fr); } .actions { grid-column:1; grid-row:auto; } }
+  .card {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 0.2rem 0.5rem;
+    padding: 0.55rem;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-lg, 0.5rem);
+    background: var(--surface-1);
+    cursor: pointer;
+    transition: border-color 0.12s, background 0.12s, box-shadow 0.12s;
+  }
+
+  .card:hover {
+    border-color: var(--border-emphasis);
+    background: color-mix(in srgb, var(--text-primary) 3%, var(--surface-1));
+  }
+
+  /* Selected is visually distinct from hover: primary tint + left indicator. */
+  .card.selected {
+    border-color: color-mix(in srgb, var(--color-primary) 45%, transparent);
+    background: color-mix(in srgb, var(--color-primary) 8%, var(--surface-1));
+    box-shadow: inset 2px 0 0 var(--color-primary);
+  }
+
+  .select {
+    min-width: 0;
+    display: flex;
+    align-items: flex-start;
+    gap: 0.5rem;
+    padding: 0;
+    border: 0;
+    color: inherit;
+    background: none;
+    text-align: start;
+    font: inherit;
+    cursor: pointer;
+  }
+
+  .main {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.12rem;
+  }
+
+  strong {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: max(var(--font-md, 0.82rem), 0.82rem);
+  }
+
+  .preview {
+    display: -webkit-box;
+    overflow: hidden;
+    line-clamp: 2;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    color: var(--text-muted);
+    font-size: max(var(--font-sm, 0.72rem), 0.72rem);
+    line-height: 1.4;
+    overflow-wrap: anywhere;
+  }
+
+  .meta {
+    grid-column: 1;
+    display: flex;
+    gap: 0.5rem;
+    padding-inline-start: 2rem;
+    color: var(--text-faint);
+    font-size: max(var(--font-xs, 0.65rem), 0.65rem);
+  }
+
+  .actions {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.2rem;
+  }
+
+  .icon-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.7rem;
+    height: 1.7rem;
+    padding: 0;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md, 0.3rem);
+    background: var(--surface-2);
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: color 0.12s, background 0.12s, border-color 0.12s;
+  }
+
+  .icon-btn:hover:not(:disabled) {
+    color: var(--text-primary);
+    border-color: var(--border-emphasis);
+    background: color-mix(in srgb, var(--text-primary) 10%, var(--surface-2));
+  }
+
+  .icon-btn:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+
+  .icon-btn.drag {
+    cursor: grab;
+  }
+
+  .icon-btn.star {
+    color: var(--color-accent);
+    border-color: color-mix(in srgb, var(--color-accent) 18%, transparent);
+    background: color-mix(in srgb, var(--color-accent) 7%, var(--surface-2));
+  }
+
+  .icon-btn.star:hover:not(:disabled) {
+    color: var(--color-accent);
+    border-color: color-mix(in srgb, var(--color-accent) 32%, transparent);
+    background: color-mix(in srgb, var(--color-accent) 14%, var(--surface-2));
+  }
+
+  .icon-btn.star.active {
+    background: color-mix(in srgb, var(--color-accent) 16%, var(--surface-2));
+    border-color: color-mix(in srgb, var(--color-accent) 30%, transparent);
+  }
+
+  .icon-btn.danger {
+    color: color-mix(in srgb, var(--color-danger) 70%, var(--text-muted));
+  }
+
+  .icon-btn.danger:hover:not(:disabled) {
+    color: var(--color-danger);
+    border-color: color-mix(in srgb, var(--color-danger) 35%, transparent);
+    background: color-mix(in srgb, var(--color-danger) 10%, var(--surface-2));
+  }
+
+  button:focus-visible,
+  .card:focus-within {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
+  }
+
+  @media (max-width: 360px) {
+    .card {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .actions {
+      grid-column: 1;
+      grid-row: auto;
+      justify-content: flex-end;
+    }
+  }
 </style>
