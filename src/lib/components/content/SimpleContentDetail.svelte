@@ -60,6 +60,16 @@
       onNotify(String(e), 'error')
     }
   }
+
+  async function copyPath() {
+    if (detail.kind !== 'image' && detail.kind !== 'file') return
+    try {
+      await navigator.clipboard.writeText(detail.assetPath)
+      onNotify(messages.toast.copiedPath)
+    } catch (e) {
+      onNotify(String(e), 'error')
+    }
+  }
 </script>
 
 <header>
@@ -92,6 +102,9 @@
         {detail.kind === 'text' ? messages.workspace.editText : messages.workspace.rename}
       </button>
       <button type="button" class="btn" onclick={copy} disabled={detail.kind !== 'text' && !detail.available}>{copyLabel}</button>
+      {#if detail.kind !== 'text' && detail.summary.capabilities.copyPath}
+        <button type="button" class="btn" onclick={copyPath} disabled={!detail.available}>{messages.entry.copyPath}</button>
+      {/if}
       {#if onToggleSaved}
         <button type="button" class="btn" onclick={onToggleSaved}>
           {detail.summary.retention === 'saved' ? messages.workspace.unsave : messages.workspace.save}
