@@ -35,8 +35,29 @@ export interface LocaleMessages {
     openLink: string
     reveal: string
     hide: string
-    notices: { saved:string; unsaved:string; deleted:string; deleteFailedRestored:string; undoExpired:string; copyFailed:string; refreshFailed:string }
+    notices: { saved:string; unsaved:string; deleted:string; deleteFailedRestored:string; undoExpired:string; copyFailed:string; refreshFailed:string; deletedRemotely:string; restored:string; undoFailed:string; detailLoadFailed:string }
     contentMissing: string
+    // Added for the UI/UX refresh — previously hardcoded zh-CN strings.
+    openItem: string
+    dragToReorder: string
+    untitled: string
+    resultsFound: string
+    itemsCount: string
+    emptyInbox: string
+    emptySaved: string
+    emptyAll: string
+    emptySearchHint: string
+    emptyInboxHint: string
+    title: string
+    body: string
+    noteBody: string
+    saveEdit: string
+    updated: string
+    editText: string
+    editNote: string
+    detailLabel: string
+    linkLabel: string
+    storeAction: string
   }
   nav: {
     home: string

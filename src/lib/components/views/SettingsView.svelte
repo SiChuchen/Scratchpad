@@ -459,7 +459,11 @@
                   class:active={preferences.themePresetId === preset.id}
                   onclick={() => selectPreset(preset.id)}
                 >
-                  <div class="swatch" style="background:{preset.tokens['--surface-0']}"></div>
+                  <div class="swatch" style="background:{preset.tokens['--surface-0']}">
+                    <span class="swatch-line accent" style="background:{preset.tokens['--color-primary']}"></span>
+                    <span class="swatch-line" style="background:{preset.tokens['--text-primary']}"></span>
+                    <span class="swatch-line short" style="background:{preset.tokens['--text-primary']}"></span>
+                  </div>
                   <span class="card-name">{messages.themeNames[preset.id as keyof typeof messages.themeNames] || preset.name}</span>
                 </button>
               {/each}
@@ -811,7 +815,7 @@
     border-radius: var(--radius-md, 0.35rem);
     background: transparent;
     color: var(--text-muted);
-    font-size: var(--font-sm, 0.65rem);
+    font-size: max(var(--font-sm, 0.72rem), 0.72rem);
     cursor: pointer;
     font-family: inherit;
     transition: border-color 0.15s, background 0.15s, color 0.15s;
@@ -830,7 +834,7 @@
   }
 
   .lang-hint {
-    font-size: var(--font-xs, 0.5rem);
+    font-size: max(var(--font-xs, 0.62rem), 0.62rem);
     color: var(--text-faint);
     margin: 0;
     padding-top: 0.15rem;
@@ -849,7 +853,7 @@
     background: none;
     border: 1px solid transparent;
     color: color-mix(in srgb, var(--text-primary) 60%, transparent);
-    font-size: var(--font-sm, 0.65rem);
+    font-size: max(var(--font-sm, 0.72rem), 0.72rem);
     cursor: pointer;
     padding: 0.2rem 0.35rem;
     border-radius: var(--radius-sm, 0.25rem);
@@ -897,7 +901,7 @@
   }
 
   .section-label {
-    font-size: var(--font-sm, 0.65rem);
+    font-size: max(var(--font-sm, 0.72rem), 0.72rem);
     font-weight: 600;
     color: var(--text-muted);
     text-transform: uppercase;
@@ -905,7 +909,7 @@
   }
 
   .chevron {
-    font-size: var(--font-sm, 0.65rem);
+    font-size: max(var(--font-sm, 0.72rem), 0.72rem);
     color: var(--text-faint);
     transition: transform 0.15s;
   }
@@ -924,14 +928,14 @@
     align-items: center;
     gap: 0.5rem;
     padding: 0.2rem 0;
-    font-size: var(--font-sm, 0.65rem);
+    font-size: max(var(--font-sm, 0.72rem), 0.72rem);
     color: var(--text-primary);
   }
 
   .label {
     min-width: 4.5rem;
     color: var(--text-muted);
-    font-size: var(--font-sm, 0.65rem);
+    font-size: max(var(--font-sm, 0.72rem), 0.72rem);
   }
 
   /* Toggle */
@@ -1001,13 +1005,38 @@
 
   .swatch {
     width: 100%;
-    height: 1.2rem;
-    border-radius: 0.15rem;
+    height: 1.9rem;
+    border-radius: 0.2rem;
     border: 1px solid var(--border-default);
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 0.18rem;
+    padding: 0 0.35rem;
+    box-sizing: border-box;
+    overflow: hidden;
+  }
+
+  .swatch-line {
+    display: block;
+    height: 0.22rem;
+    width: 78%;
+    border-radius: 999px;
+    opacity: 0.75;
+  }
+
+  .swatch-line.accent {
+    width: 45%;
+    opacity: 1;
+  }
+
+  .swatch-line.short {
+    width: 58%;
+    opacity: 0.45;
   }
 
   .card-name {
-    font-size: var(--font-xs, 0.55rem);
+    font-size: max(var(--font-xs, 0.62rem), 0.62rem);
     color: var(--text-primary);
     white-space: nowrap;
   }
@@ -1024,7 +1053,7 @@
     border: 1px solid var(--border-default);
     border-radius: var(--radius-sm, 0.25rem);
     color: var(--text-primary);
-    font-size: var(--font-sm, 0.6rem);
+    font-size: max(var(--font-sm, 0.68rem), 0.68rem);
     padding: 0.2rem 0.3rem;
     font-family: inherit;
   }
@@ -1057,7 +1086,7 @@
 
   .font-item {
     padding: 0.2rem 0.4rem;
-    font-size: var(--font-xs, 0.55rem);
+    font-size: max(var(--font-xs, 0.65rem), 0.65rem);
     color: var(--text-primary);
     cursor: pointer;
     white-space: nowrap;
@@ -1086,7 +1115,7 @@
     border: 1px solid var(--border-default);
     border-radius: var(--radius-sm, 0.25rem);
     color: var(--text-primary);
-    font-size: var(--font-sm, 0.6rem);
+    font-size: max(var(--font-sm, 0.68rem), 0.68rem);
     padding: 0.2rem 0.3rem;
     font-family: inherit;
     min-width: 0;
@@ -1109,7 +1138,7 @@
   }
 
   .cleanup-suffix {
-    font-size: var(--font-xs, 0.55rem);
+    font-size: max(var(--font-xs, 0.65rem), 0.65rem);
     color: var(--text-muted);
   }
 
@@ -1128,7 +1157,7 @@
     border: 1px solid var(--border-default);
     border-radius: var(--radius-sm, 0.25rem);
     color: var(--text-primary);
-    font-size: var(--font-sm, 0.6rem);
+    font-size: max(var(--font-sm, 0.68rem), 0.68rem);
     padding: 0.2rem 0.3rem;
     font-family: inherit;
     outline: none;
@@ -1146,12 +1175,12 @@
   }
 
   .proxy-error {
-    font-size: var(--font-xs, 0.55rem);
+    font-size: max(var(--font-xs, 0.65rem), 0.65rem);
     color: var(--color-danger);
   }
 
   .shortcut-status {
-    font-size: var(--font-sm, 0.65rem);
+    font-size: max(var(--font-sm, 0.72rem), 0.72rem);
     padding: 0.15rem 0.4rem;
     border-radius: var(--radius-sm, 0.25rem);
   }
@@ -1177,7 +1206,7 @@
     border-radius: var(--radius-md, 0.35rem);
     background: var(--surface-1);
     color: var(--text-primary);
-    font-size: var(--font-sm, 0.65rem);
+    font-size: max(var(--font-sm, 0.72rem), 0.72rem);
     cursor: pointer;
     font-family: inherit;
     transition: background 0.15s, border-color 0.15s;
@@ -1192,7 +1221,7 @@
   }
 
   .section-subtitle {
-    font-size: var(--font-xs, 0.5rem);
+    font-size: max(var(--font-xs, 0.62rem), 0.62rem);
     color: var(--text-faint);
     margin: 0;
     padding-bottom: 0.2rem;
@@ -1213,7 +1242,7 @@
     background: var(--surface-2);
     border: 1px solid var(--border-default);
     color: var(--text-muted);
-    font-size: var(--font-sm, 0.6rem);
+    font-size: max(var(--font-sm, 0.68rem), 0.68rem);
     padding: 0.2rem 0.5rem;
     border-radius: var(--radius-sm, 0.25rem);
     cursor: pointer;
@@ -1248,7 +1277,7 @@
   }
 
   .about-version {
-    font-size: var(--font-xs, 0.6rem);
+    font-size: max(var(--font-xs, 0.68rem), 0.68rem);
     color: var(--text-faint);
   }
 
@@ -1259,7 +1288,7 @@
   }
 
   .update-status {
-    font-size: var(--font-xs, 0.6rem);
+    font-size: max(var(--font-xs, 0.68rem), 0.68rem);
     color: var(--text-muted);
   }
 
@@ -1280,7 +1309,7 @@
     background: var(--surface-2);
     border: 1px solid var(--border-default);
     color: var(--text-muted);
-    font-size: var(--font-sm, 0.6rem);
+    font-size: max(var(--font-sm, 0.68rem), 0.68rem);
     padding: 0.2rem 0.6rem;
     border-radius: var(--radius-sm, 0.25rem);
     cursor: pointer;
@@ -1310,7 +1339,7 @@
     background: var(--surface-2);
     border: 1px solid var(--border-default);
     color: var(--color-danger);
-    font-size: var(--font-sm, 0.6rem);
+    font-size: max(var(--font-sm, 0.68rem), 0.68rem);
     padding: 0.25rem 0.75rem;
     border-radius: var(--radius-sm, 0.3rem);
     cursor: pointer;
@@ -1340,7 +1369,7 @@
     display: flex;
     align-items: center;
     gap: 0.3rem;
-    font-size: var(--font-xs, 0.55rem);
+    font-size: max(var(--font-xs, 0.65rem), 0.65rem);
   }
 
   .expert-label {
@@ -1356,7 +1385,7 @@
     border: 1px solid var(--border-default);
     border-radius: var(--radius-sm, 0.2rem);
     color: var(--text-primary);
-    font-size: var(--font-xs, 0.55rem);
+    font-size: max(var(--font-xs, 0.65rem), 0.65rem);
     padding: 0.15rem 0.3rem;
     font-family: 'Cascadia Code', 'Consolas', monospace;
     outline: none;
@@ -1371,7 +1400,7 @@
   }
 
   .expert-error {
-    font-size: var(--font-xs, 0.5rem);
+    font-size: max(var(--font-xs, 0.62rem), 0.62rem);
     color: var(--color-danger);
     flex-shrink: 0;
   }

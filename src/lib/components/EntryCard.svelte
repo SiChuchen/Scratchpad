@@ -2,6 +2,7 @@
   import type { DockEntry } from '$lib/types/dock'
   import { generateTitle, looksLikeCode } from '$lib/utils/title'
   import { messages } from '$lib/i18n'
+  import Icon from './Icon.svelte'
   import TextEntryBody from './entry/TextEntryBody.svelte'
   import ImageEntryBody from './entry/ImageEntryBody.svelte'
   import FileEntryBody from './entry/FileEntryBody.svelte'
@@ -166,31 +167,17 @@
     {/if}
     <span class="entry-time">{timeLabel}</span>
     <div class="entry-header-actions" data-card-interactive ondblclick={stop}>
-      <button class="icon-btn" onclick={(e) => { e.stopPropagation(); handleCopy(e) }} title={messages.entry.copy}>
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-          <rect x="9" y="9" width="13" height="13" rx="2" />
-          <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-        </svg>
+      <button class="icon-btn" onclick={(e) => { e.stopPropagation(); handleCopy(e) }} title={messages.entry.copy} aria-label={messages.entry.copy}>
+        <Icon name="copy" size={12} />
       </button>
-      <button class="icon-btn" onclick={(e) => { e.stopPropagation(); onToggleCollapse(entry.id) }} title={entry.collapsed ? messages.entry.expand : messages.entry.collapse}>
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-          {#if entry.collapsed}
-            <polyline points="6 9 12 15 18 9" />
-          {:else}
-            <polyline points="18 15 12 9 6 15" />
-          {/if}
-        </svg>
+      <button class="icon-btn" onclick={(e) => { e.stopPropagation(); onToggleCollapse(entry.id) }} title={entry.collapsed ? messages.entry.expand : messages.entry.collapse} aria-label={entry.collapsed ? messages.entry.expand : messages.entry.collapse}>
+        <Icon name={entry.collapsed ? 'chevron-down' : 'chevron-up'} size={12} />
       </button>
-      <button class="icon-btn note-btn" class:active={entry.inNote} onclick={(e) => { e.stopPropagation(); onToggleNote(entry.id) }} title={entry.inNote ? messages.entry.unfavorite : messages.entry.favorite}>
-        <svg width="12" height="12" viewBox="0 0 24 24" fill={entry.inNote ? 'currentColor' : 'none'} stroke="currentColor" stroke-width="1.5">
-          <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
-        </svg>
+      <button class="icon-btn note-btn" class:active={entry.inNote} onclick={(e) => { e.stopPropagation(); onToggleNote(entry.id) }} title={entry.inNote ? messages.entry.unfavorite : messages.entry.favorite} aria-label={entry.inNote ? messages.entry.unfavorite : messages.entry.favorite}>
+        <Icon name="star" size={12} filled={entry.inNote} />
       </button>
-      <button class="icon-btn danger" onclick={(e) => { e.stopPropagation(); onDeleteFromView(entry.id) }} title={messages.entry.delete}>
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-          <polyline points="3 6 5 6 21 6" />
-          <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-        </svg>
+      <button class="icon-btn danger" onclick={(e) => { e.stopPropagation(); onDeleteFromView(entry.id) }} title={messages.entry.delete} aria-label={messages.entry.delete}>
+        <Icon name="trash" size={12} />
       </button>
     </div>
   </header>
@@ -234,9 +221,9 @@
   }
 
   .kind-badge {
-    padding: 0.08rem 0.35rem;
+    padding: 0.1rem 0.38rem;
     border-radius: var(--radius-sm, 0.2rem);
-    font-size: 0.55rem;
+    font-size: max(var(--font-xs, 0.62rem), 0.62rem);
     font-weight: 600;
     letter-spacing: 0.03em;
     flex-shrink: 0;
@@ -286,7 +273,7 @@
   .preview-line {
     flex: 1;
     min-width: 0;
-    font-size: var(--font-xs, 0.5rem);
+    font-size: max(var(--font-xs, 0.62rem), 0.62rem);
     color: var(--text-faint);
     white-space: nowrap;
     overflow: hidden;
@@ -295,7 +282,7 @@
   }
 
   .entry-time {
-    font-size: var(--font-xs, 0.5rem);
+    font-size: max(var(--font-xs, 0.62rem), 0.62rem);
     color: var(--text-faint);
     flex-shrink: 0;
   }
@@ -364,9 +351,9 @@
     border: 1px solid color-mix(in srgb, var(--color-primary) 30%, transparent);
     border-radius: var(--radius-sm, 0.2rem);
     color: var(--text-primary);
-    font-size: var(--font-xs, 0.55rem);
+    font-size: max(var(--font-xs, 0.68rem), 0.68rem);
     font-family: inherit;
-    padding: 0.1rem 0.3rem;
+    padding: 0.15rem 0.35rem;
     outline: none;
   }
 
