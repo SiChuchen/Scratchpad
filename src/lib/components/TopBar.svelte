@@ -86,7 +86,7 @@
   }
 
   .scopes {
-    flex: 1;
+    flex: 0 1 auto;
     min-width: 0;
     display: flex;
     gap: 0.125rem;
@@ -96,10 +96,10 @@
   }
 
   .scope-btn {
-    flex: 1;
+    flex: 0 0 auto;
     min-width: 0;
     min-height: 1.75rem;
-    padding: 0.2rem 0.4rem;
+    padding: 0.2rem 0.6rem;
     border: 1px solid transparent;
     border-radius: calc(var(--radius-md, 0.35rem) - 0.1rem);
     background: none;
@@ -124,8 +124,12 @@
     font-weight: 500;
   }
 
+  /* 分段控制器与窗口按钮之间的拖动空隙（.top 的 mousedown 已处理拖动，此处只是提供可抓取区域） */
   .spacer {
-    flex: 0 0 auto;
+    flex: 1 1 auto;
+    align-self: stretch;
+    min-width: 0.75rem;
+    cursor: move;
   }
 
   .win-btn {

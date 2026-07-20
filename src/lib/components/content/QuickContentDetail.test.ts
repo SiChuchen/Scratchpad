@@ -33,4 +33,19 @@ describe('QuickContentDetail', () => {
     expect(a.onCopyText).toHaveBeenCalledWith('dummy-password',true)
     expect(view.queryByText('dummy-password')).toBeNull()
   })
+
+  it('copies the asset path for image and file entries', async () => {
+    const writeText=vi.fn().mockResolvedValue(undefined)
+    Object.assign(navigator,{clipboard:{writeText}})
+    for(const kind of ['image','file'] as const){
+      const detail=fixtureDetail(allKindSummaries.find(x=>x.kind===kind)!)
+      const a=actions();const view=render(QuickContentDetail,{props:{detail,resetToken:0,...a}})
+      await fireEvent.click(view.getByRole('button',{name:'复制路径'}))
+      expect(writeText).toHaveBeenCalledWith(kind==='image'?'fixture/image.png':'fixture/file.pdf')
+      expect(a.onNotify).toHaveBeenCalledWith('已复制路径','success')
+      view.unmount()
+    }
+    const text=render(QuickContentDetail,{props:{detail:fixtureDetail(allKindSummaries.find(x=>x.kind==='text')!),resetToken:0,...actions()}})
+    expect(text.queryByRole('button',{name:'复制路径'})).toBeNull()
+  })
 })
