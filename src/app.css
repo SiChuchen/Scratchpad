@@ -5,7 +5,7 @@
   --surface-2: rgba(15, 23, 42, 0.5);
   --text-primary: #eef2f7;
   --text-muted: rgba(148, 163, 184, 0.65);
-  --text-faint: rgba(148, 163, 184, 0.4);
+  --text-faint: rgba(148, 163, 184, 0.45);
   --border-default: rgba(148, 163, 184, 0.12);
   --border-subtle: rgba(148, 163, 184, 0.08);
   --border-emphasis: rgba(148, 163, 184, 0.25);
@@ -75,7 +75,8 @@ html.quick-access-window #app {
 }
 
 ::-webkit-scrollbar {
-  width: 3px;
+  width: 6px;
+  height: 6px;
 }
 
 ::-webkit-scrollbar-track {
@@ -83,6 +84,14 @@ html.quick-access-window #app {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: color-mix(in srgb, var(--text-muted) 30%, transparent);
-  border-radius: 2px;
+  background: color-mix(in srgb, var(--text-muted) 35%, transparent);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--text-muted) 60%, transparent);
+}
+
+::selection {
+  background: color-mix(in srgb, var(--color-primary) 30%, transparent);
 }
