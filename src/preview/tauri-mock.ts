@@ -313,7 +313,10 @@ export function installTauriMock(label = 'main') {
     unregisterCallback: (id: number) => {
       listeners.delete(id)
     },
-    convertFileSrc: (filePath: string) => filePath,
+    convertFileSrc: (filePath: string) =>
+      `data:image/svg+xml,${encodeURIComponent(
+        `<svg xmlns="http://www.w3.org/2000/svg" width="320" height="180"><rect width="100%" height="100%" fill="#3b82f6" opacity="0.45"/><text x="50%" y="52%" fill="#ffffff" font-size="14" text-anchor="middle" font-family="sans-serif">${filePath.split('/').pop()}</text></svg>`,
+      )}`,
     metadata: {
       currentWindow: { label },
       currentWebview: { label, windowLabel: label },
