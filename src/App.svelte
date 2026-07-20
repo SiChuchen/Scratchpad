@@ -1,27 +1,29 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, onDestroy } from "svelte";
+  import TopBar from "$lib/components/TopBar.svelte";
+  import QuickAccessFab from "$lib/components/QuickAccessFab.svelte";
+  import ContentWorkspace from "$lib/components/views/ContentWorkspace.svelte";
+  import SettingsView from "$lib/components/views/SettingsView.svelte";
   import {
-    createContentBrowser,
+    contentApi,
+    onContentChanged,
+    onContentDeleteFailed,
+    onMainContentOpen,
+  } from "$lib/api/content";
+  import { dockApi } from "$lib/api/dock";
+  import {
+    ContentBrowserController,
     type ContentBrowserState,
   } from "$lib/state/content-browser";
   import {
-    createContentSearch,
+    UnifiedSearchController,
+    initialSearchState,
     type ContentSearchState,
   } from "$lib/state/content-search";
-  import { contentApi } from "$lib/api/content";
-  import { dockApi } from "$lib/api/dock";
-  import {
-    onContentChanged,
-    onContentDeleteFailed,
-    onPreferencesChanged,
-    onDockView,
-  } from "$lib/api/events";
-  import { applyTokens } from "$lib/themes/engine";
-  import TopBar from "$lib/components/TopBar.svelte";
-  import ContentWorkspace from "$lib/components/views/ContentWorkspace.svelte";
-  import SettingsView from "$lib/components/views/SettingsView.svelte";
-  import MinimizedTab from "$lib/components/MinimizedTab.svelte";
-  import QuickAccessFab from "$lib/components/QuickAccessFab.svelte";
+  import { broadcastPreferences } from "$lib/state/preferences-sync";
+  import { computeThemeTokens } from "$lib/themes/engine";
+  import { messages, loadLocale, detectLanguage } from "$lib/i18n";
+  import Icon from "$lib/components/Icon.svelte";
   import type {
     BrowseScope,
     ContentDetail,
@@ -29,69 +31,71 @@
     ContentSummary,
   } from "$lib/types/content";
   import type { DockPreferences } from "$lib/types/dock";
-  import { computeThemeTokens } from "$lib/themes/engine";
-  import { messages, loadLocale, detectLanguage } from "$lib/i18n";
-  import Icon from "$lib/components/Icon.svelte";
 
-  const browser: ContentBrowserState = createContentBrowser();
-  const search: ContentSearchState = createContentSearch();
-  let currentView = $state<BrowseScope | "settings">("temporary");
-  let preferences = $state<DockPreferences | null>(null);
-  let systemDark = $state(true);
-  let isMac = $state(false);
-  let minimized = $state(false);
-  let quickAccessOpening = $state(false);
+  type MainView = BrowseScope | "settings";
+  let currentView = $state<MainView>("temporary");
+  let lastScope = $state<BrowseScope>("temporary");
+  let browserState = $state<ContentBrowserState>({
+    scope: "temporary",
+    kind: null,
+    items: [],
+    selectedId: null,
+    revision: 0,
+    phase: "idle",
+    error: null,
+  });
+  let searchState = $state<ContentSearchState>(initialSearchState());
   let selectedDetail = $state<ContentDetail | null>(null);
   let detailLoading = $state(false);
   let detailRequest = 0;
-  let composeOpen = $state(false);
-  let composeText = $state("");
+  let pendingDeleteIds = $state<string[]>([]);
+  let preferences = $state<DockPreferences | null>(null);
+  let systemDark = $state(
+    window.matchMedia?.("(prefers-color-scheme: dark)").matches ?? false,
+  );
   let toast = $state<{
     text: string;
     kind: "success" | "error";
     undo?: () => void;
   } | null>(null);
-  let toastTimer: ReturnType<typeof setTimeout> | undefined;
+  let toastTimer: ReturnType<typeof setTimeout> | null = null;
+  let quickAccessOpening = $state(false);
+  let composeOpen = $state(false);
+  let composeText = $state("");
   let dragOverlay = $state(false);
-  let pendingDeleteIds = $state<string[]>([]);
-  let loadGeneration = 0;
-
-  async function refreshAll() {
-    const generation = ++loadGeneration;
-    const items = await contentApi.list(browser.scope, browser.kind);
-    if (generation !== loadGeneration) return;
-    browser.syncFromBackend(items, browser.kind);
-    await search.refresh();
-    if (selectedDetail) {
-      try {
-        selectedDetail = await contentApi.detail(selectedDetail.summary.id);
-      } catch {
-        selectedDetail = null;
-      }
-    }
-  }
+  const browser = new ContentBrowserController(
+    contentApi,
+    (s) => (browserState = s),
+  );
+  const search = new UnifiedSearchController(
+    contentApi,
+    (s) => (searchState = s),
+  );
+  const visibleBrowser = $derived({
+    ...browserState,
+    items: browserState.items.filter((x) => !pendingDeleteIds.includes(x.id)),
+  });
+  const visibleSearch = $derived({
+    ...searchState,
+    hits: searchState.hits.filter(
+      (x) => !pendingDeleteIds.includes(x.summary.id),
+    ),
+  });
 
   onMount(() => {
     let disposed = false;
-    const cleanups: Array<() => void> = [];
-    const media = window.matchMedia("(prefers-color-scheme: dark)");
-    const syncSystemDark = () => (systemDark = media.matches);
-    syncSystemDark();
-    media.addEventListener("change", syncSystemDark);
-    isMac = navigator.userAgent.includes("Mac");
-
-    async function initialize() {
-      preferences = await dockApi.getPreferences();
-      minimized = preferences.dockMinimized;
-      if (preferences.language !== "auto") {
-        await loadLocale(preferences.language);
-      } else {
-        await loadLocale(detectLanguage());
-      }
-      await refreshAll();
-    }
-
-    void initialize()
+    const cleanups: (() => void)[] = [];
+    void Promise.all([dockApi.getPreferences(), browser.load("temporary")])
+      .then(([prefs]) => {
+        if (disposed) return;
+        preferences = prefs;
+        if (!prefs.language) {
+          prefs = { ...prefs, language: detectLanguage() };
+          preferences = prefs;
+          void dockApi.setPreferences(prefs);
+        }
+        loadLocale(prefs.language);
+      })
       .catch((e) => notify(`${messages.toast.loadFailed}：${format(e)}`, "error"));
     void onContentChanged(async (event) => {
       if (event.revision <= browser.snapshot.revision) return;
@@ -108,6 +112,9 @@
         search.select(null);
         notify(messages.workspace.notices.deletedRemotely, "error");
       }
+      for (const c of event.changes)
+        if (c.operation === "deleted")
+          pendingDeleteIds = pendingDeleteIds.filter((id) => id !== c.id);
       await refreshAll();
     }).then((fn) => (disposed ? fn() : cleanups.push(fn)));
     void onContentDeleteFailed(async (e) => {
@@ -115,65 +122,88 @@
       await refreshAll();
       notify(messages.workspace.notices.deleteFailedRestored, "error");
     }).then((fn) => (disposed ? fn() : cleanups.push(fn)));
-    void onPreferencesChanged(async (p) => {
-      preferences = p;
-      if (p.language !== "auto") await loadLocale(p.language);
+    void onMainContentOpen(({ id }) => {
+      void openRequestedContent(id);
     }).then((fn) => (disposed ? fn() : cleanups.push(fn)));
-    void onDockView(async (view) => {
-      if (view === "settings") {
-        currentView = "settings";
-      } else {
-        currentView = "temporary";
-        browser.setScope("temporary");
-      }
-      minimized = false;
-      await refreshAll();
-    }).then((fn) => (disposed ? fn() : cleanups.push(fn)));
-
+    const focus = () =>
+      void browser.refreshIfStale().then((stale) => {
+        if (stale) return refreshSearch();
+      });
+    window.addEventListener("focus", focus);
+    window.addEventListener("paste", handlePaste);
+    cleanups.push(
+      () => window.removeEventListener("focus", focus),
+      () => window.removeEventListener("paste", handlePaste),
+    );
+    void import("@tauri-apps/api/window")
+      .then(async ({ getCurrentWindow }) => {
+        const un = await getCurrentWindow().onDragDropEvent((e: any) => {
+          if (e.payload.type === "enter") dragOverlay = true;
+          else if (e.payload.type === "leave") dragOverlay = false;
+          else if (e.payload.type === "drop") {
+            dragOverlay = false;
+            void importPaths(e.payload.paths);
+          }
+        });
+        if (disposed) un();
+        else cleanups.push(un);
+      })
+      .catch(() => {});
     return () => {
       disposed = true;
-      media.removeEventListener("change", syncSystemDark);
-      cleanups.forEach((fn) => fn());
+      for (const c of cleanups) c();
     };
   });
-
-  const tokens = $derived(
-    preferences ? computeThemeTokens(preferences, systemDark) : {},
-  );
-  $effect(() => {
-    applyTokens(tokens);
+  onMount(() => {
+    const mq = window.matchMedia?.("(prefers-color-scheme: dark)");
+    if (!mq) return;
+    const h = (e: MediaQueryListEvent) => (systemDark = e.matches);
+    mq.addEventListener("change", h);
+    return () => mq.removeEventListener("change", h);
+  });
+  onDestroy(() => {
+    browser.dispose?.();
+    search.dispose();
+    if (toastTimer) clearTimeout(toastTimer);
   });
   $effect(() => {
-    document.documentElement.style.setProperty(
-      "--font-ui-size",
-      `${preferences?.uiTextSizePx ?? 12}px`,
-    );
-    document.documentElement.style.setProperty(
-      "--font-content-size",
-      `${preferences?.contentTextSizePx ?? 14}px`,
-    );
-    document.documentElement.style.setProperty(
-      "--font-family-zh",
-      preferences?.fontFamilyZh || "Microsoft YaHei",
-    );
-    document.documentElement.style.setProperty(
-      "--font-family-en",
-      preferences?.fontFamilyEn || "Segoe UI",
-    );
+    if (!preferences) return;
+    const root = document.documentElement.style;
+    for (const [k, v] of Object.entries(
+      computeThemeTokens(preferences, systemDark),
+    ))
+      root.setProperty(k, v);
+    root.setProperty("--font-family-zh", preferences.fontFamilyZh);
+    root.setProperty("--font-family-en", preferences.fontFamilyEn);
   });
 
-  function navigate(view: BrowseScope) {
-    currentView = view;
-    browser.setScope(view);
+  async function navigate(scope: BrowseScope) {
+    currentView = scope;
+    lastScope = scope;
     selectedDetail = null;
-    void refreshAll();
+    await browser.load(scope);
+  }
+  async function openRequestedContent(id: string): Promise<void> {
+    currentView = "all";
+    lastScope = "all";
+    await search.search("");
+    await browser.load("all", null);
+    if (!browser.snapshot.items.some((item) => item.id === id)) {
+      selectedDetail = null;
+      notify(messages.workspace.contentMissing, "error");
+      return;
+    }
+    browser.select(id);
+    await select(id);
   }
   function toggleSettings() {
-    currentView = currentView === "settings" ? browser.scope : "settings";
+    currentView = currentView === "settings" ? lastScope : "settings";
   }
   async function minimize() {
     try {
-      await dockApi.minimizeToTab();
+      await import("@tauri-apps/api/core").then(({ invoke }) =>
+        invoke("ipc_dock_minimize_to_tab"),
+      );
     } catch (e) {
       notify(format(e), "error");
     }
@@ -182,7 +212,9 @@
     if (quickAccessOpening) return;
     quickAccessOpening = true;
     try {
-      await dockApi.openQuickAccess();
+      await import("@tauri-apps/api/core").then(({ invoke }) =>
+        invoke("ipc_open_quick_access"),
+      );
     } catch (e) {
       notify(format(e), "error");
     } finally {
@@ -190,15 +222,17 @@
     }
   }
   async function select(id: string | null) {
-    browser.select(id);
-    search.select(id);
-    selectedDetail = null;
-    if (!id) return;
+    if (searchState.query.trim()) search.select(id);
+    else browser.select(id);
+    if (!id) {
+      selectedDetail = null;
+      return;
+    }
     const request = ++detailRequest;
     detailLoading = true;
     try {
-      const d = await contentApi.detail(id);
-      if (request === detailRequest) selectedDetail = d;
+      const detail = await contentApi.detail(id);
+      if (request === detailRequest) selectedDetail = detail;
     } catch (e) {
       if (request === detailRequest) {
         selectedDetail = null;
@@ -206,6 +240,34 @@
       }
     } finally {
       if (request === detailRequest) detailLoading = false;
+    }
+  }
+  function doSearch(q: string) {
+    void search.search(q);
+  }
+  function clearSearch() {
+    void search.search("");
+  }
+  async function setKind(kind: ContentKind | null) {
+    search.setKinds(kind ? [kind] : []);
+    await browser.setKind(kind);
+    if (searchState.query.trim()) await search.search(searchState.query);
+  }
+  async function refreshSearch() {
+    if (searchState.query.trim()) await search.search(searchState.query);
+  }
+  async function refreshAll() {
+    await browser.refresh();
+    await refreshSearch();
+    if (selectedDetail) await reloadDetail(selectedDetail.summary.id);
+  }
+  async function reloadDetail(id: string) {
+    const request = ++detailRequest;
+    try {
+      const d = await contentApi.detail(id);
+      if (request === detailRequest) selectedDetail = d;
+    } catch {
+      if (request === detailRequest) selectedDetail = null;
     }
   }
   async function toggleSaved(item: ContentSummary) {
@@ -223,7 +285,7 @@
       notify(format(e), "error");
     }
   }
-  async function copyItem(item: ContentSummary) {
+  async function copySummary(item: ContentSummary) {
     try {
       const d = await contentApi.detail(item.id);
       if (d.kind === "text") await navigator.clipboard.writeText(d.body);
@@ -231,7 +293,8 @@
         await dockApi.copyImage(d.assetPath);
       else if (d.kind === "file" && d.available)
         await dockApi.copyFile(d.assetPath);
-      else if (d.kind === "bookmark") await navigator.clipboard.writeText(d.url);
+      else if (d.kind === "bookmark")
+        await navigator.clipboard.writeText(d.url);
       else if (d.kind === "note") await navigator.clipboard.writeText(d.body);
       else if (d.kind === "credential") {
         const first = d.fields.find((f) => !f.isSensitive) ?? d.fields[0];
@@ -276,13 +339,11 @@
       notify(format(e), "error");
     }
   }
-  async function paste(e: ClipboardEvent) {
-    if (
-      (e.target as HTMLElement).closest("input, textarea, [contenteditable]")
-    )
-      return;
-    const files = Array.from(e.clipboardData?.files ?? []);
-    const text = e.clipboardData?.getData("text/plain");
+  async function handlePaste(e: ClipboardEvent) {
+    const target = e.target as HTMLElement;
+    if (target?.closest('input,textarea,[contenteditable="true"]')) return;
+    const files = [...(e.clipboardData?.files ?? [])];
+    const text = e.clipboardData?.getData("text/plain")?.trim();
     if (files.length) {
       e.preventDefault();
       for (const f of files)
@@ -351,76 +412,54 @@
       void saveText();
     }
   }
-
-  void initialize;
+  async function updatePreferences(next: DockPreferences) {
+    const previous = preferences?.language;
+    preferences = next;
+    void broadcastPreferences(next).catch(() => {});
+    if (previous !== next.language) loadLocale(next.language);
+    try {
+      await dockApi.setPreferences(next);
+    } catch (e) {
+      notify(format(e), "error");
+    }
+  }
 </script>
 
 <div class="app-shell">
-  {#if minimized}<MinimizedTab />{:else}
-    <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <div
-      class="shell"
-      class:mac={isMac}
-      onpaste={paste}
-      ondragover={(e) => {
-        e.preventDefault();
-        dragOverlay = true;
+  <TopBar
+    {currentView}
+    onNavigate={navigate}
+    onToggleSettings={toggleSettings}
+    onMinimize={minimize}
+  />{#if currentView === "settings" && preferences}<SettingsView
+      {preferences}
+      onChange={updatePreferences}
+      onBack={() => (currentView = lastScope)}
+      {notify}
+    />{:else}<ContentWorkspace
+      browser={visibleBrowser}
+      search={visibleSearch}
+      {selectedDetail}
+      {detailLoading}
+      {pendingDeleteIds}
+      onSearch={doSearch}
+      onClearSearch={clearSearch}
+      onSelect={select}
+      onSetKind={setKind}
+      onReorder={(ids) => browser.reorder(ids)}
+      onToggleSaved={toggleSaved}
+      onCopy={copySummary}
+      onDelete={remove}
+      onCreateText={() => (composeOpen = true)}
+      onDetailChanged={async (id) => {
+        await refreshAll();
+        await select(id);
       }}
-      ondragleave={(e) => {
-        if (!e.currentTarget.contains(e.relatedTarget as Node))
-          dragOverlay = false;
-      }}
-      ondrop={(e) => {
-        e.preventDefault();
-        dragOverlay = false;
-        void (async () => {
-          const paths = await dockApi.readClipboardFilePaths(e.dataTransfer);
-          if (paths.length) await importPaths(paths);
-        })();
-      }}
-    >
-      <TopBar
-        {currentView}
-        onNavigate={navigate}
-        onToggleSettings={toggleSettings}
-        onMinimize={minimize}
-      />
-      {#if currentView === "settings" && preferences}<SettingsView
-          {preferences}
-          onChange={(p) => (preferences = p)}
-          onBack={() => (currentView = browser.scope)}
-          notify={notify}
-        />{:else}<ContentWorkspace
-          {browser}
-          {search}
-          {selectedDetail}
-          {detailLoading}
-          {pendingDeleteIds}
-          onSearch={(q) => void search.search(q)}
-          onClearSearch={() => search.clear()}
-          onSelect={select}
-          onSetKind={(kind: ContentKind | null) => {
-            browser.setKind(kind);
-            void refreshAll();
-          }}
-          onReorder={async (ids: string[]) => {
-            browser.reorderLocal(ids);
-            await contentApi.reorder(ids);
-          }}
-          onToggleSaved={toggleSaved}
-          onCopy={copyItem}
-          onDelete={remove}
-          onCreateText={() => (composeOpen = true)}
-          onDetailChanged={async (id: string) => {
-            await refreshAll();
-            if (selectedDetail?.summary.id === id)
-              selectedDetail = await contentApi.detail(id);
-          }}
-          onNotify={notify}
-        />{/if}{#if currentView !== "settings"}<QuickAccessFab
-        onOpen={openQuickAccess}
-        disabled={quickAccessOpening}
-      />{/if}
+      onNotify={notify}
+    />{/if}{#if currentView !== "settings"}<QuickAccessFab
+      onOpen={openQuickAccess}
+      disabled={quickAccessOpening}
+    />{/if}
   {#if composeOpen}<div class="compose" role="dialog" aria-label={messages.workspace.createText}>
       <textarea
         bind:value={composeText}
@@ -458,31 +497,22 @@
       <span>{messages.toast.dragDropFile}</span>
     </div>{/if}
 </div>
-  {/if}
-</div>
 
 <style>
   .app-shell {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-  }
-  .shell {
+    box-sizing: border-box;
+    width: 100vw;
+    height: 100vh;
+    min-width: 240px;
+    min-height: 180px;
     position: relative;
-    flex: 1;
-    min-width: 0;
     display: flex;
     flex-direction: column;
     overflow: hidden;
-    border: 1px solid var(--border-default);
-    border-radius: 10px;
     background: var(--surface-0);
-    box-shadow: var(--shadow-default);
-    backdrop-filter: blur(24px);
-    font-size: var(--font-ui-size, 12px);
-  }
-  .shell.mac {
-    border-radius: 12px;
+    color: var(--text-primary);
+    border: 1px solid var(--border-emphasis);
+    font-family: var(--font-family-zh), var(--font-family-en), sans-serif;
   }
   .toast {
     position: absolute;
@@ -640,5 +670,16 @@
     background: color-mix(in srgb, var(--surface-0) 90%, transparent);
     color: var(--color-primary);
     font-weight: 600;
+  }
+  @media (max-width: 260px) {
+    .toast {
+      bottom: 0.25rem;
+    }
+    .compose {
+      inset: 0.2rem;
+    }
+    .compose textarea {
+      min-height: 4rem;
+    }
   }
 </style>
