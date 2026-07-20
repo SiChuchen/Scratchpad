@@ -38,6 +38,10 @@
         : messages.workspace.copy,
   )
 
+  const imageUrl = $derived(
+    detail.kind === 'image' && detail.available ? dockApi.previewUrl(detail.assetPath) : null,
+  )
+
   async function save() {
     try {
       if (detail.kind === 'text') await contentApi.updateText(detail.summary.id, title || null, body)
@@ -95,6 +99,9 @@
     {:else if !detail.available}
       <p role="status">{detail.kind === 'image' ? messages.workspace.unavailableImage : messages.workspace.unavailableFile}</p>
     {:else}
+      {#if detail.kind === 'image' && imageUrl}
+        <img class="asset-preview" src={imageUrl} alt={detail.fileName} draggable="false" />
+      {/if}
       <p class="path">{detail.fileName}</p>
     {/if}
     <div class="actions">
@@ -207,6 +214,16 @@
     font-size: max(var(--font-md, 0.85rem), 0.85rem);
     line-height: 1.55;
     margin: 0;
+  }
+
+  .asset-preview {
+    display: block;
+    max-width: 100%;
+    max-height: 16rem;
+    object-fit: contain;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border-subtle);
+    background: var(--surface-2);
   }
 
   .actions {

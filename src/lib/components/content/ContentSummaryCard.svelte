@@ -2,6 +2,7 @@
   import ContentKindIcon from './ContentKindIcon.svelte'
   import Icon from '$lib/components/Icon.svelte'
   import { messages } from '$lib/i18n'
+  import { imageThumbnailUrl } from '$lib/api/thumbnails'
   import type { ContentSummary } from '$lib/types/content'
 
   interface Props {
@@ -13,9 +14,26 @@
     onToggleSaved: (item: ContentSummary) => void
     onCopy: (item: ContentSummary) => void
     onDelete: (item: ContentSummary) => void
+    onDragHandle?: (id: string, event: PointerEvent) => void
   }
 
-  let { item, selected, busy, draggable = false, onSelect, onToggleSaved, onCopy, onDelete }: Props = $props()
+  let { item, selected, busy, draggable = false, onSelect, onToggleSaved, onCopy, onDelete, onDragHandle }: Props = $props()
+
+  // 图片条目在列表中恢复缩略图（旧版 EntryCard 行为）；详情接口按需懒加载并缓存。
+  let thumbUrl = $state<string | null>(null)
+  $effect(() => {
+    if (item.kind !== 'image') {
+      thumbUrl = null
+      return
+    }
+    let cancelled = false
+    imageThumbnailUrl(item.id).then((url) => {
+      if (!cancelled) thumbUrl = url
+    })
+    return () => {
+      cancelled = true
+    }
+  })
 
   const kindLabel = $derived(messages.workspace.kind[item.kind])
   const copyable = $derived(
@@ -45,7 +63,11 @@
 
 <article class="card" class:selected aria-current={selected ? 'true' : undefined}>
   <button class="select" type="button" onclick={() => onSelect(item.id)} aria-label={selectLabel}>
-    <ContentKindIcon kind={item.kind} />
+    {#if item.kind === 'image' && thumbUrl}
+      <img class="thumb" src={thumbUrl} alt="" draggable="false" />
+    {:else}
+      <ContentKindIcon kind={item.kind} />
+    {/if}
     <span class="main">
       <strong>{item.title || messages.workspace.untitled}</strong>
       {#if item.preview}<span class="preview">{item.preview}</span>{/if}
@@ -54,7 +76,7 @@
   <div class="meta"><span>{kindLabel}</span><span>{retentionLabel}</span></div>
   <div class="actions">
     {#if draggable && item.capabilities.reorder}
-      <button type="button" class="icon-btn drag" aria-label={messages.workspace.dragToReorder} title={messages.workspace.dragToReorder} disabled={busy}>
+      <button type="button" class="icon-btn drag" aria-label={messages.workspace.dragToReorder} title={messages.workspace.dragToReorder} disabled={busy} onpointerdown={(e) => onDragHandle?.(item.id, e)}>
         <Icon name="grip" size={12} />
       </button>
     {/if}
@@ -192,6 +214,17 @@
 
   .icon-btn.drag {
     cursor: grab;
+    touch-action: none;
+  }
+
+  .thumb {
+    width: 2.2rem;
+    height: 2.2rem;
+    flex: 0 0 auto;
+    object-fit: cover;
+    border-radius: var(--radius-sm, 0.25rem);
+    border: 1px solid var(--border-subtle);
+    background: var(--surface-2);
   }
 
   .icon-btn.star {
