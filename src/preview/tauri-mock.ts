@@ -256,6 +256,7 @@ async function mockInvoke(cmd: string, args: any): Promise<any> {
       return
     case 'ipc_clipboard_copy_file':
     case 'ipc_clipboard_copy_image':
+    case 'ipc_reveal_in_folder':
       return
     case 'ipc_clipboard_read_file_paths':
       return []
