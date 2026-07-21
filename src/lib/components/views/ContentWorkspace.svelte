@@ -23,6 +23,7 @@
     onToggleSaved: (item: ContentSummary) => void
     onCopy: (item: ContentSummary) => void
     onDelete: (item: ContentSummary) => void
+    onCopyPath?: (item: ContentSummary) => void
     onCreateText: () => void
     onDetailChanged: (id: string) => Promise<void>
     onNotify: (m: string, k?: 'success' | 'error') => void
@@ -42,6 +43,7 @@
     onToggleSaved,
     onCopy,
     onDelete,
+    onCopyPath,
     onCreateText,
     onDetailChanged,
     onNotify,
@@ -126,7 +128,7 @@
       }}
     >
       {#if items.length}
-        <ContentList {items} {selectedId} {reorderable} busyIds={pendingDeleteIds} onSelect={(id) => select(id)} {onReorder} {onToggleSaved} {onCopy} {onDelete} />
+        <ContentList {items} {selectedId} {reorderable} busyIds={pendingDeleteIds} onSelect={(id) => select(id)} {onReorder} {onToggleSaved} {onCopy} {onDelete} {onCopyPath} />
       {:else}
         <div class="empty">
           <span class="empty-icon" aria-hidden="true"><Icon name={searching ? 'search' : 'inbox'} size={26} strokeWidth={1.4} /></span>
