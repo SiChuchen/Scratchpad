@@ -225,6 +225,7 @@ export interface LlmConfigSummary {
 export interface VaultAiSettings {
   autoEnrich: boolean
   autoHybridSearch: boolean
+  thinkingEnabled: boolean
   sensitiveClipboardClearSeconds: number | null
 }
 

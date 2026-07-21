@@ -260,7 +260,11 @@ async fn process_one_entry(app: &AppHandle, entry_id: &str) -> ProcessOutcome {
         };
 
     // 3) 脱敏并组装请求（请求局部 TokenMap）
-    let (req, token_map) = build_enrichment_request(&detail);
+    let (req, token_map) = build_enrichment_request(
+        &detail,
+        &config.provider_id,
+        vault.settings().thinking_enabled,
+    );
 
     // 4) 调 LLM
     let resp = match adapter.complete(req).await {
@@ -327,7 +331,11 @@ async fn process_one_entry(app: &AppHandle, entry_id: &str) -> ProcessOutcome {
     ProcessOutcome::Continue
 }
 
-fn build_enrichment_request(detail: &VaultEntryDetail) -> (LlmRequest, TokenMap) {
+fn build_enrichment_request(
+    detail: &VaultEntryDetail,
+    provider_id: &str,
+    thinking_enabled: bool,
+) -> (LlmRequest, TokenMap) {
     let tag_strings: Vec<String> = detail.tags.iter().map(|tag| tag.tag.clone()).collect();
     let mut token_map = TokenMap::new();
     let d_entry = desensitize_entry(&detail.entry, &detail.fields, &tag_strings, &mut token_map);
@@ -352,7 +360,9 @@ fn build_enrichment_request(detail: &VaultEntryDetail) -> (LlmRequest, TokenMap)
             messages,
             json_mode: true,
             temperature: 0.3,
-            max_tokens: Some(512),
+            max_tokens: Some(1536),
+            thinking_enabled: crate::vault::llm::presets::supports_thinking_mode(provider_id)
+                .then_some(thinking_enabled),
         },
         token_map,
     )
@@ -448,6 +458,7 @@ mod tests {
             &VaultAiSettings {
                 auto_enrich: true,
                 auto_hybrid_search: true,
+                thinking_enabled: false,
                 sensitive_clipboard_clear_seconds: Some(30),
             },
         )
@@ -465,6 +476,7 @@ mod tests {
             &VaultAiSettings {
                 auto_enrich: false,
                 auto_hybrid_search: true,
+                thinking_enabled: false,
                 sensitive_clipboard_clear_seconds: Some(30),
             },
         )
@@ -481,6 +493,7 @@ mod tests {
             &VaultAiSettings {
                 auto_enrich: true,
                 auto_hybrid_search: true,
+                thinking_enabled: false,
                 sensitive_clipboard_clear_seconds: Some(30),
             },
         )
@@ -498,6 +511,7 @@ mod tests {
             &VaultAiSettings {
                 auto_enrich: true,
                 auto_hybrid_search: true,
+                thinking_enabled: false,
                 sensitive_clipboard_clear_seconds: Some(30),
             },
         )
@@ -516,6 +530,7 @@ mod tests {
             &VaultAiSettings {
                 auto_enrich: true,
                 auto_hybrid_search: true,
+                thinking_enabled: false,
                 sensitive_clipboard_clear_seconds: Some(30),
             },
         )
@@ -683,7 +698,7 @@ mod tests {
         .unwrap();
         let detail = vstore::get_entry_detail(&conn, &detail.entry.id).unwrap();
 
-        let (request, _) = build_enrichment_request(&detail);
+        let (request, _) = build_enrichment_request(&detail, "deepseek", false);
         let prompt = request
             .messages
             .iter()

@@ -116,6 +116,11 @@ export interface LocaleMessages {
     aiEnhancing: string
     aiMerged: string
     aiFallback: string
+    aiTruncated: string
+    aiAuthFailed: string
+    aiRateLimited: string
+    aiTimedOut: string
+    aiNetworkFailed: string
     outboundAudit: string
     save: string
     saved: string
@@ -151,6 +156,7 @@ export interface LocaleMessages {
     status: string
     autoEnrich: string
     autoSearch: string
+    thinkingMode: string
     provider: string
     apiKey: string
     savedKeyPlaceholder: string

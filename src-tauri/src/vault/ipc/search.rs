@@ -127,7 +127,9 @@ pub(crate) async fn plan_search_redacted(
         messages,
         json_mode: true,
         temperature: 0.0,
-        max_tokens: Some(256),
+        max_tokens: Some(512),
+        thinking_enabled: crate::vault::llm::presets::supports_thinking_mode(&provider_id)
+            .then_some(vault_state.settings().thinking_enabled),
     };
 
     // 7) 可取消地调 LLM

@@ -79,6 +79,8 @@ impl LlmConfigStored {
 pub struct VaultAiSettings {
     pub auto_enrich: bool,
     pub auto_hybrid_search: bool,
+    #[serde(default)]
+    pub thinking_enabled: bool,
     pub sensitive_clipboard_clear_seconds: Option<u64>,
 }
 
@@ -87,6 +89,7 @@ impl Default for VaultAiSettings {
         Self {
             auto_enrich: true,
             auto_hybrid_search: true,
+            thinking_enabled: false,
             sensitive_clipboard_clear_seconds: Some(30),
         }
     }
@@ -257,6 +260,7 @@ mod tests {
     fn default_ai_settings_has_true_true_thirty() {
         let s = VaultAiSettings::default();
         assert!(s.auto_enrich);
+        assert!(!s.thinking_enabled);
         assert!(s.auto_hybrid_search);
         assert_eq!(s.sensitive_clipboard_clear_seconds, Some(30));
     }
@@ -267,13 +271,22 @@ mod tests {
         let s = VaultAiSettings {
             auto_enrich: false,
             auto_hybrid_search: true,
+            thinking_enabled: true,
             sensitive_clipboard_clear_seconds: Some(90),
         };
         save_ai_settings(&mut conn, &s).unwrap();
         let loaded = load_ai_settings(&conn);
         assert!(!loaded.auto_enrich);
         assert!(loaded.auto_hybrid_search);
+        assert!(loaded.thinking_enabled);
         assert_eq!(loaded.sensitive_clipboard_clear_seconds, Some(90));
+    }
+
+    #[test]
+    fn legacy_ai_settings_without_thinking_flag_defaults_to_disabled() {
+        let legacy = r#"{"autoEnrich":true,"autoHybridSearch":true,"sensitiveClipboardClearSeconds":30}"#;
+        let settings: VaultAiSettings = serde_json::from_str(legacy).unwrap();
+        assert!(!settings.thinking_enabled);
     }
 
     #[test]

@@ -274,11 +274,27 @@ pub const DEFAULT_SENSITIVE_KEYS: &[&str] = &[
     "api-key",
     "access_key",
     "accesskey",
+    "密码",
+    "私钥",
+    "密钥",
+    "令牌",
+    "访问密钥",
 ];
 
 pub fn is_default_sensitive_key(key: &str) -> bool {
     let lower = key.trim().to_lowercase();
     DEFAULT_SENSITIVE_KEYS.iter().any(|k| lower == *k)
+        || lower.contains("password")
+        || lower.contains("passwd")
+        || lower.contains("secret")
+        || lower.contains("token")
+        || lower.contains("private_key")
+        || lower.contains("apikey")
+        || lower.contains("api_key")
+        || lower.contains("密码")
+        || lower.contains("私钥")
+        || lower.contains("密钥")
+        || lower.contains("令牌")
 }
 
 #[cfg(test)]
@@ -316,5 +332,9 @@ mod tests {
         assert!(is_default_sensitive_key("ACCESS_KEY"));
         assert!(is_default_sensitive_key("accesskey"));
         assert!(is_default_sensitive_key("AccessKey"));
+        assert!(is_default_sensitive_key("密码"));
+        assert!(is_default_sensitive_key("私钥"));
+        assert!(is_default_sensitive_key("管理员密码"));
+        assert!(is_default_sensitive_key("deploy_private_key"));
     }
 }

@@ -67,9 +67,20 @@ pub async fn ipc_vault_enrich_capture(
     )
     .map_err(|e| e.to_string())?;
 
-    enrich_capture_with(&adapter, &config, &raw_text, &manual_sensitive_values)
-        .await
-        .map_err(|e| e.to_string())
+    let thinking_enabled = vault.settings().thinking_enabled;
+    let result = enrich_capture_with(
+        &adapter,
+        &config,
+        &raw_text,
+        &manual_sensitive_values,
+        thinking_enabled,
+    )
+    .await;
+    match &result {
+        Ok(_) => vault.record_success(),
+        Err(error) => vault.record_failure(error),
+    }
+    result.map_err(|e| e.to_string())
 }
 
 /// 保存最终 draft 到 DB；幂等；绝不调 LLM。
@@ -121,6 +132,7 @@ pub(crate) async fn enrich_capture_with(
     config: &LlmConfigStored,
     raw_text: &str,
     manual_sensitive_values: &[String],
+    thinking_enabled: bool,
 ) -> Result<CaptureEnrichment, LlmError> {
     // 1) 请求级 TokenMap
     let mut token_map = TokenMap::new();
@@ -137,9 +149,22 @@ pub(crate) async fn enrich_capture_with(
         messages,
         json_mode: true,
         temperature: 0.3,
-        max_tokens: Some(512),
+        max_tokens: Some(1536),
+        thinking_enabled: crate::vault::llm::presets::supports_thinking_mode(&config.provider_id)
+            .then_some(thinking_enabled),
     };
-    let resp = adapter.complete(req).await?;
+    let resp = match adapter.complete(req.clone()).await {
+        Ok(response) => response,
+        Err(LlmError::Truncated) => {
+            // 仅对明确的输出截断补一次更大预算，避免把网络/认证错误重试成额外开销。
+            let retry = LlmRequest {
+                max_tokens: Some(3072),
+                ..req
+            };
+            adapter.complete(retry).await?
+        }
+        Err(error) => return Err(error),
+    };
 
     // 5) 解析响应 —— 使用同一份 token_map
     let suggestion = parse_capture_response(&resp.content, &token_map)?;
@@ -337,6 +362,7 @@ mod tests {
             Ok(LlmResponse {
                 content: self.response.clone(),
                 tokens_used: None,
+                finish_reason: Some("stop".into()),
             })
         }
     }
@@ -347,6 +373,23 @@ mod tests {
     impl LlmAdapter for FailingAdapter {
         async fn complete(&self, _req: LlmRequest) -> Result<LlmResponse, LlmError> {
             Err(LlmError::Network("simulated".into()))
+        }
+    }
+
+    struct TruncateOnceAdapter {
+        counter: Arc<AtomicUsize>,
+    }
+    #[async_trait]
+    impl LlmAdapter for TruncateOnceAdapter {
+        async fn complete(&self, _req: LlmRequest) -> Result<LlmResponse, LlmError> {
+            if self.counter.fetch_add(1, Ordering::SeqCst) == 0 {
+                return Err(LlmError::Truncated);
+            }
+            Ok(LlmResponse {
+                content: r#"{"title":"Recovered"}"#.into(),
+                tokens_used: None,
+                finish_reason: Some("stop".into()),
+            })
         }
     }
 
@@ -373,7 +416,7 @@ mod tests {
         let _draft = sample_draft();
         let raw_text = "hello world topsecret";
         let enrichment =
-            enrich_capture_with(&adapter, &config, raw_text, &["topsecret".to_string()])
+            enrich_capture_with(&adapter, &config, raw_text, &["topsecret".to_string()], false)
                 .await
                 .expect("enrich ok");
 
@@ -400,13 +443,26 @@ mod tests {
         let adapter = FailingAdapter;
         let config = sample_stored();
         let draft = sample_draft();
-        let result = enrich_capture_with(&adapter, &config, "any raw", &[]).await;
+        let result = enrich_capture_with(&adapter, &config, "any raw", &[], false).await;
         assert!(result.is_err());
 
         // 但 create_from_capture 应仍能用本地 draft 保存（这条路径不调 LLM）
         let mut conn = open_db();
         let saved = vstore::create_from_capture(&mut conn, &draft, "req-1");
         assert!(saved.is_ok(), "save should work even when enrich failed");
+    }
+
+    #[tokio::test]
+    async fn capture_retries_once_after_a_truncated_response() {
+        let counter = Arc::new(AtomicUsize::new(0));
+        let adapter = TruncateOnceAdapter {
+            counter: counter.clone(),
+        };
+        let enrichment = enrich_capture_with(&adapter, &sample_stored(), "host: example", &[], false)
+            .await
+            .expect("retry should recover");
+        assert_eq!(enrichment.suggestion.title.as_deref(), Some("Recovered"));
+        assert_eq!(counter.load(Ordering::SeqCst), 2);
     }
 
     #[tokio::test]

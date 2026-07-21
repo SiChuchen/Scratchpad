@@ -157,6 +157,9 @@ impl VaultRuntimeState {
             LlmError::Server(_, _) | LlmError::Parse(_) | LlmError::InvalidConfig(_) => {
                 // 不参与门控
             }
+            LlmError::Truncated => {
+                // 输出截断不代表连接异常，不进入网络 cooldown。
+            }
             LlmError::Cancelled => {
                 // 用户取消不计入失败门控
             }
@@ -195,6 +198,7 @@ impl VaultRuntimeState {
             LlmError::Server(_, _) => "server",
             LlmError::Parse(_) => "parse",
             LlmError::InvalidConfig(_) => "config",
+            LlmError::Truncated => "truncated",
             LlmError::Cancelled => "cancelled",
         }
     }
@@ -297,6 +301,7 @@ pub(crate) fn llm_error_event(e: LlmError) -> LlmErrorEvent {
         LlmError::Server(_, _) => "server",
         LlmError::Parse(_) => "parse",
         LlmError::InvalidConfig(_) => "config",
+        LlmError::Truncated => "truncated",
         LlmError::Cancelled => "cancelled",
     };
     LlmErrorEvent {
@@ -402,6 +407,7 @@ mod runtime_tests {
             &VaultAiSettings {
                 auto_enrich: false,
                 auto_hybrid_search: true,
+                thinking_enabled: false,
                 sensitive_clipboard_clear_seconds: Some(60),
             },
         )
@@ -443,6 +449,7 @@ mod runtime_tests {
             &VaultAiSettings {
                 auto_enrich: false,
                 auto_hybrid_search: false,
+                thinking_enabled: false,
                 sensitive_clipboard_clear_seconds: None,
             },
         )
@@ -468,6 +475,7 @@ mod runtime_tests {
             &VaultAiSettings {
                 auto_enrich: false,
                 auto_hybrid_search: true,
+                thinking_enabled: false,
                 sensitive_clipboard_clear_seconds: Some(30),
             },
         )
@@ -641,6 +649,10 @@ mod runtime_tests {
         assert_eq!(
             VaultRuntimeState::user_error_code(&LlmError::InvalidConfig("x".into())),
             "config"
+        );
+        assert_eq!(
+            VaultRuntimeState::user_error_code(&LlmError::Truncated),
+            "truncated"
         );
         assert_eq!(
             VaultRuntimeState::user_error_code(&LlmError::Cancelled),

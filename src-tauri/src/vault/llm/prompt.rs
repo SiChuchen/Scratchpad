@@ -39,8 +39,22 @@ pub fn capture_enrichment_prompt(masked_text: &str) -> Vec<ChatMessage> {
 2) 只能输出下面指定结构的 JSON，不要解释、不要 Markdown 代码块。\
 3) 不得凭空发明凭据值：如果文本里没有出现 password / token / api_key 等，\
 对应字段必须留空或省略，绝不允许编造或基于常识补全。\
-4) 字段 key 最长 64 字符，字段 value 最长 16 KiB，title 最长 120，notes 最长 64 KiB。\
-5) tags 最多 5 个、aliases 最多 12 个、summary 最长 500。\
+4) 完整性优先：逐行提取所有明确事实。IP、主机、端口、URL、健康检查地址、\
+文件/仓库路径、数据库类型和路径、模型、环境、镜像、邮箱、用户名、密码、\
+token、api_key、私钥、对象存储和备份/维护时间都必须进入 fields；不得只写进\
+notes，不得遗漏或凭空补全。\
+5) field value 必须保留原文精确值，不改写路径、URL、IP、端口、邮箱、模型名\
+或 [SECRET:...] 占位符。箭头连接的多个事实可以拆成相邻字段，但不得丢失任一事实。\
+6) fields 按原文出现顺序输出；key 优先沿用原文标签语言。标题和分组名用于\
+生成 title/notes，但不得吞掉分组内的事实。\
+7) password/密码、token、secret、api_key、私钥、密钥和 [SECRET:...] 对应字段\
+必须 isSensitive=true；普通 IP、URL、路径、模型、邮箱和用户名默认 false。\
+敏感值不得出现在 title、notes、tags、summary、aliases。\
+8) 只要包含登录凭据或密钥，kind 必须为 credential；只有单一链接且无凭据时\
+才是 bookmark；其它情况为 note。\
+9) 字段 key 最长 64 字符，字段 value 最长 16 KiB，title 最长 120，notes 最长 64 KiB；\
+tags 最多 5 个、aliases 最多 12 个、summary 最长 500、fields 最多 32 个。\
+10) 输出前逐行自检：每个明确事实均能在 fields 的 value 中找到，并确认 JSON 完整闭合。\
 \n输出 JSON 结构（camelCase，缺省字段允许省略）：\n\
 {\n  \"kind\": \"credential|bookmark|note\",\n  \"title\": \"...\",\n  \"notes\": \"...\",\n  \"fields\": [{\"key\":\"...\",\"value\":\"...\",\"isSensitive\":false}],\n  \"tags\": [\"...\"],\n  \"summary\": \"...\",\n  \"aliases\": [\"...\"]\n}";
 
@@ -160,6 +174,16 @@ mod tests {
         assert!(user.content.contains("[SECRET:abcd]"));
         assert!(user.content.contains("BEGIN USER DATA"));
         assert!(user.content.contains("END USER DATA"));
+    }
+
+    #[test]
+    fn capture_prompt_requires_complete_ordered_infrastructure_extraction() {
+        let msgs = capture_enrichment_prompt("host: 10.0.0.1");
+        let system = &msgs[0].content;
+        assert!(system.contains("逐行提取所有明确事实"));
+        assert!(system.contains("fields 按原文出现顺序输出"));
+        assert!(system.contains("[SECRET:...]"));
+        assert!(system.contains("备份/维护时间"));
     }
 
     /// I3 回归：capture_enrichment_prompt 只接受 `masked_text`，

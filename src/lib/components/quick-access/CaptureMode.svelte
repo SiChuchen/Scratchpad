@@ -63,6 +63,7 @@
   let draft = $state<CaptureDraft | null>(null)
   let enrichment = $state<CaptureEnrichment | null>(null)
   let enrichStatus = $state<'idle' | 'enriching' | 'merged' | 'partial' | 'failed'>('idle')
+  let enrichFailureDetail = $state('')
   let partialCount = $state(0)
   let auditOpen = $state(false)
   let manualSensitiveValues = $state<string[]>([])
@@ -134,6 +135,7 @@
       draft = null
       enrichment = null
       enrichStatus = 'idle'
+      enrichFailureDetail = ''
       resetDirty()
       return
     }
@@ -155,6 +157,7 @@
       // AI enrich scheduling
       if (autoEnrich && aiConfigured) {
         enrichStatus = 'idle'
+        enrichFailureDetail = ''
         if (enrichTimer) clearTimeout(enrichTimer)
         enrichTimer = setTimeout(() => {
           void doEnrich()
@@ -185,8 +188,19 @@
     } catch (e) {
       console.error('CaptureMode: enrich failed', e)
       enrichStatus = 'failed'
+      enrichFailureDetail = describeEnrichFailure(e)
       // Save still enabled — preview from local parse is intact.
     }
+  }
+
+  function describeEnrichFailure(error: unknown): string {
+    const message = error instanceof Error ? error.message : String(error)
+    if (message.includes('response truncated')) return messages.quickAccess.aiTruncated
+    if (message.includes('authentication failed')) return messages.quickAccess.aiAuthFailed
+    if (message.includes('rate limited')) return messages.quickAccess.aiRateLimited
+    if (message.includes('timeout')) return messages.quickAccess.aiTimedOut
+    if (message.includes('network error')) return messages.quickAccess.aiNetworkFailed
+    return ''
   }
 
   function countDirtySuggestions(): number {
@@ -335,6 +349,7 @@
       draft = null
       enrichment = null
       enrichStatus = 'idle'
+      enrichFailureDetail = ''
       partialCount = 0
       manualSensitiveValues = []
       resetDirty()
@@ -429,7 +444,9 @@
   {:else if enrichStatus === 'partial'}
     <div class="enrich-status partial" aria-live="polite">{partialStatusText}</div>
   {:else if enrichStatus === 'failed'}
-    <div class="enrich-status failed" aria-live="polite">{messages.quickAccess.aiFallback}</div>
+    <div class="enrich-status failed" aria-live="polite">
+      {messages.quickAccess.aiFallback}{enrichFailureDetail ? `：${enrichFailureDetail}` : ''}
+    </div>
   {/if}
 
   {#if draft}

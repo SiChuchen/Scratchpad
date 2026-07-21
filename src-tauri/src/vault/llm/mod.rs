@@ -34,6 +34,9 @@ pub struct LlmRequest {
     pub json_mode: bool,
     pub temperature: f32,
     pub max_tokens: Option<u32>,
+    /// Provider-specific thinking mode. `None` leaves the provider default unchanged.
+    /// DeepSeek v4 uses `Some(false)` for deterministic structured extraction.
+    pub thinking_enabled: Option<bool>,
 }
 
 impl Default for LlmRequest {
@@ -43,6 +46,7 @@ impl Default for LlmRequest {
             json_mode: false,
             temperature: 0.3,
             max_tokens: None,
+            thinking_enabled: None,
         }
     }
 }
@@ -51,6 +55,7 @@ impl Default for LlmRequest {
 pub struct LlmResponse {
     pub content: String,
     pub tokens_used: Option<u32>,
+    pub finish_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Error)]
@@ -69,6 +74,8 @@ pub enum LlmError {
     Parse(String),
     #[error("invalid config: {0}")]
     InvalidConfig(String),
+    #[error("response truncated")]
+    Truncated,
     /// Task 9: 用户取消（例如发起了新的搜索，或显式取消）。
     /// Cancelled 不计入 cooldown、不弹 toast，仅供 `tokio::select!` 提前返回。
     #[error("cancelled")]

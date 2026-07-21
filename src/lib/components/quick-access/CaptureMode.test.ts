@@ -117,12 +117,14 @@ const CONFIGURED: LlmConfigSummary = {
 const AI_SETTINGS_ON: VaultAiSettings = {
   autoEnrich: true,
   autoHybridSearch: false,
+  thinkingEnabled: false,
   sensitiveClipboardClearSeconds: null,
 }
 
 const AI_SETTINGS_OFF: VaultAiSettings = {
   autoEnrich: false,
   autoHybridSearch: false,
+  thinkingEnabled: false,
   sensitiveClipboardClearSeconds: null,
 }
 

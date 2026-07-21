@@ -87,6 +87,10 @@ pub fn find_preset(id: &str) -> Option<&'static ProviderPreset> {
     PRESETS.iter().find(|p| p.id == id)
 }
 
+pub fn supports_thinking_mode(provider_id: &str) -> bool {
+    provider_id == "deepseek"
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -111,6 +115,12 @@ mod tests {
     fn find_preset_returns_by_id() {
         assert_eq!(find_preset("deepseek").unwrap().label, "Deepseek");
         assert!(find_preset("bogus").is_none());
+    }
+
+    #[test]
+    fn only_deepseek_uses_the_thinking_wire_parameter() {
+        assert!(supports_thinking_mode("deepseek"));
+        assert!(!supports_thinking_mode("openai"));
     }
 
     #[test]

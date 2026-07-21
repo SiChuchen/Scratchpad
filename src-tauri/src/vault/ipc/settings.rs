@@ -43,6 +43,7 @@ fn llm_error_message(error: &LlmError) -> String {
         LlmError::Server(status, _) => format!("服务端返回 HTTP {status}"),
         LlmError::Parse(_) => "响应解析失败".to_string(),
         LlmError::InvalidConfig(_) => "配置无效".to_string(),
+        LlmError::Truncated => "响应被截断，请重试".to_string(),
         LlmError::Cancelled => "请求已取消".to_string(),
     }
 }
@@ -112,10 +113,12 @@ pub async fn ipc_vault_verify_and_save_llm(
     };
 
     let req = LlmRequest {
-        messages: vec![crate::vault::llm::ChatMessage::user("ping")],
+        messages: vec![crate::vault::llm::ChatMessage::user("Reply with pong.")],
         json_mode: false,
         temperature: 0.0,
-        max_tokens: Some(8),
+        max_tokens: Some(32),
+        thinking_enabled: crate::vault::llm::presets::supports_thinking_mode(&to_test.provider_id)
+            .then_some(vault.settings().thinking_enabled),
     };
 
     let test_result = match adapter.complete(req).await {
@@ -188,10 +191,12 @@ pub async fn ipc_vault_test_saved_llm(
     };
 
     let req = LlmRequest {
-        messages: vec![crate::vault::llm::ChatMessage::user("ping")],
+        messages: vec![crate::vault::llm::ChatMessage::user("Reply with pong.")],
         json_mode: false,
         temperature: 0.0,
-        max_tokens: Some(8),
+        max_tokens: Some(32),
+        thinking_enabled: crate::vault::llm::presets::supports_thinking_mode(&config.provider_id)
+            .then_some(vault.settings().thinking_enabled),
     };
 
     let result = match adapter.complete(req).await {
@@ -272,6 +277,7 @@ mod tests {
         let _ = llm_error_message(&LlmError::Server(503, "x".into()));
         let _ = llm_error_message(&LlmError::Parse("x".into()));
         let _ = llm_error_message(&LlmError::InvalidConfig("x".into()));
+        let _ = llm_error_message(&LlmError::Truncated);
         let _ = llm_error_message(&LlmError::Cancelled);
     }
 

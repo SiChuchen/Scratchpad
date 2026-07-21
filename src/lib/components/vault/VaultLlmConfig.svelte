@@ -29,6 +29,7 @@
   let aiSettings = $state<VaultAiSettings>({
     autoEnrich: false,
     autoHybridSearch: false,
+    thinkingEnabled: false,
     sensitiveClipboardClearSeconds: null,
   })
 
@@ -147,6 +148,11 @@
     aiSettings = await vaultApi.setAiSettings(next)
   }
 
+  async function toggleThinking() {
+    const next = { ...aiSettings, thinkingEnabled: !aiSettings.thinkingEnabled }
+    aiSettings = await vaultApi.setAiSettings(next)
+  }
+
   async function toggleClipboardClear() {
     // 开启写 Some(30)；关闭写 None。不提供任意秒数输入。
     const nextSeconds = aiSettings.sensitiveClipboardClearSeconds === null ? 30 : null
@@ -175,6 +181,21 @@
     <span class="status" class:ok={connectionOk} class:fail={!connectionOk} aria-live="polite">
       {connectionOk ? connectedLabel : unconfiguredLabel}
     </span>
+  </div>
+
+  <div class="row">
+    <span class="label">{messages.aiSettings.thinkingMode}</span>
+    <button
+      type="button"
+      class="toggle"
+      class:active={aiSettings.thinkingEnabled}
+      onclick={toggleThinking}
+      role="switch"
+      aria-checked={aiSettings.thinkingEnabled}
+      aria-label={messages.aiSettings.thinkingMode}
+    >
+      <div class="toggle-knob"></div>
+    </button>
   </div>
 
   <!-- 自动整理与标签 -->

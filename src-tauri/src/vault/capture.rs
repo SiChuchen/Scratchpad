@@ -67,6 +67,10 @@ const CREDENTIAL_KEYS: &[&str] = &[
 fn is_credential_key(key: &str) -> bool {
     let lower = key.to_lowercase();
     CREDENTIAL_KEYS.iter().any(|k| lower == *k)
+        || matches!(
+            key.trim(),
+            "密码" | "私钥" | "密钥" | "令牌" | "访问密钥" | "邮箱" | "用户" | "用户名" | "主机" | "端口" | "数据库"
+        )
 }
 
 /// 公共入口：把任意粘贴文本转换成 `CaptureDraft`。
@@ -83,6 +87,8 @@ pub fn parse_capture_local(raw_text: &str) -> Result<CaptureDraft, String> {
     } else if let Some(d) = try_ssh(trimmed_input) {
         d
     } else if let Some(d) = try_user_pass_host_port(trimmed_input) {
+        d
+    } else if let Some(d) = try_structured_document(trimmed_input) {
         d
     } else if let Some(d) = try_multiline_key_value(trimmed_input) {
         d
@@ -344,7 +350,62 @@ fn try_user_pass_host_port(text: &str) -> Option<CaptureDraft> {
 }
 
 // ---------------------------------------------------------------------------
-// 优先级 4：多行 key-value
+// 优先级 4：混合结构文档（标题/分组 + 多行键值）
+// ---------------------------------------------------------------------------
+
+/// 解析常见运维清单中的标题、空分组行、缩进 key-value 和少量自然语言事实。
+/// 只保留明确给出的键和值，作为 AI 不可用时的本地结构化兜底。
+fn try_structured_document(text: &str) -> Option<CaptureDraft> {
+    let mut pairs: Vec<(String, String)> = Vec::new();
+    let mut title: Option<String> = None;
+
+    for raw_line in text.lines() {
+        let line = raw_line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        if let Some(value) = line.strip_prefix("本机 IP 为 ") {
+            let value = value.trim_end_matches(['。', '.']).trim();
+            if !value.is_empty() {
+                pairs.push(("本机 IP".to_string(), value.to_string()));
+            }
+            continue;
+        }
+
+        let Some(sep_idx) = line.find([':', '=']) else {
+            if title.is_none() && line.chars().count() <= 120 {
+                title = Some(line.to_string());
+            }
+            continue;
+        };
+        let (raw_key, raw_value) = line.split_at(sep_idx);
+        let key = raw_key.trim();
+        let value = raw_value[1..].trim();
+        if key.is_empty() || value.is_empty() {
+            continue;
+        }
+        pairs.push((key.to_string(), value.to_string()));
+    }
+
+    if pairs.len() < 2 {
+        return None;
+    }
+    let kind = if pairs.iter().any(|(key, _)| is_credential_key(key)) {
+        EntryKind::Credential
+    } else {
+        EntryKind::Note
+    };
+    let fallback_title = pairs[0].1.clone();
+    let mut draft = new_draft(kind, title.unwrap_or(fallback_title));
+    for (key, value) in pairs {
+        let sensitive = is_sensitive_key(&key);
+        push_field(&mut draft, &key, value, sensitive);
+    }
+    Some(draft)
+}
+
+// ---------------------------------------------------------------------------
+// 优先级 5：多行 key-value
 // ---------------------------------------------------------------------------
 
 fn try_multiline_key_value(text: &str) -> Option<CaptureDraft> {
@@ -772,5 +833,48 @@ mod tests {
         // I4 修复后 `:` 不再计入允许字符，应当 fall through 到 Note。
         let draft = parse_capture_local("bob:secret@1:2:3:abc").unwrap();
         assert_eq!(draft.kind, EntryKind::Note);
+    }
+
+    #[test]
+    fn mixed_chinese_deployment_document_keeps_labeled_facts_when_ai_is_unavailable() {
+        let raw = "本机 IP 为 10.10.20.30。\n\nProjectWiki 访问入口\n\n仓库: /srv/project-wiki\n数据库: SQLite → ./data/project-wiki.db\nAI: DeepSeek v4-pro\n\nWeb 界面: http://10.10.20.30:8091\n后端健康: http://10.10.20.30:18081/health\n\n管理员:\n  邮箱: admin@example.test\n  密码: test-password-only";
+        let draft = parse_capture_local(raw).unwrap();
+        assert_eq!(draft.kind, EntryKind::Credential);
+        assert_eq!(draft.title, "ProjectWiki 访问入口");
+        assert_eq!(field(&draft, "本机 IP").value, "10.10.20.30");
+        assert_eq!(field(&draft, "仓库").value, "/srv/project-wiki");
+        assert_eq!(field(&draft, "数据库").value, "SQLite → ./data/project-wiki.db");
+        assert_eq!(field(&draft, "Web 界面").value, "http://10.10.20.30:8091");
+        assert_eq!(field(&draft, "后端健康").value, "http://10.10.20.30:18081/health");
+        assert_eq!(field(&draft, "邮箱").value, "admin@example.test");
+        assert!(field(&draft, "密码").is_sensitive);
+    }
+
+    #[test]
+    fn mixed_document_without_credentials_stays_note_but_keeps_operational_fields() {
+        let raw = "发布说明\n环境: staging\n仓库: /srv/app\n健康检查: https://staging.example.test/health\n备份窗口: 周日 03:00";
+        let draft = parse_capture_local(raw).unwrap();
+        assert_eq!(draft.kind, EntryKind::Note);
+        assert_eq!(draft.title, "发布说明");
+        assert_eq!(field(&draft, "环境").value, "staging");
+        assert_eq!(field(&draft, "健康检查").value, "https://staging.example.test/health");
+    }
+
+    #[test]
+    fn structured_document_keeps_duplicate_labels_in_source_order() {
+        let raw = "多服务\n主机: api.internal\n端口: 8080\n主机: worker.internal\n端口: 9090\n管理员密码: secret";
+        let draft = parse_capture_local(raw).unwrap();
+        assert_eq!(draft.kind, EntryKind::Credential);
+        let values: Vec<_> = draft.fields.iter().map(|f| f.value.as_str()).collect();
+        assert_eq!(values, vec!["api.internal", "8080", "worker.internal", "9090", "secret"]);
+        assert!(draft.fields.last().unwrap().is_sensitive);
+    }
+
+    #[test]
+    fn private_key_variants_are_sensitive_in_structured_documents() {
+        let raw = "SSH\n用户: deploy\n私钥路径: C:\\keys\\deploy.pem\n跳板机: bastion.internal";
+        let draft = parse_capture_local(raw).unwrap();
+        assert_eq!(draft.kind, EntryKind::Credential);
+        assert!(field(&draft, "私钥路径").is_sensitive);
     }
 }
