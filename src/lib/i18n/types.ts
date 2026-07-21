@@ -54,6 +54,7 @@ export interface LocaleMessages {
     saveEdit: string
     updated: string
     editText: string
+    revealInFolder: string
     editNote: string
     detailLabel: string
     linkLabel: string
