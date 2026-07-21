@@ -305,6 +305,16 @@
       notify(format(e), "error");
     }
   }
+  async function copySummaryPath(item: ContentSummary) {
+    try {
+      const d = await contentApi.detail(item.id);
+      if (d.kind !== "image" && d.kind !== "file") return;
+      await navigator.clipboard.writeText(d.assetPath);
+      notify(messages.toast.copiedPath);
+    } catch (e) {
+      notify(format(e), "error");
+    }
+  }
   async function remove(item: ContentSummary) {
     if (pendingDeleteIds.includes(item.id)) return;
     pendingDeleteIds = [...pendingDeleteIds, item.id];
@@ -450,6 +460,7 @@
       onToggleSaved={toggleSaved}
       onCopy={copySummary}
       onDelete={remove}
+      onCopyPath={copySummaryPath}
       onCreateText={() => (composeOpen = true)}
       onDetailChanged={async (id) => {
         await refreshAll();
