@@ -15,9 +15,10 @@
     onCopy: (item: ContentSummary) => void
     onDelete: (item: ContentSummary) => void
     onDragHandle?: (id: string, event: PointerEvent) => void
+    onCopyPath?: (item: ContentSummary) => void
   }
 
-  let { item, selected, busy, draggable = false, onSelect, onToggleSaved, onCopy, onDelete, onDragHandle }: Props = $props()
+  let { item, selected, busy, draggable = false, onSelect, onToggleSaved, onCopy, onDelete, onDragHandle, onCopyPath }: Props = $props()
 
   // 图片条目在列表中恢复缩略图（旧版 EntryCard 行为）；详情接口按需懒加载并缓存。
   let thumbUrl = $state<string | null>(null)
@@ -64,7 +65,7 @@
 <article class="card" class:selected aria-current={selected ? 'true' : undefined}>
   <button class="select" type="button" onclick={() => onSelect(item.id)} aria-label={selectLabel}>
     {#if item.kind === 'image' && thumbUrl}
-      <img class="thumb" src={thumbUrl} alt="" draggable="false" />
+      <img class="thumb-banner" src={thumbUrl} alt="" draggable="false" />
     {:else}
       <ContentKindIcon kind={item.kind} />
     {/if}
@@ -83,6 +84,11 @@
     {#if copyable}
       <button type="button" class="icon-btn" aria-label={messages.workspace.copy} title={messages.workspace.copy} onclick={stop(() => onCopy(item))} disabled={busy}>
         <Icon name="copy" size={13} />
+      </button>
+    {/if}
+    {#if item.capabilities.copyPath && onCopyPath}
+      <button type="button" class="icon-btn" aria-label={messages.entry.copyPath} title={messages.entry.copyPath} onclick={stop(() => onCopyPath(item))} disabled={busy}>
+        <Icon name="link" size={13} />
       </button>
     {/if}
     {#if item.capabilities.save}
@@ -131,6 +137,7 @@
   .select {
     min-width: 0;
     display: flex;
+    flex-wrap: wrap;
     align-items: flex-start;
     gap: 0.5rem;
     padding: 0;
@@ -217,14 +224,16 @@
     touch-action: none;
   }
 
-  .thumb {
-    width: 2.2rem;
-    height: 2.2rem;
-    flex: 0 0 auto;
+  /* 图片缩略图横幅：占满卡片宽度（不超出主界面框），裁切限高 */
+  .thumb-banner {
+    flex: 0 0 100%;
+    width: 100%;
+    max-height: 5.5rem;
     object-fit: cover;
-    border-radius: var(--radius-sm, 0.25rem);
+    border-radius: var(--radius-md, 0.3rem);
     border: 1px solid var(--border-subtle);
     background: var(--surface-2);
+    margin-bottom: 0.3rem;
   }
 
   .icon-btn.star {

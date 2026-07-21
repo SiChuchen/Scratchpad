@@ -74,6 +74,15 @@
       onNotify(String(e), 'error')
     }
   }
+
+  async function revealInFolder() {
+    if (detail.kind !== 'image' && detail.kind !== 'file') return
+    try {
+      await dockApi.revealInFolder(detail.assetPath)
+    } catch (e) {
+      onNotify(String(e), 'error')
+    }
+  }
 </script>
 
 <header>
@@ -111,6 +120,7 @@
       <button type="button" class="btn" onclick={copy} disabled={detail.kind !== 'text' && !detail.available}>{copyLabel}</button>
       {#if detail.kind !== 'text' && detail.summary.capabilities.copyPath}
         <button type="button" class="btn" onclick={copyPath} disabled={!detail.available}>{messages.entry.copyPath}</button>
+        <button type="button" class="btn" onclick={revealInFolder} disabled={!detail.available}>{messages.workspace.revealInFolder}</button>
       {/if}
       {#if onToggleSaved}
         <button type="button" class="btn" onclick={onToggleSaved}>
