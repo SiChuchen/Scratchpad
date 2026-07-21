@@ -13,9 +13,10 @@
     onToggleSaved: (item: ContentSummary) => void
     onCopy: (item: ContentSummary) => void
     onDelete: (item: ContentSummary) => void
+    onCopyPath?: (item: ContentSummary) => void
   }
 
-  let { items, selectedId, reorderable, busyIds = [], onSelect, onReorder, onToggleSaved, onCopy, onDelete }: Props = $props()
+  let { items, selectedId, reorderable, busyIds = [], onSelect, onReorder, onToggleSaved, onCopy, onDelete, onCopyPath }: Props = $props()
 
   // 拖动排序使用指针事件而非 HTML5 DnD：主窗口 dragDropEnabled=true 时
   // Tauri 会接管拖拽（用于接收系统文件拖入），HTML5 dragstart 不会触发。
@@ -105,7 +106,7 @@
       class:dragging={dragId === item.id}
       class:drop-target={dropTargetId === item.id}
     >
-      <ContentSummaryCard {item} selected={selectedId === item.id} busy={busyIds.includes(item.id)} draggable={reorderable} {onSelect} {onToggleSaved} {onCopy} {onDelete} onDragHandle={startDrag} />
+      <ContentSummaryCard {item} selected={selectedId === item.id} busy={busyIds.includes(item.id)} draggable={reorderable} {onSelect} {onToggleSaved} {onCopy} {onDelete} onDragHandle={startDrag} {onCopyPath} />
     </div>
   {/each}
 </div>

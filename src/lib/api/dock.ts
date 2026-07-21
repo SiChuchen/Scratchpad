@@ -46,6 +46,10 @@ export const dockApi = {
     return convertFileSrc(path)
   },
 
+  revealInFolder(path: string) {
+    return invoke<void>('ipc_reveal_in_folder', { path })
+  },
+
   async importImageBlob(blob: Blob, fileName: string, view: EntryMembershipView) {
     const bytes = Array.from(new Uint8Array(await blob.arrayBuffer()))
     return invoke<DockEntry>('ipc_entries_import_image_bytes', {
