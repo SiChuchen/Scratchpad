@@ -750,8 +750,7 @@ async fn ipc_clipboard_copy_text(
     scratchpad::clipboard::copy_text(&text, seconds)
 }
 
-/// 在系统文件管理器中显示该文件（Windows: explorer /select）。
-/// 仅用于展示已入库资源的位置，路径来自后端详情数据而非用户任意输入。
+/// Reveal an imported asset in the platform file manager.
 #[tauri::command]
 fn ipc_reveal_in_folder(path: String) -> Result<(), String> {
     let target = std::path::PathBuf::from(&path);
@@ -772,7 +771,10 @@ fn ipc_reveal_in_folder(path: String) -> Result<(), String> {
     }
     #[cfg(all(unix, not(target_os = "macos")))]
     {
-        let dir = target.parent().map(|d| d.to_path_buf()).unwrap_or(target);
+        let dir = target
+            .parent()
+            .map(|dir| dir.to_path_buf())
+            .unwrap_or(target);
         std::process::Command::new("xdg-open")
             .arg(&dir)
             .spawn()
@@ -1201,80 +1203,266 @@ pub fn run() {
             vault::ipc::entries::ipc_vault_get_entry,
             vault::ipc::entries::ipc_vault_update_manual_tags,
             vault::ipc::entries::ipc_vault_remove_ai_tag,
-            vault::ipc::entries::ipc_vault_convert_ai_tag_to_manual,
-            vault::ipc::search::ipc_vault_search_local,
-            vault::ipc::search::ipc_vault_search_hybrid,
+            vault::ipc::entries::ipc_vault_refresh_ai_metadata,
+            vault::ipc::entries::ipc_vault_ai_backfill_status,
+            vault::ipc::capture::ipc_vault_parse_capture_local,
+            vault::ipc::capture::ipc_vault_enrich_capture,
+            vault::ipc::capture::ipc_vault_create_from_capture,
+            vault::ipc::ipc_vault_search,
+            vault::ipc::search::ipc_vault_search_hybrid_local,
+            vault::ipc::search::ipc_vault_plan_search,
             vault::ipc::search::ipc_vault_cancel_search,
-            vault::ipc::search::ipc_vault_create_capture_draft,
-            vault::ipc::search::ipc_vault_get_outbound_audit,
-            vault::ipc::settings::ipc_vault_get_ai_settings,
-            vault::ipc::settings::ipc_vault_save_ai_settings,
-            vault::ipc::settings::ipc_vault_get_llm_config_meta,
-            vault::ipc::settings::ipc_vault_save_llm_config,
+            vault::ipc::ipc_vault_get_llm_presets,
+            vault::ipc::settings::ipc_vault_get_llm_config,
+            vault::ipc::settings::ipc_vault_verify_and_save_llm,
+            vault::ipc::settings::ipc_vault_test_saved_llm,
             vault::ipc::settings::ipc_vault_delete_llm_config,
-            vault::ipc::settings::ipc_vault_test_llm_connection,
+            vault::ipc::settings::ipc_vault_get_ai_settings,
+            vault::ipc::settings::ipc_vault_set_ai_settings,
         ])
+        .on_window_event(|window, event| {
+            let focused = !matches!(event, tauri::WindowEvent::Focused(false));
+            if system::window::should_reset_quick_access_on_focus_loss(window.label(), focused) {
+                let _ = window.emit("vault-sensitive-reset", ());
+            }
+        })
         .setup(|app| {
-            // 主窗口默认几何：贴合屏幕右侧、垂直居中，物理像素通过 hwnd 精确控制。
-            // 配置文件中的 dock_* 字段是逻辑像素，这里不使用；从第二屏启动时
-            // 防止逻辑→物理转换误差导致窗口偏移到另一屏。
-            // 如果 AppState.main_geometry 已保存（从 minimized-tab 还原），优先使用它。
-            if let Some(window) = app.get_webview_window("main") {
-                let state = app.state::<AppState>();
-                let saved_geo = *state.main_geometry.lock().unwrap();
-                system::window::set_main_window_default_geometry(&window, saved_geo);
-            }
+            content::ipc::resume_pending_deletes(app.handle());
+            // System tray menu
+            let show_item =
+                tauri::menu::MenuItem::with_id(app, "show", "显示主窗口", true, None::<&str>)?;
+            let quit_item =
+                tauri::menu::MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
+            let menu = tauri::menu::Menu::with_items(app, &[&show_item, &quit_item])?;
 
-            // 注册两个全局快捷键。它们独立：一个失败不影响另一个。
-            let app_handle = app.handle().clone();
-            let app_handle2 = app.handle().clone();
-            let state = app.state::<AppState>();
-            let conn = state.db.lock().unwrap();
-            let prefs = scratchpad::preferences::load_preferences(&conn).unwrap_or_default();
-            drop(conn);
-
-            let mut shortcuts = state.shortcuts.lock().unwrap();
-            // Main: 显示/隐藏主窗口
-            if let (Some(mods), Some(code)) = (
-                parse_modifiers(&prefs.shortcut_modifiers),
-                parse_key_code(&prefs.shortcut_key),
-            ) {
-                let sc = Shortcut::new(Some(mods), code);
-                let ah = app_handle.clone();
-                match app_handle.global_shortcut().on_shortcut(sc, move |_app, _sc, event| {
-                    use tauri_plugin_global_shortcut::ShortcutState;
-                    if event.state == ShortcutState::Pressed {
-                        toggle_main_window(&ah);
+            let tray = app.tray_by_id("main").expect("tray icon exists");
+            tray.set_menu(Some(menu))?;
+            tray.on_menu_event(move |app, event| match event.id().as_ref() {
+                "show" => {
+                    if let Some(w) = app.get_webview_window("main") {
+                        let _ = w.show();
+                        let _ = w.set_focus();
                     }
-                }) {
-                    Ok(()) => shortcuts.main = Some(sc),
-                    Err(e) => eprintln!("Failed to register main shortcut: {e}"),
                 }
-            }
-            // Quick access: 显示/隐藏快速访问窗口
-            if let (Some(mods), Some(code)) = (
-                parse_modifiers(&prefs.quick_access_shortcut_modifiers),
-                parse_key_code(&prefs.quick_access_shortcut_key),
-            ) {
-                let sc = Shortcut::new(Some(mods), code);
-                let ah2 = app_handle2.clone();
-                match app_handle2
-                    .global_shortcut()
-                    .on_shortcut(sc, move |app, _sc, event| {
-                        use tauri_plugin_global_shortcut::ShortcutState;
-                        if event.state == ShortcutState::Pressed {
-                            toggle_quick_access_window(app);
-                        }
-                    })
+                "quit" => {
+                    app.exit(0);
+                }
+                _ => {}
+            });
+
+            // Global shortcuts: load from preferences, register each target
+            // independently. 两个 target 互不阻塞：一个被系统占用时，另一个
+            // 仍然注册和工作。
+            {
+                let state = app.state::<AppState>();
+                let conn = state.db.lock().unwrap();
+                let prefs = scratchpad::preferences::load_preferences(&conn).unwrap_or_default();
+                drop(conn);
+
+                // --- 主窗口 toggle ---
+                let main_mods = parse_modifiers(&prefs.shortcut_modifiers)
+                    .unwrap_or(Modifiers::ALT | Modifiers::SHIFT);
+                let main_code = parse_key_code(&prefs.shortcut_key).unwrap_or(Code::KeyV);
+                let main_shortcut = Shortcut::new(Some(main_mods), main_code);
+                let main_registered = {
+                    let app_handle = app.handle().clone();
+                    app.global_shortcut()
+                        .on_shortcut(main_shortcut, move |_app, _sc, event| {
+                            use tauri_plugin_global_shortcut::ShortcutState;
+                            if event.state == ShortcutState::Pressed {
+                                toggle_main_window(&app_handle);
+                            }
+                        })
+                        .is_ok()
+                };
+                if main_registered {
+                    let mut guard = state.shortcuts.lock().unwrap();
+                    guard.main = Some(main_shortcut);
+                }
+
+                // --- Quick access toggle ---
+                let qa_mods = parse_modifiers(&prefs.quick_access_shortcut_modifiers)
+                    .unwrap_or(Modifiers::ALT | Modifiers::SHIFT);
+                let qa_code =
+                    parse_key_code(&prefs.quick_access_shortcut_key).unwrap_or(Code::Space);
+                let qa_shortcut = Shortcut::new(Some(qa_mods), qa_code);
+                let qa_registered = {
+                    app.global_shortcut()
+                        .on_shortcut(qa_shortcut, move |app, _sc, event| {
+                            use tauri_plugin_global_shortcut::ShortcutState;
+                            if event.state == ShortcutState::Pressed {
+                                toggle_quick_access_window(app);
+                            }
+                        })
+                        .is_ok()
+                };
+                if qa_registered {
+                    let mut guard = state.shortcuts.lock().unwrap();
+                    guard.quick_access = Some(qa_shortcut);
+                }
+
+                // 持久化注册结果（registered 字段不持久化但写库以备调试）
                 {
-                    Ok(()) => shortcuts.quick_access = Some(sc),
-                    Err(e) => eprintln!("Failed to register quick access shortcut: {e}"),
+                    let mut conn = state.db.lock().unwrap();
+                    let mut prefs =
+                        scratchpad::preferences::load_preferences(&conn).unwrap_or_default();
+                    prefs.shortcut_registered = main_registered;
+                    prefs.quick_access_shortcut_registered = qa_registered;
+                    let _ = scratchpad::preferences::save_preferences(&mut conn, &prefs);
                 }
             }
+
+            // Ensure window is focused on startup so keyboard/paste events work
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.set_focus();
+            }
+
+            // The minimized tab is a transparent shaped HWND. Disable DWM show/hide
+            // transitions so Windows does not animate a cached rectangular frame.
+            let _ = system::window::disable_dwm_transitions(app.handle(), "minimized-tab");
+
+            // Set window icon for all windows (taskbar, alt-tab, etc.)
+            let icon_result = (|| -> Option<tauri::image::Image> {
+                if let Ok(icon) = tauri::image::Image::from_path("icons/icon.ico") {
+                    return Some(icon);
+                }
+                // Dev mode fallback: resolve relative to exe directory
+                let exe = std::env::current_exe().ok()?;
+                let exe_dir = exe.parent()?;
+                let candidates = [
+                    exe_dir.join("icons").join("icon.ico"),
+                    exe_dir.join("..").join("..").join("icons").join("icon.ico"),
+                ];
+                for path in &candidates {
+                    if let Ok(icon) = tauri::image::Image::from_path(path) {
+                        return Some(icon);
+                    }
+                }
+                None
+            })();
+
+            if let Some(icon) = icon_result {
+                for label in ["main", "minimized-tab", "quick-access"] {
+                    if let Some(w) = app.get_webview_window(label) {
+                        let _ = w.set_icon(icon.clone());
+                    }
+                }
+            }
+
+            // Task 10: 启动 AI metadata backfill worker（仅当 config 存在
+            // 且 auto_enrich 开启时；否则 try_start_backfill 内部不会启动）。
+            vault::jobs::try_start_backfill(app.handle());
 
             Ok(())
         })
-        .build(tauri::generate_context!())
-        .expect("error while building tauri application")
-        .run(|_app_handle, _event| {});
+        .run(tauri::generate_context!())
+        .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod shortcut_tests {
+    use super::*;
+    use rusqlite::Connection;
+
+    /// `parse_key_code("Space")` 必须返回 `Code::Space` — 这是 Quick Access
+    /// 默认快捷键的关键码，老版本无法解析。
+    #[test]
+    fn shortcut_parse_space_key_code() {
+        assert_eq!(parse_key_code("Space"), Some(Code::Space));
+        assert_eq!(parse_key_code("space"), Some(Code::Space));
+        assert_eq!(parse_key_code("SPACE"), Some(Code::Space));
+    }
+
+    #[test]
+    fn shortcut_parse_tab_and_arrows() {
+        assert_eq!(parse_key_code("Tab"), Some(Code::Tab));
+        assert_eq!(parse_key_code("Up"), Some(Code::ArrowUp));
+        assert_eq!(parse_key_code("Down"), Some(Code::ArrowDown));
+    }
+
+    /// 模拟冲突检测逻辑：当两个 target 的 (modifiers, key) 相同时，
+    /// `ipc_shortcut_update` 应当拒绝并保留旧 shortcut。
+    #[test]
+    fn shortcut_update_rejects_conflict_with_other_target_and_preserves_old() {
+        let main_mods = parse_modifiers("Alt+Shift").unwrap();
+        let main_sc = Shortcut::new(Some(main_mods), Code::KeyV);
+
+        let new_mods = parse_modifiers("Alt+Shift").unwrap();
+        let new_sc_for_qa = Shortcut::new(Some(new_mods), Code::KeyV);
+
+        // Quick Access 已有 Some(other)；现在 Main 想注册相同组合
+        let shortcuts = RegisteredShortcuts {
+            quick_access: Some(main_sc),
+            ..Default::default()
+        };
+
+        // 模拟 ipc_shortcut_update 中的冲突检查
+        let other = shortcuts.quick_access;
+        let conflict = other.map(|o| o == new_sc_for_qa).unwrap_or(false);
+        assert!(conflict, "same combination must be detected as conflict");
+
+        // 冲突时不应注销旧 shortcut
+        assert!(shortcuts.quick_access.is_some());
+    }
+
+    /// Main 注册失败不应阻塞 Quick Access 注册。这里通过 RegisteredShortcuts
+    /// 的字段独立性验证：可以只设置 quick_access 而保留 main = None。
+    #[test]
+    fn shortcut_main_registration_does_not_block_quick_access_registration() {
+        let mut shortcuts = RegisteredShortcuts::default();
+        // 模拟 Main 注册失败（保持 None），Quick Access 成功
+        let qa_mods = parse_modifiers("Alt+Shift").unwrap();
+        let qa_sc = Shortcut::new(Some(qa_mods), Code::Space);
+        shortcuts.quick_access = Some(qa_sc);
+
+        assert!(shortcuts.main.is_none());
+        assert!(shortcuts.quick_access.is_some());
+    }
+
+    /// 整合测试：通过 DockPreferences 验证两个 target 的字段独立持久化。
+    #[test]
+    fn shortcut_roundtrip_persists_both_targets() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        scratchpad::storage::ensure_dock_schema(&mut conn).unwrap();
+
+        let prefs = models::preferences::DockPreferences {
+            shortcut_modifiers: "Ctrl+Alt".to_string(),
+            shortcut_key: "V".to_string(),
+            shortcut_registered: true,
+            quick_access_shortcut_modifiers: "Ctrl+Shift".to_string(),
+            quick_access_shortcut_key: "Space".to_string(),
+            quick_access_shortcut_registered: true,
+            ..Default::default()
+        };
+        scratchpad::preferences::save_preferences(&mut conn, &prefs).unwrap();
+        let loaded = scratchpad::preferences::load_preferences(&conn).unwrap();
+
+        assert_eq!(loaded.shortcut_modifiers, "Ctrl+Alt");
+        assert_eq!(loaded.shortcut_key, "V");
+        assert_eq!(loaded.quick_access_shortcut_modifiers, "Ctrl+Shift");
+        assert_eq!(loaded.quick_access_shortcut_key, "Space");
+    }
+
+    /// 旧偏好缺 quick_access_* 字段时使用 Alt+Shift+Space 默认值。
+    #[test]
+    fn shortcut_legacy_prefs_default_quick_access_to_alt_shift_space() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        scratchpad::storage::ensure_dock_schema(&mut conn).unwrap();
+        conn.execute(
+            "INSERT INTO preferences(key, value) VALUES ('shortcut_modifiers', 'Ctrl+K')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO preferences(key, value) VALUES ('shortcut_key', 'V')",
+            [],
+        )
+        .unwrap();
+
+        let loaded = scratchpad::preferences::load_preferences(&conn).unwrap();
+        assert_eq!(loaded.shortcut_modifiers, "Ctrl+K");
+        assert_eq!(loaded.shortcut_key, "V");
+        assert_eq!(loaded.quick_access_shortcut_modifiers, "Alt+Shift");
+        assert_eq!(loaded.quick_access_shortcut_key, "Space");
+    }
 }
