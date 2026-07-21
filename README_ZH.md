@@ -1,211 +1,145 @@
-<div align="center">
-
 # Soma Scratchpad
 
-**一个为 AI 编程协作设计的 Windows 桌面中转站**
+Soma Scratchpad 是一个 Windows 桌面工作区，用于收集临时资料，并将有价值的信息整理为可搜索的本地资料库。它面向 AI 辅助工作流，避免把截图、复制的文件、笔记、凭据或路径直接堆进项目仓库。
 
-<img src="docs/assets/readme/hero.png" alt="Soma Scratchpad 主界面" width="520" />
+[下载最新版本](https://github.com/SiChuchen/Scratchpad/releases/latest) · [English README](README.md) · [MIT License](LICENSE)
 
-[![GitHub Release](https://img.shields.io/github/v/release/SiChuchen/Scratchpad?style=flat-square&color=6e40c9)](https://github.com/SiChuchen/Scratchpad/releases/latest)
-[![Windows](https://img.shields.io/badge/platform-Windows%2010+-0078D4?style=flat-square)](https://github.com/SiChuchen/Scratchpad/releases/latest)
+## 当前功能
 
-[**下载最新版**](https://github.com/SiChuchen/Scratchpad/releases/latest) &nbsp;·&nbsp; [功能预览](#核心功能) &nbsp;·&nbsp; [使用方式](#使用方式) &nbsp;·&nbsp; [本地开发](#本地开发)
+### 统一内容工作区
 
-文字、截图、文件，`Ctrl+V` 即可临时收纳；需要时一键复制内容或路径，不再让临时文件污染桌面和 Git 仓库。
+- 将文字、截图和从资源管理器复制的文件粘贴到桌面暂存区。
+- 支持直接拖入文件，也可以创建和编辑文本条目。
+- 在一个工作区中浏览**收纳**（临时）、**收藏**（长期）和**全部**内容。
+- 统一搜索文本、图片、文件、凭据、书签和笔记，并按类型筛选。
+- 支持重命名、编辑文本与结构化笔记、在可排序页面调整顺序，以及撤销受支持的删除操作。
+- 可以打开图片或文件所在目录；图片和文件既可复制内容，也可复制路径，便于粘贴到终端或 AI 工具。
 
-[English](README.md)
+### 不污染项目仓库的临时中转
 
-</div>
+- 新粘贴或拖入的内容默认进入临时**收纳**。
+- 收藏后长期保留；不再需要时可恢复为临时内容。
+- 可配置临时内容的自动清理策略。
+- 图片和导入文件会复制到应用自己的数据目录，而不是工作项目目录。
 
----
+### 全局快捷入口
 
-## 为什么需要它
+- 通过可配置的全局快捷键打开独立的录入与搜索窗口，默认是 `Alt+Shift+Space`。
+- **记录模式**先立即进行本地解析，再按设置选择是否由 AI 增强整理。
+- 录入内容会形成可编辑的**凭据**、**书签**或**笔记**草稿，保存前可修改所有字段。
+- **搜索模式**检索统一工作区，预览选中内容，复制字段或路径，并可跳转主窗口继续管理。
+- `Ctrl+Tab` 在记录和搜索间切换；`Ctrl+Enter` 保存录入；`Escape` 隐藏快捷入口。
 
-用 Claude Code、Codex、Cursor、ChatGPT 这类 AI 编程助手时，你是否也遇到过这些问题：
+### 本地结构化资料库
 
-- 报错截图随手放进项目目录，结果被 AI 一起提交到 Git，仓库里全是 `screenshot-xxx.png`
-- 给 AI 的长文本提示词需要反复修改，但聊天框里文本太长只能缩略显示，只能复制出来改完再粘贴回去
-- 临时代码片段、日志片段、链接、文件路径散落在桌面和剪贴板，找不到也理不清
-- 想把图片或文件交给 AI 分析，但不想让它出现在工作目录里
+资料库可用于保存运维笔记、Runbook、服务入口、连接信息、书签和凭据。
 
-Soma Scratchpad 就是为此设计的：一个**悬浮在桌面最上层的临时中转站**，随时可用，用完即走。
+- 每个字段都有明确的敏感/非敏感标记。
+- 敏感值会按需要在界面中隐藏；可配置复制后自动清空剪贴板；敏感字段不会进入可搜索投影。
+- 本地解析支持连接 URL、SSH 命令、`user:password@host`、单一 URL、多行键值对，以及中英文混合的部署清单。
+- 即使 AI 不可用，本地草稿仍然可以编辑和保存。
 
----
+### 可选的 AI 整理与搜索
 
-## 核心功能
+AI 是可选能力。在设置中配置服务商和模型即可使用；内置预设包含 DeepSeek、OpenAI、Kimi、智谱、通义、OpenRouter，以及自定义 OpenAI 兼容端点。
 
-### 文本收纳
+- 自动整理会生成标题、类型、字段、标签、摘要和搜索别名。
+- 结构化提取会保留文本中明确出现的 URL、路径、IP、端口、版本、邮箱和敏感占位符，而不是把它们压缩成一段说明文字。
+- 自动混合搜索可由 AI 扩展查询计划，本地搜索始终是可用的降级路径。
+- DeepSeek 的思考模式有独立开关，默认**关闭**，以获得稳定的结构化输出；复杂推理任务可按需打开。
+- 输出截断时会以更高预算自动重试一次；认证、限流、超时、网络和截断错误会明确提示，同时不影响本地录入。
 
-粘贴文本后自动生成摘要标题，支持手动重命名，收起状态下一眼就知道每条内容是什么。展开后可直接编辑文本，改完一键复制，不需要在窗口之间来回切换。
+#### AI 数据处理
 
-### 图片收纳
+- API Key 保存在应用本地配置中，不会返回给前端；但目前不提供静态加密。
+- 发送录入内容到 AI 前，已识别的敏感值会替换为请求级 `[SECRET:...]` 占位符。
+- 应用会拒绝未知占位符，并阻止敏感值进入 AI 生成的标签、摘要和别名。
+- 开启 AI 后，脱敏后的录入文本或搜索查询会发送给所配置的外部服务商。任何绝不能离开设备的数据都不应开启 AI 处理。
 
-截图后 `Ctrl+V` 直接导入，图片存储在中转站的独立目录中。支持两种复制模式：
-- **复制图片内容** — 直接粘贴到聊天框、文档等任意位置
-- **复制图片路径** — 将本地路径粘贴给 AI 读取
+### 桌面行为与个性化设置
 
-图片不会被放进你的项目目录，不会意外被 Git 提交。
-
-### 文件收纳
-
-在资源管理器中 `Ctrl+C` 复制文件，在窗口中 `Ctrl+V` 导入；也支持从资源管理器直接拖拽文件到窗口。导入后的文件同样支持复制内容或复制路径。
-
-### 收纳 / 收藏 / 全部
-
-| 页面 | 用途 |
-|------|------|
-| **收纳** | 临时暂存区，每次启动时自动清空未收藏的条目 |
-| **收藏** | 点一下收藏按钮即可长期保留，关机重启也不会丢 |
-| **全部** | 按时间浏览所有条目，支持按「文本 / 图片 / 文件」分类筛选 |
-
-## 内容生命周期
-
-- 在主窗口粘贴、拖入或新建的内容首先临时进入**收纳**。
-- 收藏任意内容后会永久保留；取消收藏后重新回到临时收纳。
-- 通过**快捷入口**整理录入的内容直接永久保存，无论是否启用 AI。
-- 搜索覆盖所有仍存在的临时和已收藏内容：文本、图片、文件、凭据、书签和笔记。
-- 快捷入口用于快速录入和使用；主窗口的**收纳 / 全部 / 收藏**用于持续管理。
-
-### 桌面常驻
-
-- **置顶模式** — 点一下置顶按钮始终显示在最前面，再点一下取消，不挡视线
-- **最小化** — 收起为桌面边缘的小图标（一只猫），需要时点一下即恢复
-- **全局快捷键** — `Alt+Shift+V` 随时切换窗口显示
-- **系统托盘** — 后台静默运行，通过托盘图标控制
-
-### 个性化设置
-
-- **三套主题** — 暗色玻璃 / 浅色磨砂 / 浅色冰砂，支持跟随系统自动切换
-- **字体设置** — 中文字体和英文字体分别配置
-- **中英文切换** — 界面语言即时切换，无需重启
-- **代理更新** — 支持配置 HTTP / SOCKS5 代理检查和下载新版本
-- **开机自启** — 可选开机自动启动，安静待命
-
----
-
-## 截图预览
-
-<p align="center">
-  <img src="docs/assets/readme/text-edit.png" alt="文本编辑" width="240" />
-  &nbsp;&nbsp;
-  <img src="docs/assets/readme/image-file.png" alt="图片与文件" width="240" />
-</p>
-
-<p align="center">
-  <em>文本编辑 &nbsp;&nbsp;|&nbsp;&nbsp; 图片与文件</em>
-</p>
-
-<p align="center">
-  <img src="docs/assets/readme/categories.png" alt="分类筛选" width="240" />
-  &nbsp;&nbsp;
-  <img src="docs/assets/readme/settings.png" alt="设置面板" width="240" />
-</p>
-
-<p align="center">
-  <em>全部 · 分类筛选 &nbsp;&nbsp;|&nbsp;&nbsp; 设置面板</em>
-</p>
-
-<p align="center">
-  <img src="docs/assets/readme/minimized.png" alt="最小化 · 桌面猫咪" width="240" />
-  &nbsp;&nbsp;
-  <img src="public/app-icon-circle.png" alt="猫咪图标" width="80" />
-</p>
-
-<p align="center">
-  <em>最小化状态 &nbsp;&nbsp;|&nbsp;&nbsp; 桌面猫咪</em>
-</p>
-
----
+- 支持置顶、收起到屏幕边缘、系统托盘和开机自启。
+- 主窗口和快捷入口分别拥有可配置的全局快捷键。
+- 提供暗色玻璃、浅色磨砂、浅色冰砂和跟随系统主题。
+- 支持分别设置中文/英文字体、即时切换界面语言、配置更新代理、切换数据目录和自动更新。
 
 ## 下载与安装
 
-前往 [GitHub Releases](https://github.com/SiChuchen/Scratchpad/releases/latest) 下载最新版本：
+从 [GitHub Releases](https://github.com/SiChuchen/Scratchpad/releases/latest) 下载：
 
-| 文件 | 说明 |
-|------|------|
-| `Soma_Scratchpad_x.x.x_Windows.exe` | NSIS 安装包，推荐大多数用户使用 |
-| `Soma_Scratchpad_x.x.x_Windows.msi` | MSI 安装包 |
-| `Soma_Scratchpad_x.x.x_Windows_Portable.zip` | 免安装便携版，解压即用 |
+| 文件 | 用途 |
+| --- | --- |
+| `Soma_Scratchpad_x.y.z_Windows.exe` | NSIS 安装包，推荐大多数用户使用 |
+| `Soma_Scratchpad_x.y.z_Windows.msi` | MSI 安装包 |
+| `Soma_Scratchpad_x.y.z_Windows_Portable.zip` | 便携版，解压后直接运行 |
 
-> **注意：** 首次运行时，Windows SmartScreen 可能会弹出安全警告，这是因为应用尚未进行 Authenticode 代码签名。点击 **「更多信息」→「仍要运行」** 即可继续。
+运行环境为 Windows 10 或更高版本。应用更新器会校验来自发布频道的签名更新元数据。
 
-应用安装后会自动检查更新。如果网络受限，可在设置中配置代理。
+## 数据位置与备份
 
----
+默认情况下，应用数据位于可执行文件同级的 `data/` 目录：
 
-## 使用方式
+```text
+<应用目录>/
+  soma-scratchpad.exe
+  data/
+    scratchpad.sqlite3
+    assets/
+```
 
-1. **粘贴收集** — 复制文字、截图或文件后，在窗口中 `Ctrl+V` 创建条目
-2. **编辑文本** — 展开文本条目，直接在编辑区修改内容
-3. **重命名** — 点击条目标题即可修改，方便在收起状态下快速识别内容
-4. **复制使用** — 点击复制按钮，文本复制内容，图片和文件支持复制内容或路径
-5. **收藏保留** — 点击收藏按钮将条目转移到「收藏」页面长期保存
-6. **最小化** — 点击最小化按钮收起到屏幕边缘，需要时点一下恢复
-
----
-
-## 数据安全
-
-- 所有数据存储在应用程序 exe 同级的 `data/` 目录中，不写入系统盘
-- 数据库使用 SQLite 本地文件，不上传任何云端
-- 图片和文件附件按日期存放在 `data/assets/YYYY-MM-DD/` 目录下
-- 如需清理，直接删除 `data/` 目录即可
-
----
-
-## 技术栈
-
-| 层级 | 技术 |
-|------|------|
-| 框架 | [Tauri 2](https://v2.tauri.app/) |
-| 后端 | Rust |
-| 前端 | [Svelte 5](https://svelte.dev/) + TypeScript + Vite |
-| 存储 | SQLite (rusqlite) |
-| 平台 | Windows 10+ |
-
----
+备份整个 `data/` 目录即可保留条目和附件。修改数据目录不会自动迁移已有数据。
 
 ## 本地开发
 
-```bash
-# 安装前端依赖
-pnpm install
+前置条件：Node.js、pnpm、Rust stable，以及 Tauri 2 在 Windows 上所需的开发环境。
 
-# 启动开发模式（前端 + Rust 后端热重载）
+```bash
+pnpm install
 pnpm tauri dev
 ```
 
-前端类型检查：
+常用校验命令：
 
 ```bash
 pnpm check
+pnpm test:unit
+pnpm build
+
+cd src-tauri
+cargo test
+cargo fmt --check
+cargo clippy
 ```
 
-Rust 测试：
-
-```bash
-cd src-tauri && cargo test
-```
-
----
-
-## 构建发布
+构建 Windows 安装包和更新产物：
 
 ```bash
 pnpm tauri build
 ```
 
-构建产物位于 `src-tauri/target/release/bundle/`。详细命令请以 `package.json` 中的 `scripts` 为准。
+构建产物位于 `src-tauri/target/release/bundle/`。
 
----
+## 发布流程
 
-## Roadmap
+推送 `v*` 标签后会触发发布工作流：构建带签名的 Windows 安装包、便携版和 `latest.json`，再发布到 GitHub Release。
 
-- [ ]  更丰富的条目类型（链接预览、代码高亮）
-- [ ]  键盘驱动的工作流优化
-- [ ]  跨平台探索（macOS / Linux）
+发布前请先执行上述校验。AI 整理回归还可以额外运行：
 
----
+```powershell
+.\scripts\Invoke-AiOrganizationEvaluation.ps1 -DatabasePath <scratchpad.sqlite3 路径>
+```
+
+评测脚本只在运行时读取本机已保存的配置；脚本本身不包含 API Key，也不会将 API Key 上传到仓库。
+
+## 技术栈
+
+| 层级 | 技术 |
+| --- | --- |
+| 桌面运行时 | Tauri 2 |
+| 后端 | Rust |
+| 前端 | Svelte 5、TypeScript、Vite |
+| 本地存储 | SQLite |
+| 平台 | Windows 10+ |
 
 ## License
 

@@ -1,214 +1,145 @@
-<div align="center">
-
 # Soma Scratchpad
 
-**A Windows desktop scratchpad designed for AI-assisted programming**
+Soma Scratchpad is a Windows desktop workspace for collecting temporary material and turning useful information into a searchable local library. It is designed for AI-assisted work without forcing screenshots, copied files, notes, credentials, or paths into a project repository.
 
-<img src="docs/assets/readme/hero.png" alt="Soma Scratchpad" width="520" />
+[Download the latest release](https://github.com/SiChuchen/Scratchpad/releases/latest) · [Chinese README](README_ZH.md) · [MIT License](LICENSE)
 
-[![GitHub Release](https://img.shields.io/github/v/release/SiChuchen/Scratchpad?style=flat-square&color=6e40c9)](https://github.com/SiChuchen/Scratchpad/releases/latest)
-[![Windows](https://img.shields.io/badge/platform-Windows%2010+-0078D4?style=flat-square)](https://github.com/SiChuchen/Scratchpad/releases/latest)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
+## What it does
 
-[**Download Latest**](https://github.com/SiChuchen/Scratchpad/releases/latest) &nbsp;·&nbsp; [Features](#features) &nbsp;·&nbsp; [Quick Start](#quick-start) &nbsp;·&nbsp; [Development](#development)
+### Unified content workspace
 
-Collect text, screenshots, and files with `Ctrl+V`. Copy content or paths in one click. Keep your desktop and Git repo clean.
+- Paste text, screenshots, and copied files into a desktop staging area.
+- Drag files into the window and create editable text entries directly.
+- Browse **Dock** (temporary), **Saved** (persistent), and **All** content from one workspace.
+- Search text, images, files, credentials, bookmarks, and notes together; filter by content type.
+- Reorder items where supported, rename entries, edit text and structured notes, and undo supported deletions.
+- Open a file or image in its containing folder, copy its content, or copy its path for use in terminals and AI tools.
 
-[中文文档](README_ZH.md)
+### Temporary staging without repository pollution
 
-</div>
+- New pasted or dropped content enters the temporary Dock by default.
+- Save/favorite an item to retain it permanently; restore it to temporary retention when no longer needed.
+- Configure automatic cleanup for temporary material.
+- Images and imported files are copied into the application's data directory rather than a working repository.
 
----
+### Global Quick Access
 
-## Why
+- Open a focused capture and search window from a configurable global shortcut (default: `Alt+Shift+Space`).
+- Record mode performs immediate local parsing, then optionally enriches the draft with AI.
+- Capture text is saved as a structured **credential**, **bookmark**, or **note**. Every field remains editable before saving.
+- Search mode searches the unified workspace, previews a selected result, copies values or paths, and opens the main window for management.
+- `Ctrl+Tab` switches between Record and Search; `Ctrl+Enter` saves a capture; `Escape` hides the Quick Access window.
 
-When working with AI coding assistants like Claude Code, Codex, Cursor, or ChatGPT, you may run into these problems:
+### Local structured library
 
-- Error screenshots dumped into the project directory get committed to Git by AI agents
-- Long prompt texts need editing, but chat boxes truncate them — you copy out, edit, paste back, repeat
-- Temporary code snippets, logs, links, and file paths scatter across the desktop and clipboard
-- You want to share an image or file with an AI without polluting your working directory
+The library is suitable for operational notes, runbooks, service endpoints, connection details, bookmarks, and credentials.
 
-Soma Scratchpad is a **floating, always-on-top staging area** on your desktop. Drop things in, use them, let them go.
+- Fields have explicit sensitive/non-sensitive flags.
+- Sensitive values are hidden in the UI when appropriate, can be cleared from the clipboard after a configurable delay, and are excluded from searchable projections.
+- Local parsing recognizes connection URLs, SSH commands, user/password host strings, single URLs, multi-line key-value material, and mixed Chinese/English deployment documents.
+- If AI is unavailable, the local draft remains editable and saveable.
 
----
+### Optional AI organization and search
 
-## Features
+AI is optional. Configure a compatible provider and model in Settings; built-in presets include DeepSeek, OpenAI, Kimi, Zhipu, Qwen, OpenRouter, and custom OpenAI-compatible endpoints.
 
-### Text
+- Automatic capture enrichment creates a title, type, fields, tags, summary, and search aliases.
+- Structured extraction preserves explicit URLs, paths, IPs, ports, versions, emails, and sensitive placeholders instead of collapsing them into prose.
+- Automatic hybrid search can ask AI to expand a query plan while local search remains the fallback.
+- DeepSeek thinking mode is a separate setting and is **off by default** for predictable structured output. It can be enabled later when a task benefits from reasoning.
+- Truncated responses are retried once with a larger output budget. Authentication, rate-limit, timeout, network, and truncation failures are surfaced without blocking local capture.
 
-Paste text and it gets an auto-generated summary title. Rename it to whatever makes sense — even collapsed, you can tell what each entry contains at a glance. Expand to edit inline, then one-click copy. No window switching needed.
+#### AI data handling
 
-### Images
+- The API key is stored locally in the application configuration. It is not sent to the frontend, but it is not encrypted at rest.
+- Before a capture is sent to an AI provider, known sensitive values are replaced with request-local `[SECRET:...]` placeholders.
+- The application rejects unknown placeholders and prevents sensitive values from being written into AI tags, summaries, or aliases.
+- Enabling AI sends the masked capture text or masked search query to the configured external provider. Do not enable it for data that must never leave the device.
 
-Take a screenshot and `Ctrl+V` to import it. Images are stored in the scratchpad's own directory. Two copy modes:
+### Desktop behavior and settings
 
-- **Copy image content** — paste directly into chat, docs, etc.
-- **Copy image path** — paste the local path for AI tools to read
+- Always-on-top pin mode, edge minimization, system-tray controls, and optional startup on login.
+- Separate configurable global shortcuts for the main window and Quick Access.
+- Dark Glass, Light Matte, Light Frosted, and system theme behavior.
+- Independent Chinese and English font settings, instant UI language switching, update proxy configuration, configurable data directory, and automatic updates.
 
-Images never land in your project directory and won't end up in Git commits.
+## Install
 
-### Files
+Download an asset from [GitHub Releases](https://github.com/SiChuchen/Scratchpad/releases/latest):
 
-`Ctrl+C` a file in Explorer, then `Ctrl+V` in the scratchpad to import. You can also drag and drop files directly. Both content copy and path copy are supported.
+| Asset | Use |
+| --- | --- |
+| `Soma_Scratchpad_x.y.z_Windows.exe` | NSIS installer; recommended for most users |
+| `Soma_Scratchpad_x.y.z_Windows.msi` | MSI installer |
+| `Soma_Scratchpad_x.y.z_Windows_Portable.zip` | Portable build; extract and run |
 
-### Dock / Favorites / All
+Windows 10 or later is required. The updater verifies signed update metadata from the release channel.
 
-| View | Purpose |
-|------|---------|
-| **Dock** | Temporary staging area — unpinned entries are cleared on each launch |
-| **Favorites** | Click the star button to keep entries permanently, even across restarts |
-| **All** | Browse all entries by time, with filters for text / images / files |
+## Data location and backup
 
-## Content lifecycle
+By default, application data lives in a `data/` directory beside the executable:
 
-- Main-window paste, drag, and new text enter **Dock** temporarily.
-- Favoriting any item keeps it permanently; unfavoriting returns it to temporary retention.
-- Organized Quick Access capture is saved permanently, with or without AI.
-- Search covers every item that still exists: temporary and saved text, images, files, credentials, bookmarks, and notes.
-- Quick Access is for immediate capture/use; the main window is for ongoing management.
+```text
+<application directory>/
+  soma-scratchpad.exe
+  data/
+    scratchpad.sqlite3
+    assets/
+```
 
-### Desktop Presence
-
-- **Pin mode** — toggle always-on-top with one click; unpin when you don't need it
-- **Minimize** — collapses to a small cat icon on the screen edge; one click to restore
-- **Global hotkey** — `Alt+Shift+V` to toggle window visibility
-- **System tray** — runs quietly in the background
-
-### Settings
-
-- **Three themes** — Dark Glass / Light Matte / Light Frosted, plus auto-detect system preference
-- **Fonts** — configure Chinese and English fonts separately
-- **Bilingual UI** — switch between Chinese and English instantly
-- **Proxy update** — configure HTTP / SOCKS5 proxy for version checks and downloads
-- **Auto-start** — optionally launch on system startup
-- **Auto-cleanup** — configure how many days to keep unstarred entries (default: clean on every launch)
-
----
-
-## Screenshots
-
-<p align="center">
-  <img src="docs/assets/readme/text-edit.png" alt="Text editing" width="240" />
-  &nbsp;&nbsp;
-  <img src="docs/assets/readme/image-file.png" alt="Images and files" width="240" />
-</p>
-
-<p align="center">
-  <em>Text editing &nbsp;&nbsp;|&nbsp;&nbsp; Images &amp; files</em>
-</p>
-
-<p align="center">
-  <img src="docs/assets/readme/categories.png" alt="Category filters" width="240" />
-  &nbsp;&nbsp;
-  <img src="docs/assets/readme/settings.png" alt="Settings" width="240" />
-</p>
-
-<p align="center">
-  <em>All entries with filters &nbsp;&nbsp;|&nbsp;&nbsp; Settings</em>
-</p>
-
-<p align="center">
-  <img src="docs/assets/readme/minimized.png" alt="Minimized" width="240" />
-  &nbsp;&nbsp;
-  <img src="public/app-icon-circle.png" alt="Cat icon" width="80" />
-</p>
-
-<p align="center">
-  <em>Minimized state &nbsp;&nbsp;|&nbsp;&nbsp; Desktop cat</em>
-</p>
-
----
-
-## Download & Install
-
-Grab the latest release from [GitHub Releases](https://github.com/SiChuchen/Scratchpad/releases/latest):
-
-| File | Description |
-|------|-------------|
-| `Soma_Scratchpad_x.x.x_Windows.exe` | NSIS installer — recommended for most users |
-| `Soma_Scratchpad_x.x.x_Windows.msi` | MSI installer |
-| `Soma_Scratchpad_x.x.x_Windows_Portable.zip` | Portable version — unzip and run |
-
-> **Note:** When running the installer for the first time, Windows SmartScreen may show a warning because the application is not yet Authenticode-signed. Click **More info** → **Run anyway** to continue.
-
-The app checks for updates automatically. If you're behind a proxy, configure it in Settings.
-
----
-
-## Quick Start
-
-1. **Paste** — copy text, a screenshot, or a file, then `Ctrl+V` in the scratchpad
-2. **Edit** — expand a text entry to edit inline
-3. **Rename** — click the title to rename, so you can identify entries when collapsed
-4. **Copy** — click the copy button; text copies content, images and files support content or path copy
-5. **Favorite** — click the star button to keep entries permanently in Favorites
-6. **Minimize** — collapse to the desktop cat icon; click to restore
-
----
-
-## Data Safety
-
-- All data is stored in a `data/` directory next to the application executable — nothing in system directories
-- SQLite local database — nothing is uploaded to the cloud
-- Images and file attachments are organized under `data/assets/YYYY-MM-DD/`
-- To reset, simply delete the `data/` directory
-
----
-
-## Tech Stack
-
-| Layer | Tech |
-|-------|------|
-| Framework | [Tauri 2](https://v2.tauri.app/) |
-| Backend | Rust |
-| Frontend | [Svelte 5](https://svelte.dev/) + TypeScript + Vite |
-| Storage | SQLite (rusqlite) |
-| Platform | Windows 10+ |
-
----
+Back up the `data/` directory to preserve entries and attachments. Changing the data directory does not automatically migrate existing data.
 
 ## Development
 
-```bash
-# Install frontend dependencies
-pnpm install
+Prerequisites: Node.js, pnpm, Rust stable, and the Windows prerequisites required by Tauri 2.
 
-# Start dev mode (frontend + Rust backend with hot reload)
+```bash
+pnpm install
 pnpm tauri dev
 ```
 
-Frontend type check:
+Useful checks:
 
 ```bash
 pnpm check
+pnpm test:unit
+pnpm build
+
+cd src-tauri
+cargo test
+cargo fmt --check
+cargo clippy
 ```
 
-Rust tests:
-
-```bash
-cd src-tauri && cargo test
-```
-
----
-
-## Build
+Create installers and updater artifacts:
 
 ```bash
 pnpm tauri build
 ```
 
-Output goes to `src-tauri/target/release/bundle/`. See `package.json` scripts for all available commands.
+The build output is written below `src-tauri/target/release/bundle/`.
 
----
+## Release process
 
-## Roadmap
+The release workflow runs when a `v*` tag is pushed. It builds signed Windows installers, a portable archive, and `latest.json`, then publishes them as a GitHub Release.
 
-- [ ] Richer entry types (link previews, code syntax highlighting)
-- [ ] Keyboard-driven workflow improvements
-- [ ] Cross-platform exploration (macOS / Linux)
+Before releasing, run the checks above. AI organization regression can additionally be exercised with:
 
----
+```powershell
+.\scripts\Invoke-AiOrganizationEvaluation.ps1 -DatabasePath <path-to-scratchpad.sqlite3>
+```
+
+The evaluation script reads an already saved local configuration at runtime. It does not contain an API key or upload one to the repository.
+
+## Technology
+
+| Layer | Technology |
+| --- | --- |
+| Desktop runtime | Tauri 2 |
+| Backend | Rust |
+| Frontend | Svelte 5, TypeScript, Vite |
+| Local storage | SQLite |
+| Platform | Windows 10+ |
 
 ## License
 
