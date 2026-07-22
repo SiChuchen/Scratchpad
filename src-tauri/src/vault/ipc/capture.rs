@@ -447,10 +447,15 @@ mod tests {
         let config = sample_stored();
         let _draft = sample_draft();
         let raw_text = "hello world topsecret";
-        let enrichment =
-            enrich_capture_with(&adapter, &config, raw_text, &["topsecret".to_string()], false)
-                .await
-                .expect("enrich ok");
+        let enrichment = enrich_capture_with(
+            &adapter,
+            &config,
+            raw_text,
+            &["topsecret".to_string()],
+            false,
+        )
+        .await
+        .expect("enrich ok");
 
         assert_eq!(enrichment.suggestion.ai_tags, vec!["work", "prod"]);
         assert_eq!(counter.load(Ordering::SeqCst), 1);
@@ -490,9 +495,10 @@ mod tests {
         let adapter = TruncateOnceAdapter {
             counter: counter.clone(),
         };
-        let enrichment = enrich_capture_with(&adapter, &sample_stored(), "host: example", &[], false)
-            .await
-            .expect("retry should recover");
+        let enrichment =
+            enrich_capture_with(&adapter, &sample_stored(), "host: example", &[], false)
+                .await
+                .expect("retry should recover");
         assert_eq!(enrichment.suggestion.title.as_deref(), Some("Recovered"));
         assert_eq!(counter.load(Ordering::SeqCst), 2);
     }

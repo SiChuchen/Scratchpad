@@ -284,7 +284,8 @@ mod tests {
 
     #[test]
     fn legacy_ai_settings_without_thinking_flag_defaults_to_disabled() {
-        let legacy = r#"{"autoEnrich":true,"autoHybridSearch":true,"sensitiveClipboardClearSeconds":30}"#;
+        let legacy =
+            r#"{"autoEnrich":true,"autoHybridSearch":true,"sensitiveClipboardClearSeconds":30}"#;
         let settings: VaultAiSettings = serde_json::from_str(legacy).unwrap();
         assert!(!settings.thinking_enabled);
     }

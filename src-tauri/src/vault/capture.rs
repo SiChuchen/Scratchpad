@@ -69,7 +69,17 @@ fn is_credential_key(key: &str) -> bool {
     CREDENTIAL_KEYS.iter().any(|k| lower == *k)
         || matches!(
             key.trim(),
-            "密码" | "私钥" | "密钥" | "令牌" | "访问密钥" | "邮箱" | "用户" | "用户名" | "主机" | "端口" | "数据库"
+            "密码"
+                | "私钥"
+                | "密钥"
+                | "令牌"
+                | "访问密钥"
+                | "邮箱"
+                | "用户"
+                | "用户名"
+                | "主机"
+                | "端口"
+                | "数据库"
         )
 }
 
@@ -843,9 +853,15 @@ mod tests {
         assert_eq!(draft.title, "ProjectWiki 访问入口");
         assert_eq!(field(&draft, "本机 IP").value, "10.10.20.30");
         assert_eq!(field(&draft, "仓库").value, "/srv/project-wiki");
-        assert_eq!(field(&draft, "数据库").value, "SQLite → ./data/project-wiki.db");
+        assert_eq!(
+            field(&draft, "数据库").value,
+            "SQLite → ./data/project-wiki.db"
+        );
         assert_eq!(field(&draft, "Web 界面").value, "http://10.10.20.30:8091");
-        assert_eq!(field(&draft, "后端健康").value, "http://10.10.20.30:18081/health");
+        assert_eq!(
+            field(&draft, "后端健康").value,
+            "http://10.10.20.30:18081/health"
+        );
         assert_eq!(field(&draft, "邮箱").value, "admin@example.test");
         assert!(field(&draft, "密码").is_sensitive);
     }
@@ -857,7 +873,10 @@ mod tests {
         assert_eq!(draft.kind, EntryKind::Note);
         assert_eq!(draft.title, "发布说明");
         assert_eq!(field(&draft, "环境").value, "staging");
-        assert_eq!(field(&draft, "健康检查").value, "https://staging.example.test/health");
+        assert_eq!(
+            field(&draft, "健康检查").value,
+            "https://staging.example.test/health"
+        );
     }
 
     #[test]
@@ -866,7 +885,10 @@ mod tests {
         let draft = parse_capture_local(raw).unwrap();
         assert_eq!(draft.kind, EntryKind::Credential);
         let values: Vec<_> = draft.fields.iter().map(|f| f.value.as_str()).collect();
-        assert_eq!(values, vec!["api.internal", "8080", "worker.internal", "9090", "secret"]);
+        assert_eq!(
+            values,
+            vec!["api.internal", "8080", "worker.internal", "9090", "secret"]
+        );
         assert!(draft.fields.last().unwrap().is_sensitive);
     }
 
