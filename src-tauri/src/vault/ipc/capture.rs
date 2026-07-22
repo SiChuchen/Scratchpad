@@ -94,9 +94,13 @@ pub async fn ipc_vault_enrich_capture(
 pub async fn ipc_vault_create_from_capture(
     state: State<'_, crate::AppState>,
     app: AppHandle,
-    final_draft: CaptureDraft,
+    mut final_draft: CaptureDraft,
     request_id: String,
 ) -> Result<VaultEntryDetail, String> {
+    // AI 或本地解析可能在识别某字段为敏感之前已把其原文放进元数据。
+    // 元数据不承载用户主体内容，丢弃命中项比阻止整条录入更安全也更可用。
+    sanitize_sensitive_metadata(&mut final_draft);
+
     // 1) 校验：扫描未知占位符 + 长度/数量
     validate_final_draft(&final_draft).map_err(|e| e.to_string())?;
 
@@ -259,41 +263,69 @@ fn reject_sensitive_metadata_leak(draft: &CaptureDraft) -> Result<(), String> {
         return Ok(());
     }
 
-    let mut metadata_buf = String::new();
-    for t in &draft.ai_tags {
-        metadata_buf.push_str(t);
-        metadata_buf.push('\n');
-    }
-    for t in &draft.manual_tags {
-        metadata_buf.push_str(t);
-        metadata_buf.push('\n');
-    }
-    if let Some(s) = &draft.ai_summary {
-        metadata_buf.push_str(s);
-        metadata_buf.push('\n');
-    }
-    for a in &draft.search_aliases {
-        metadata_buf.push_str(a);
-        metadata_buf.push('\n');
-    }
-    let metadata_lower = metadata_buf.to_lowercase();
-    for v in &sensitive_values {
-        let v_lower = v.to_lowercase();
-        // 与 desensitize::validate_non_sensitive_metadata 保持一致：
-        //   * 短敏感值（< 6 字符）只在精确匹配时拒绝，避免 "admin" / "ok" / "abc"
-        //     这类常用词在 AI 标签里出现被误判为泄漏。
-        //   * 长敏感值（>= 6 字符）保留子串匹配，因为长 token 几乎不会自然出现在
-        //     概念标签里。
-        if v_lower.chars().count() >= 6 {
-            if metadata_lower.contains(&v_lower) {
-                return Err("sensitive_metadata_rejected".to_string());
-            }
-        } else if metadata_lower.split_whitespace().any(|w| w == v_lower) {
-            // 短值：要求词级精确匹配（"admin" 不能命中 "administrator"）。
-            return Err("sensitive_metadata_rejected".to_string());
-        }
+    let mut metadata = draft
+        .ai_tags
+        .iter()
+        .chain(&draft.manual_tags)
+        .chain(draft.ai_summary.iter())
+        .chain(&draft.search_aliases);
+    if metadata.any(|value| metadata_contains_sensitive(value, &sensitive_values)) {
+        return Err("sensitive_metadata_rejected".to_string());
     }
     Ok(())
+}
+
+/// 移除会暴露敏感字段值的派生元数据，保留可保存的主体内容。
+/// 返回移除的标签、摘要或别名项数量。
+fn sanitize_sensitive_metadata(draft: &mut CaptureDraft) -> usize {
+    let sensitive_values: Vec<String> = draft
+        .fields
+        .iter()
+        .filter(|f| f.is_sensitive || is_default_sensitive_key(&f.key))
+        .map(|f| f.value.clone())
+        .filter(|v| !v.trim().is_empty())
+        .collect();
+    if sensitive_values.is_empty() {
+        return 0;
+    }
+
+    let mut removed = 0;
+    draft.ai_tags.retain(|value| {
+        let keep = !metadata_contains_sensitive(value, &sensitive_values);
+        removed += usize::from(!keep);
+        keep
+    });
+    draft.manual_tags.retain(|value| {
+        let keep = !metadata_contains_sensitive(value, &sensitive_values);
+        removed += usize::from(!keep);
+        keep
+    });
+    if draft
+        .ai_summary
+        .as_ref()
+        .is_some_and(|value| metadata_contains_sensitive(value, &sensitive_values))
+    {
+        draft.ai_summary = None;
+        removed += 1;
+    }
+    draft.search_aliases.retain(|value| {
+        let keep = !metadata_contains_sensitive(value, &sensitive_values);
+        removed += usize::from(!keep);
+        keep
+    });
+    removed
+}
+
+fn metadata_contains_sensitive(value: &str, sensitive_values: &[String]) -> bool {
+    let lower = value.to_lowercase();
+    sensitive_values.iter().any(|sensitive| {
+        let sensitive_lower = sensitive.to_lowercase();
+        if sensitive_lower.chars().count() >= 6 {
+            lower.contains(&sensitive_lower)
+        } else {
+            lower.split_whitespace().any(|word| word == sensitive_lower)
+        }
+    })
 }
 
 // ---- Tests -----------------------------------------------------------------
@@ -608,6 +640,32 @@ mod tests {
         }];
         d.ai_tags = vec!["leak-topsecretvalue".into()];
         assert!(reject_sensitive_metadata_leak(&d).is_err());
+    }
+
+    #[test]
+    fn sanitize_sensitive_metadata_removes_leaks_without_blocking_the_draft() {
+        let secret = "topsecretvalue";
+        let mut d = sample_draft();
+        d.fields = vec![crate::vault::models::CaptureField {
+            draft_id: "f1".into(),
+            key: "password".into(),
+            value: secret.into(),
+            is_sensitive: true,
+        }];
+        d.ai_tags = vec!["production".into(), format!("leak-{secret}")];
+        d.manual_tags = vec![secret.into()];
+        d.ai_summary = Some(format!("Connect with {secret}"));
+        d.search_aliases = vec!["service login".into(), secret.into()];
+
+        let removed = sanitize_sensitive_metadata(&mut d);
+
+        assert_eq!(removed, 4);
+        assert_eq!(d.ai_tags, vec!["production"]);
+        assert!(d.manual_tags.is_empty());
+        assert!(d.ai_summary.is_none());
+        assert_eq!(d.search_aliases, vec!["service login"]);
+        assert!(reject_sensitive_metadata_leak(&d).is_ok());
+        assert_eq!(d.fields[0].value, secret);
     }
 
     #[test]
