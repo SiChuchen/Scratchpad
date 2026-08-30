@@ -467,7 +467,7 @@
         await select(id);
       }}
       onNotify={notify}
-    />{/if}{#if currentView !== "settings"}<QuickAccessFab
+    />{/if}{#if currentView !== "settings" && !composeOpen}<QuickAccessFab
       onOpen={openQuickAccess}
       disabled={quickAccessOpening}
     />{/if}
@@ -479,6 +479,7 @@
         onkeydown={handleComposeKeydown}
       ></textarea>
       <div>
+        <span class="compose-hint" aria-hidden="true">{messages.workspace.composeHint}</span>
         <button
           type="button"
           class="compose-cancel"
@@ -540,7 +541,8 @@
     padding: 0.4rem 0.5rem 0.4rem 0.45rem;
     border: 1px solid color-mix(in srgb, var(--color-primary) 45%, transparent);
     border-radius: 999px;
-    background: var(--surface-2);
+    /* 同 compose：接近实底，避免下层内容透过玻璃底色产生重叠错觉 */
+    background: color-mix(in srgb, var(--surface-0) 92%, transparent);
     color: var(--text-primary);
     font-size: max(var(--font-sm, 0.72rem), 0.72rem);
     transform: translateX(-50%);
@@ -627,9 +629,10 @@
     padding: 0.6rem;
     border: 1px solid var(--border-emphasis);
     border-radius: var(--radius-lg);
-    background: var(--surface-1);
+    /* 接近实底：玻璃面板悬浮在内容之上时，下层元素不能透出来造成视觉重叠 */
+    background: color-mix(in srgb, var(--surface-0) 94%, transparent);
     box-shadow: var(--shadow-default);
-    animation: compose-in 0.18s ease-out;
+    animation: compose-in 0.18s var(--ease-out, ease-out);
   }
   @keyframes compose-in {
     from {
@@ -659,8 +662,18 @@
   }
   .compose div {
     display: flex;
+    align-items: center;
     justify-content: flex-end;
     gap: 0.4rem;
+  }
+  .compose-hint {
+    margin-inline-end: auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text-faint);
+    font-size: max(var(--font-xs, 0.65rem), 0.65rem);
   }
   .compose button {
     min-height: 2.2rem;

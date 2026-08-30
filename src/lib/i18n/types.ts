@@ -58,6 +58,7 @@ export interface LocaleMessages {
     editNote: string
     detailLabel: string
     linkLabel: string
+    composeHint: string
     storeAction: string
   }
   nav: {
