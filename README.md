@@ -14,6 +14,7 @@ Soma Scratchpad is a Windows desktop workspace for collecting temporary material
 - Search text, images, files, credentials, bookmarks, and notes together; filter by content type.
 - Reorder items where supported, rename entries, edit text and structured notes, and undo supported deletions.
 - Open a file or image in its containing folder, copy its content, or copy its path for use in terminals and AI tools.
+- Export everything to **Excel (.xlsx)**, **CSV**, **Markdown**, or **JSON** from Settings for backup and migration; sensitive fields are masked as `******` by default, with an opt-in to include them.
 
 ### Temporary staging without repository pollution
 

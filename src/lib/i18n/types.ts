@@ -290,6 +290,17 @@ export interface LocaleMessages {
     loading: string
     selectDataDirTitle: string
     changeDataDirFailed: string
+    exportTitle: string
+    exportHint: string
+    exportFormat: string
+    exportSensitive: string
+    exportSensitiveHint: string
+    exportAction: string
+    exporting: string
+    exportDone: string
+    exportFailed: string
+    exportReveal: string
+    exportSaveTitle: string
   }
   toast: {
     loadFailed: string

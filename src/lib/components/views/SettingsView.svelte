@@ -5,7 +5,8 @@
   import { THEME_PRESETS } from '$lib/themes/presets'
   import { TOKEN_SCHEMA, validateToken } from '$lib/themes/token-schema'
   import { messages } from '$lib/i18n'
-  import { open } from '@tauri-apps/plugin-dialog'
+  import { open, save } from '@tauri-apps/plugin-dialog'
+  import { invoke } from '@tauri-apps/api/core'
   import { relaunch } from '@tauri-apps/plugin-process'
   import VaultLlmConfig from '$lib/components/vault/VaultLlmConfig.svelte'
   import { captureShortcutFromEvent } from '$lib/utils/shortcut-capture'
@@ -133,6 +134,48 @@
   let updateOpen = $state(true)
   let systemOpen = $state(true)
   let advancedOpen = $state(true)
+  let langOpen = $state(true)
+  let exportOpen = $state(true)
+
+  // Data export state
+  type ExportFormat = 'xlsx' | 'csv' | 'markdown' | 'json'
+  let exportFormat = $state<ExportFormat>('xlsx')
+  let exportIncludeSensitive = $state(false)
+  let exporting = $state(false)
+  let lastExportPath = $state('')
+
+  const EXPORT_FILTERS: Record<ExportFormat, { name: string; extensions: string[] }> = {
+    xlsx: { name: 'Excel', extensions: ['xlsx'] },
+    csv: { name: 'CSV', extensions: ['csv'] },
+    markdown: { name: 'Markdown', extensions: ['md'] },
+    json: { name: 'JSON', extensions: ['json'] },
+  }
+
+  async function handleExport() {
+    if (exporting) return
+    exporting = true
+    try {
+      const date = new Date().toISOString().slice(0, 10)
+      const filter = EXPORT_FILTERS[exportFormat]
+      const path = await save({
+        title: messages.settings.exportSaveTitle,
+        defaultPath: `Soma_Scratchpad_Export_${date}.${filter.extensions[0]}`,
+        filters: [filter],
+      })
+      if (!path) return
+      const count = await invoke<number>('ipc_content_export', {
+        path,
+        format: exportFormat,
+        includeSensitive: exportIncludeSensitive,
+      })
+      lastExportPath = path
+      if (notify) notify(messages.settings.exportDone.replace('{n}', String(count)))
+    } catch (e) {
+      if (notify) notify(`${messages.settings.exportFailed}: ${e}`, 'error')
+    } finally {
+      exporting = false
+    }
+  }
   let expertMode = $state(false)
   let expertErrors = $state<Record<string, string>>({})
 
@@ -402,11 +445,70 @@
       {/if}
     </div>
 
+    <!-- Data export section -->
+    <div class="section">
+      <button
+        type="button"
+        class="section-header"
+        aria-expanded={exportOpen}
+        onclick={() => exportOpen = !exportOpen}
+      >
+        <span class="section-label">{messages.settings.exportTitle}</span>
+        <span class="chevron" class:open={exportOpen} aria-hidden="true">▾</span>
+      </button>
+      {#if exportOpen}
+        <div class="section-body">
+          <p class="section-subtitle">{messages.settings.exportHint}</p>
+          <div class="row">
+            <span class="label">{messages.settings.exportFormat}</span>
+            <select class="proxy-select" bind:value={exportFormat}>
+              <option value="xlsx">Excel (.xlsx)</option>
+              <option value="csv">CSV (.csv)</option>
+              <option value="markdown">Markdown (.md)</option>
+              <option value="json">JSON (.json)</option>
+            </select>
+          </div>
+          <div class="row">
+            <span class="label">{messages.settings.exportSensitive}</span>
+            <button
+              type="button"
+              class="toggle"
+              class:active={exportIncludeSensitive}
+              role="switch"
+              aria-checked={exportIncludeSensitive}
+              aria-label={messages.settings.exportSensitive}
+              onclick={() => exportIncludeSensitive = !exportIncludeSensitive}
+            >
+              <div class="toggle-knob"></div>
+            </button>
+          </div>
+          <p class="section-subtitle">{messages.settings.exportSensitiveHint}</p>
+          <div class="export-actions">
+            <button class="record-btn export-btn" onclick={handleExport} disabled={exporting}>
+              {exporting ? messages.settings.exporting : messages.settings.exportAction}
+            </button>
+            {#if lastExportPath}
+              <button class="record-btn" onclick={() => dockApi.revealInFolder(lastExportPath)}>
+                {messages.settings.exportReveal}
+              </button>
+            {/if}
+          </div>
+        </div>
+      {/if}
+    </div>
+
     <!-- Language section -->
     <div class="section">
-      <div class="section-header">
+      <button
+        type="button"
+        class="section-header"
+        aria-expanded={langOpen}
+        onclick={() => langOpen = !langOpen}
+      >
         <span class="section-label">{messages.settings.language} / Language</span>
-      </div>
+        <span class="chevron" class:open={langOpen} aria-hidden="true">▾</span>
+      </button>
+      {#if langOpen}
       <div class="section-body">
         <div class="lang-options">
           <button
@@ -422,6 +524,7 @@
         </div>
         <p class="lang-hint">{messages.settings.restartHint}</p>
       </div>
+      {/if}
     </div>
 
     <!-- Theme section -->
@@ -501,11 +604,14 @@
               {#if zhFontOpen}
                 <ul class="font-list">
                   {#each filteredFonts(zhFontDirty ? zhFontQuery : '') as font}
-                    <li
-                      class="font-item"
-                      class:active={font === preferences.fontFamilyZh}
-                      onmousedown={() => pickFont('fontFamilyZh', font)}
-                    >{font}</li>
+                    <li>
+                      <button
+                        type="button"
+                        class="font-item"
+                        class:active={font === preferences.fontFamilyZh}
+                        onmousedown={() => pickFont('fontFamilyZh', font)}
+                      >{font}</button>
+                    </li>
                   {/each}
                 </ul>
               {/if}
@@ -526,11 +632,14 @@
               {#if enFontOpen}
                 <ul class="font-list">
                   {#each filteredFonts(enFontDirty ? enFontQuery : '') as font}
-                    <li
-                      class="font-item"
-                      class:active={font === preferences.fontFamilyEn}
-                      onmousedown={() => pickFont('fontFamilyEn', font)}
-                    >{font}</li>
+                    <li>
+                      <button
+                        type="button"
+                        class="font-item"
+                        class:active={font === preferences.fontFamilyEn}
+                        onmousedown={() => pickFont('fontFamilyEn', font)}
+                      >{font}</button>
+                    </li>
                   {/each}
                 </ul>
               {/if}
@@ -1085,13 +1194,20 @@
   }
 
   .font-item {
+    display: block;
+    width: 100%;
     padding: 0.2rem 0.4rem;
-    font-size: max(var(--font-xs, 0.65rem), 0.65rem);
+    border: 0;
+    background: none;
     color: var(--text-primary);
+    font: inherit;
+    font-size: max(var(--font-xs, 0.65rem), 0.65rem);
+    text-align: start;
     cursor: pointer;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    transition: background var(--dur-fast, 120ms) var(--ease-out, ease-out), color var(--dur-fast, 120ms) var(--ease-out, ease-out);
   }
 
   .font-item:hover {
@@ -1218,6 +1334,33 @@
   .record-btn:disabled {
     opacity: 0.5;
     cursor: not-allowed;
+  }
+
+  .export-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding-top: 0.2rem;
+  }
+
+  .export-btn {
+    border-color: color-mix(in srgb, var(--color-primary) 40%, transparent);
+    background: color-mix(in srgb, var(--color-primary) 12%, var(--surface-1));
+    color: var(--color-primary);
+    font-weight: 500;
+  }
+
+  .export-btn:hover:not(:disabled) {
+    border-color: color-mix(in srgb, var(--color-primary) 55%, transparent);
+    background: color-mix(in srgb, var(--color-primary) 20%, var(--surface-1));
+  }
+
+  .section-header {
+    transition: color var(--dur-fast, 120ms) var(--ease-out, ease-out);
+  }
+
+  button.section-header:hover .section-label {
+    color: var(--text-primary);
   }
 
   .section-subtitle {

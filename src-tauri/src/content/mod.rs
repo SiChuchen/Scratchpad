@@ -1,4 +1,5 @@
 pub mod catalog;
+pub mod export;
 pub mod ipc;
 pub mod migrations;
 pub mod models;

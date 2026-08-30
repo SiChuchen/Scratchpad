@@ -1192,6 +1192,7 @@ pub fn run() {
             content::ipc::ipc_content_reorder,
             content::ipc::ipc_content_delete,
             content::ipc::ipc_content_restore,
+            content::export::ipc_content_export,
             ipc_window_apply_circle_region,
             ipc_window_clear_region,
             ipc_dock_restore_from_tab,
