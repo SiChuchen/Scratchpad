@@ -493,6 +493,9 @@
       class:error={toast.kind === "error"}
       role="status"
     >
+      <span class="toast-icon" aria-hidden="true">
+        <Icon name={toast.kind === "error" ? "x" : "check"} size={11} strokeWidth={2.4} />
+      </span>
       <span class="toast-text">{toast.text}</span>{#if toast.undo}<button
           type="button"
           class="toast-undo"
@@ -533,8 +536,8 @@
     max-width: calc(100% - 1rem);
     display: flex;
     align-items: center;
-    gap: 0.5rem;
-    padding: 0.45rem 0.55rem 0.45rem 0.8rem;
+    gap: 0.45rem;
+    padding: 0.4rem 0.5rem 0.4rem 0.45rem;
     border: 1px solid color-mix(in srgb, var(--color-primary) 45%, transparent);
     border-radius: 999px;
     background: var(--surface-2);
@@ -542,7 +545,22 @@
     font-size: max(var(--font-sm, 0.72rem), 0.72rem);
     transform: translateX(-50%);
     box-shadow: var(--shadow-default);
-    animation: toast-in 0.18s ease-out;
+    animation: toast-in 0.18s var(--ease-out, ease-out);
+  }
+  .toast-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.15rem;
+    height: 1.15rem;
+    border-radius: 50%;
+    flex: 0 0 auto;
+    color: var(--color-success);
+    background: color-mix(in srgb, var(--color-success) 14%, transparent);
+  }
+  .toast.error .toast-icon {
+    color: var(--color-danger);
+    background: color-mix(in srgb, var(--color-danger) 14%, transparent);
   }
   .toast.error {
     border-color: color-mix(in srgb, var(--color-danger) 50%, transparent);

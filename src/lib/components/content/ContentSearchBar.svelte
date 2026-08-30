@@ -163,7 +163,15 @@
     font: inherit;
     font-size: max(var(--font-xs, 0.68rem), 0.68rem);
     cursor: pointer;
-    transition: color 0.12s, border-color 0.12s, background 0.12s;
+    transition:
+      color var(--dur-fast, 120ms) var(--ease-out, ease-out),
+      border-color var(--dur-fast, 120ms) var(--ease-out, ease-out),
+      background var(--dur-fast, 120ms) var(--ease-out, ease-out),
+      transform var(--dur-fast, 120ms) var(--ease-out, ease-out);
+  }
+
+  .chips button:active {
+    transform: scale(0.95);
   }
 
   .chips button:hover:not(.active) {

@@ -129,11 +129,24 @@
     >
       {#if items.length}
         <ContentList {items} {selectedId} {reorderable} busyIds={pendingDeleteIds} onSelect={(id) => select(id)} {onReorder} {onToggleSaved} {onCopy} {onDelete} {onCopyPath} />
+      {:else if browser.phase === 'loading' || search.phase === 'searching'}
+        <div class="skeleton-list" aria-hidden="true">
+          {#each Array(4) as _, i (i)}
+            <div class="skeleton-card">
+              <span class="skeleton-line w-40"></span>
+              <span class="skeleton-line w-90"></span>
+              <span class="skeleton-line w-60"></span>
+            </div>
+          {/each}
+        </div>
       {:else}
         <div class="empty">
           <span class="empty-icon" aria-hidden="true"><Icon name={searching ? 'search' : 'inbox'} size={26} strokeWidth={1.4} /></span>
           <strong>{emptyTitle}</strong>
           <span>{emptyHint}</span>
+          {#if !searching && browser.scope === 'temporary'}
+            <button type="button" class="empty-cta" onclick={onCreateText}>＋ {messages.workspace.createText}</button>
+          {/if}
         </div>
       {/if}
     </div>
@@ -221,6 +234,49 @@
     min-width: 0;
     overflow: auto;
     padding: 0.5rem;
+    /* 底部留出悬浮快速入口按钮的空间，避免遮住最后一张卡片 */
+    padding-bottom: 4.2rem;
+    scrollbar-gutter: stable;
+  }
+
+  /* 列表加载骨架：比纯文字等待更可感知、更稳定 */
+  .skeleton-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.38rem;
+  }
+
+  .skeleton-card {
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+    padding: 0.65rem 0.55rem;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-lg, 0.5rem);
+    background: var(--surface-1);
+  }
+
+  .skeleton-line {
+    display: block;
+    height: 0.55rem;
+    border-radius: 999px;
+    background: linear-gradient(
+      100deg,
+      color-mix(in srgb, var(--text-primary) 6%, transparent) 40%,
+      color-mix(in srgb, var(--text-primary) 12%, transparent) 50%,
+      color-mix(in srgb, var(--text-primary) 6%, transparent) 60%
+    );
+    background-size: 200% 100%;
+    animation: skeleton-shimmer 1.4s ease-in-out infinite;
+  }
+
+  .skeleton-line.w-40 { width: 40%; }
+  .skeleton-line.w-60 { width: 60%; }
+  .skeleton-line.w-90 { width: 90%; }
+
+  @keyframes skeleton-shimmer {
+    from { background-position: 120% 0; }
+    to { background-position: -80% 0; }
   }
 
   .detail {
@@ -234,7 +290,25 @@
   .loading {
     display: grid;
     place-items: center;
+    align-content: center;
+    row-gap: 0.7rem;
     color: var(--text-muted);
+  }
+
+  .loading::before {
+    content: '';
+    width: 1.1rem;
+    height: 1.1rem;
+    border: 2px solid color-mix(in srgb, var(--color-primary) 25%, transparent);
+    border-top-color: var(--color-primary);
+    border-radius: 50%;
+    animation: detail-spin 0.8s linear infinite;
+  }
+
+  @keyframes detail-spin {
+    to {
+      transform: rotate(360deg);
+    }
   }
 
   .empty {
@@ -262,6 +336,33 @@
   .empty strong {
     color: var(--text-primary);
     font-size: max(var(--font-md, 0.85rem), 0.85rem);
+  }
+
+  .empty-cta {
+    margin-top: 0.35rem;
+    min-height: 2rem;
+    padding: 0.3rem 0.85rem;
+    border: 1px solid color-mix(in srgb, var(--color-primary) 40%, transparent);
+    border-radius: var(--radius-md);
+    background: color-mix(in srgb, var(--color-primary) 12%, var(--surface-1));
+    color: var(--color-primary);
+    font: inherit;
+    font-weight: 500;
+    font-size: max(var(--font-sm, 0.75rem), 0.75rem);
+    cursor: pointer;
+    transition:
+      background var(--dur-fast, 120ms) var(--ease-out, ease-out),
+      border-color var(--dur-fast, 120ms) var(--ease-out, ease-out),
+      transform var(--dur-fast, 120ms) var(--ease-out, ease-out);
+  }
+
+  .empty-cta:hover {
+    background: color-mix(in srgb, var(--color-primary) 20%, var(--surface-1));
+    border-color: color-mix(in srgb, var(--color-primary) 55%, transparent);
+  }
+
+  .empty-cta:active {
+    transform: scale(0.97);
   }
 
   @media (min-width: 680px) {

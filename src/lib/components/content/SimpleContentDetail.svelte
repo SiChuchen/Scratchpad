@@ -143,7 +143,8 @@
     gap: 0.5rem;
     padding: 0.55rem 0.6rem;
     border-bottom: 1px solid var(--border-subtle);
-    background: var(--surface-0);
+    background: color-mix(in srgb, var(--surface-0) 88%, transparent);
+    backdrop-filter: blur(8px);
     z-index: 1;
   }
 
@@ -169,7 +170,9 @@
     font-size: max(var(--font-sm, 0.75rem), 0.75rem);
     cursor: pointer;
     flex: 0 0 auto;
-    transition: color 0.12s, background 0.12s;
+    transition:
+      color var(--dur-fast, 120ms) var(--ease-out, ease-out),
+      background var(--dur-fast, 120ms) var(--ease-out, ease-out);
   }
 
   .back-btn:hover {
@@ -253,12 +256,20 @@
     font: inherit;
     font-size: max(var(--font-sm, 0.75rem), 0.75rem);
     cursor: pointer;
-    transition: background 0.12s, border-color 0.12s, color 0.12s;
+    transition:
+      background var(--dur-fast, 120ms) var(--ease-out, ease-out),
+      border-color var(--dur-fast, 120ms) var(--ease-out, ease-out),
+      color var(--dur-fast, 120ms) var(--ease-out, ease-out),
+      transform var(--dur-fast, 120ms) var(--ease-out, ease-out);
   }
 
   .btn:hover:not(:disabled) {
     background: var(--surface-2);
     border-color: var(--border-emphasis);
+  }
+
+  .btn:active:not(:disabled) {
+    transform: scale(0.97);
   }
 
   .btn:disabled {

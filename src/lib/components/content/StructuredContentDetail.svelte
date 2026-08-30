@@ -167,7 +167,8 @@
     gap: 0.5rem;
     padding: 0.55rem 0.6rem;
     border-bottom: 1px solid var(--border-subtle);
-    background: var(--surface-0);
+    background: color-mix(in srgb, var(--surface-0) 88%, transparent);
+    backdrop-filter: blur(8px);
     z-index: 1;
   }
 
@@ -193,7 +194,9 @@
     font-size: max(var(--font-sm, 0.75rem), 0.75rem);
     cursor: pointer;
     flex: 0 0 auto;
-    transition: color 0.12s, background 0.12s;
+    transition:
+      color var(--dur-fast, 120ms) var(--ease-out, ease-out),
+      background var(--dur-fast, 120ms) var(--ease-out, ease-out);
   }
 
   .back-btn:hover {
@@ -210,25 +213,31 @@
 
   h3 {
     margin: 0.15rem 0 0.4rem;
-    color: var(--color-primary);
-    font-size: max(var(--font-sm, 0.72rem), 0.72rem);
+    color: var(--text-muted);
+    font-size: max(var(--font-xs, 0.68rem), 0.68rem);
     font-weight: 600;
-    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
   }
 
   .field {
     display: grid;
-    grid-template-columns: minmax(4rem, 0.5fr) minmax(0, 1fr) auto auto;
+    grid-template-columns: minmax(3.5rem, max-content) minmax(0, 1fr) auto auto;
     align-items: center;
     gap: 0.4rem;
-    padding: 0.38rem 0;
+    padding: 0.42rem 0;
     border-bottom: 1px solid var(--border-subtle);
     font-size: max(var(--font-md, 0.85rem), 0.85rem);
     line-height: 1.5;
   }
 
+  .field:last-of-type {
+    border-bottom-color: transparent;
+  }
+
   .field > span {
     color: var(--text-muted);
+    font-size: max(var(--font-sm, 0.75rem), 0.75rem);
   }
 
   .field strong,
@@ -266,12 +275,25 @@
     font: inherit;
     font-size: max(var(--font-sm, 0.75rem), 0.75rem);
     cursor: pointer;
-    transition: background 0.12s, border-color 0.12s, color 0.12s;
+    transition:
+      background var(--dur-fast, 120ms) var(--ease-out, ease-out),
+      border-color var(--dur-fast, 120ms) var(--ease-out, ease-out),
+      color var(--dur-fast, 120ms) var(--ease-out, ease-out),
+      transform var(--dur-fast, 120ms) var(--ease-out, ease-out);
   }
 
   .btn:hover:not(:disabled) {
     background: var(--surface-2);
     border-color: var(--border-emphasis);
+  }
+
+  .btn:active:not(:disabled) {
+    transform: scale(0.97);
+  }
+
+  .btn:disabled {
+    opacity: 0.5;
+    cursor: default;
   }
 
   .btn.small {
@@ -346,14 +368,8 @@
 
   @media (max-width: 360px) {
     .field {
-      grid-template-columns: minmax(3rem, 0.4fr) minmax(0, 1fr) auto;
-    }
-    .field button:not(.copy) {
-      grid-column: 2;
-    }
-    .field .copy {
-      grid-column: 3;
-      grid-row: 1 / span 2;
+      gap: 0.3rem;
+      grid-template-columns: minmax(3rem, max-content) minmax(0, 1fr) auto auto;
     }
   }
 </style>

@@ -64,8 +64,12 @@
 
 <article class="card" class:selected aria-current={selected ? 'true' : undefined}>
   <button class="select" type="button" onclick={() => onSelect(item.id)} aria-label={selectLabel}>
-    {#if item.kind === 'image' && thumbUrl}
-      <img class="thumb-banner" src={thumbUrl} alt="" draggable="false" />
+    {#if item.kind === 'image'}
+      {#if thumbUrl}
+        <img class="thumb-banner" src={thumbUrl} alt="" draggable="false" />
+      {:else}
+        <div class="thumb-banner thumb-skeleton" aria-hidden="true"></div>
+      {/if}
     {:else}
       <ContentKindIcon kind={item.kind} />
     {/if}
@@ -119,12 +123,22 @@
     border-radius: var(--radius-lg, 0.5rem);
     background: var(--surface-1);
     cursor: pointer;
-    transition: border-color 0.12s, background 0.12s, box-shadow 0.12s;
+    overflow: hidden;
+    transition:
+      border-color var(--dur-fast, 120ms) var(--ease-out, ease-out),
+      background var(--dur-fast, 120ms) var(--ease-out, ease-out),
+      box-shadow var(--dur-fast, 120ms) var(--ease-out, ease-out),
+      transform var(--dur-fast, 120ms) var(--ease-out, ease-out);
   }
 
   .card:hover {
     border-color: var(--border-emphasis);
     background: color-mix(in srgb, var(--text-primary) 3%, var(--surface-1));
+  }
+
+  /* Press feedback that does not shift layout bounds. */
+  .card:active {
+    transform: scale(0.995);
   }
 
   /* Selected is visually distinct from hover: primary tint + left indicator. */
@@ -179,7 +193,6 @@
     grid-column: 1;
     display: flex;
     gap: 0.5rem;
-    padding-inline-start: 2rem;
     color: var(--text-faint);
     font-size: max(var(--font-xs, 0.65rem), 0.65rem);
   }
@@ -224,16 +237,37 @@
     touch-action: none;
   }
 
-  /* 图片缩略图横幅：占满卡片宽度（不超出主界面框），裁切限高 */
+  /* 图片缩略图横幅：占满卡片宽度（不超出主界面框），裁切限高。
+     未加载完成时渲染等高骨架，避免缩略图到达后的布局跳动。 */
   .thumb-banner {
     flex: 0 0 100%;
     width: 100%;
-    max-height: 5.5rem;
+    height: 5.5rem;
     object-fit: cover;
     border-radius: var(--radius-md, 0.3rem);
     border: 1px solid var(--border-subtle);
     background: var(--surface-2);
     margin-bottom: 0.3rem;
+  }
+
+  .thumb-skeleton {
+    background: linear-gradient(
+      100deg,
+      var(--surface-2) 40%,
+      color-mix(in srgb, var(--text-primary) 7%, var(--surface-2)) 50%,
+      var(--surface-2) 60%
+    );
+    background-size: 200% 100%;
+    animation: thumb-shimmer 1.4s ease-in-out infinite;
+  }
+
+  @keyframes thumb-shimmer {
+    from {
+      background-position: 120% 0;
+    }
+    to {
+      background-position: -80% 0;
+    }
   }
 
   .icon-btn.star {
@@ -263,8 +297,10 @@
     background: color-mix(in srgb, var(--color-danger) 10%, var(--surface-2));
   }
 
+  /* Keyboard-only focus ring: pointer clicks inside the card must not
+     leave a lingering outline (focus-within would). */
   button:focus-visible,
-  .card:focus-within {
+  .card:has(:focus-visible) {
     outline: 2px solid var(--color-primary);
     outline-offset: 2px;
   }

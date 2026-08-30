@@ -12,6 +12,11 @@
   --color-primary: rgba(125, 211, 252, 0.9);
   --shadow-default: 0 8px 32px rgba(0, 0, 0, 0.45);
 
+  /* Shared motion tokens — every component transition uses the same rhythm */
+  --dur-fast: 120ms;
+  --dur-med: 180ms;
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+
   font-family: var(--font-family-en, "Segoe UI"), var(--font-family-zh, "Microsoft YaHei"), sans-serif;
   line-height: 1.5;
   font-weight: 400;
@@ -72,6 +77,28 @@ html.quick-access-window body {
 html.quick-access-window #app {
   display: flex;
   background: transparent;
+}
+
+/* Keyboard focus ring as a global safety net; components may refine it. */
+:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 1px;
+}
+
+button:disabled {
+  cursor: default;
+}
+
+/* Respect reduced motion globally — component animations opt out via this. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
 
 ::-webkit-scrollbar {

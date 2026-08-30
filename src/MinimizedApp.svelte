@@ -28,6 +28,8 @@
 
 <div
   class="minimized-tab"
+  role="img"
+  aria-label="Soma Scratchpad"
   onmouseenter={handleMouseEnter}
   onmouseleave={handleMouseLeave}
 >
